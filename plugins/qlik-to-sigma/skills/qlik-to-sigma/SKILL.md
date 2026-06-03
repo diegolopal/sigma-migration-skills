@@ -19,8 +19,8 @@ user-invocable: true
 
 **Read ALL of the following before replying or taking any action:**
 - `refs/sigma-build-gotchas.md` — the hard-won spec rules (SQL element, workbook master, YAML responses). **This is the difference between a 2xx that errors at query time and a working migration.**
-- The repo `~/Desktop/sigma-data-model-mcp/CLAUDE.md` — Sigma DM spec correctness rules + the verified CSA.TJ test connection.
-- `~/sigma-skills/sigma-workbooks/SKILL.md` + the Sigma OpenAPI — canonical workbook spec.
+- The **Sigma data model converter MCP** ([github.com/twells89/sigma-data-model-mcp](https://github.com/twells89/sigma-data-model-mcp)) — provides the `convert_qlik_to_sigma` tool and documents the Sigma DM spec correctness rules.
+- The Sigma OpenAPI + the `sigma-workbooks` skill — canonical workbook spec. If `sigma-workbooks` is installed, defer to it; otherwise `refs/sigma-build-gotchas.md` here is self-sufficient for this migration.
 
 ---
 
@@ -48,10 +48,11 @@ qlik-cli context (OAuth M2M or API key). `qlik context use <ctx>`.
 
 ### Sigma access
 ```bash
-bash -c 'eval "$(~/sigma-skills-staging/tableau-to-sigma/scripts/get-token.sh)"; <cmd>'   # sets SIGMA_BASE_URL + SIGMA_API_TOKEN
+bash -c 'eval "$(scripts/vendor/get-token.sh)"; <cmd>'   # sets SIGMA_BASE_URL + SIGMA_API_TOKEN (exchanges SIGMA_CLIENT_ID/SIGMA_CLIENT_SECRET)
 ```
 Need a Sigma connection pointing at the same warehouse as the Qlik app (for parity).
-The verified CSA.TJ connection is `cb2f5180-641f-47bd-8efa-da9d590d855a` (Snowflake ymb68310).
+Set `SIGMA_CONNECTION_ID` to **your** connection id (Sigma UI → Connections). *(For reference,
+our worked example used a Snowflake connection over the `CSA.TJ` retail schema — substitute your own.)*
 
 ---
 

@@ -100,7 +100,7 @@ LEFT JOIN), add an element filter (verified shape):
 ## Layout is a SEPARATE step — don't skip it
 Posting chart elements WITHOUT a layout makes Sigma auto-stack them full-width
 (formatting is fine, arrangement is not). Apply a 24-col grid as a **top-level**
-`spec.layout` XML string (NOT per-page), via `tableau-to-sigma/scripts/put-layout.rb`:
+`spec.layout` XML string (NOT per-page), via the vendored `scripts/vendor/put-layout.rb`:
 ```
 <Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="page-overview">
   <LayoutElement elementId="<id>" gridColumn="1 / 9"  gridRow="1 / 4"/>   <!-- KPI -->
