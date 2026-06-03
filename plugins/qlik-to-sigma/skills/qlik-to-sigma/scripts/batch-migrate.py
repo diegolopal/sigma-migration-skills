@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+"""batch-migrate — migrate many Qlik apps to Sigma workbooks in one pass.
+
+    python3 batch-migrate.py --apps apps.txt --out-layout-dir /tmp/lay
+      apps.txt: one "appId|App Name" per line
+
+For each app, builds a Sigma workbook (reusing an existing data model) with an Overview page
+(KPIs + bar/line charts), auto-lays-it-out via the layout heuristic, and prints the URL.
+Demonstrates tenant-scale migration. Reuses DM/denorm element (set below) since the demo apps
+share data; for distinct apps, discover per-app and build per-app specs.
+
+Includes `auto_layout()` — the reusable layout heuristic (KPIs across the top row, other
+charts in a 2-wide grid below) returning the 24-col grid XML a workbook PUT expects.
+"""
+import json, os, sys, urllib.request, subprocess, re, argparse
+
+BASE=os.environ["SIGMA_BASE_URL"]; TOK=os.environ["SIGMA_API_TOKEN"]
+# Reuse an existing Sigma data model: set these to YOUR ids (from the data-model build
+# step or the Sigma UI), or pass --data-model / --denorm-element / --folder. No real ids baked in.
+DM=os.environ.get("SIGMA_DM_ID",""); DENORM=os.environ.get("SIGMA_DENORM_ELEMENT_ID",""); FOLDER=os.environ.get("SIGMA_FOLDER_ID","")
+PUTLAYOUT=os.path.join(os.path.dirname(os.path.abspath(__file__)),"vendor","put-layout.rb")
+def post(p,b):
+    r=urllib.request.Request(BASE+p,data=json.dumps(b).encode(),method="POST",headers={"Authorization":"Bearer "+TOK,"Content-Type":"application/json"})
+    try: return urllib.request.urlopen(r).read().decode()
+    except urllib.error.HTTPError as e: print("HTTP",e.code,e.read().decode()[:400],file=sys.stderr); return None
+N=lambda f:{"kind":"number","formatString":f}
+
+def auto_layout(page_id, elems):
+    """elems: ordered list of {id, kind}. KPIs → top row (split evenly); others → 2-wide grid below."""
+    kpis=[e for e in elems if e["kind"]=="kpi-chart"]; charts=[e for e in elems if e["kind"]!="kpi-chart"]
+    lines=[f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="{page_id}">']
+    if kpis:
+        w=24//len(kpis)
+        for i,e in enumerate(kpis):
+            c0=1+i*w; c1=(c0+w) if i<len(kpis)-1 else 25
+            lines.append(f'  <LayoutElement elementId="{e["id"]}" gridColumn="{c0} / {c1}" gridRow="1 / 6"/>')
+    row=6
+    for i in range(0,len(charts),2):
+        pair=charts[i:i+2]
+        for j,e in enumerate(pair):
+            c0=1 if j==0 else 13; c1=13 if (j==0 and len(pair)>1) else 25
+            lines.append(f'  <LayoutElement elementId="{e["id"]}" gridColumn="{c0} / {c1}" gridRow="{row} / {row+11}"/>')
+        row+=11
+    lines.append("</Page>")
+    return '<?xml version="1.0" encoding="utf-8"?>\n'+"\n".join(lines)
+
+def build(app_name):
+    O=lambda c:"[OFV/%s]"%c
+    MCOLS=["Net Revenue","Net Profit","Order Id","Category","Month Number","Store Region"]
+    master={"id":"m-ofv","name":"OFV","kind":"table","source":{"dataModelId":DM,"elementId":DENORM,"kind":"data-model"},
+            "columns":[{"id":"o%d"%i,"formula":"[Custom SQL/%s]"%c,"name":c} for i,c in enumerate(MCOLS)]}
+    def kpi(i,name,f,fmt): c="k%d"%i; return {"id":"ek%d"%i,"kind":"kpi-chart","name":name,"source":{"elementId":"m-ofv","kind":"table"},"columns":[{"id":c,"formula":f,"name":name,"format":N(fmt)}],"value":{"id":c}}
+    def ch(i,kind,name,dimf,dimn,mf):
+        x="x%d"%i; y="y%d"%i; return {"id":"ec%d"%i,"kind":kind,"name":name,"source":{"elementId":"m-ofv","kind":"table"},
+          "columns":[{"id":x,"formula":dimf,"name":dimn},{"id":y,"formula":mf,"name":"Net Revenue","format":N("$,.0f")}],"xAxis":{"columnId":x},"yAxis":{"columnIds":[y]}}
+    elems=[kpi(1,"Net Revenue","Sum(%s)"%O("Net Revenue"),"$,.0f"),kpi(2,"Orders","CountDistinct(%s)"%O("Order Id"),",.0f"),
+           kpi(3,"Net Margin","Sum(%s)/Sum(%s)"%(O("Net Profit"),O("Net Revenue")),",.1%"),
+           ch(1,"bar-chart","Net Revenue by Category",O("Category"),"Category","Sum(%s)"%O("Net Revenue")),
+           ch(2,"line-chart","Net Revenue by Month",O("Month Number"),"Month","Sum(%s)"%O("Net Revenue")),
+           ch(3,"bar-chart","Net Revenue by Region",O("Store Region"),"Region","Sum(%s)"%O("Net Revenue"))]
+    spec={"name":f"{app_name} → Sigma","folderId":FOLDER,"schemaVersion":1,
+          "pages":[{"id":"pg-data","name":"Data","elements":[master]},{"id":"pg-ov","name":"Overview","elements":elems}]}
+    res=post("/v2/workbooks/spec",spec)
+    if not res: return None
+    wb=re.search(r'workbookId:\s*(\S+)',res)
+    wb=wb.group(1) if wb else None
+    if wb:
+        xml=auto_layout("pg-ov",[{"id":e["id"],"kind":e["kind"]} for e in elems])
+        lf="/tmp/_lay_%s.xml"%wb; open(lf,"w").write(xml)
+        subprocess.run(["ruby",PUTLAYOUT,"--workbook",wb,"--layout",lf],capture_output=True)
+    return wb
+
+def main():
+    ap=argparse.ArgumentParser(); ap.add_argument("--apps",required=True)
+    ap.add_argument("--data-model",default=DM); ap.add_argument("--denorm-element",default=DENORM); ap.add_argument("--folder",default=FOLDER)
+    a=ap.parse_args()
+    if not (a.data_model and a.denorm_element and a.folder):
+        sys.exit("set --data-model / --denorm-element / --folder (or env SIGMA_DM_ID / SIGMA_DENORM_ELEMENT_ID / SIGMA_FOLDER_ID)")
+    DM=a.data_model; DENORM=a.denorm_element; FOLDER=a.folder
+    for line in open(a.apps):
+        line=line.strip()
+        if not line: continue
+        aid,name=line.split("|",1)
+        wb=build(name)
+        print(f"  {name:28} -> workbook {wb}")
+
+if __name__=="__main__": main()

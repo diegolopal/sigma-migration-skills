@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "powerbi-to-sigma",
+  "displayName": "Power BI → Sigma",
+  "version": "1.0.0",
+  "description": "Migrate Power BI models and reports to Sigma — TMSL + report extraction, DAX → Sigma formula translation (with a gap-scout for the hard cases), data model + workbook build, and parity verification. Includes a model assessment skill.",
+  "author": { "name": "Thomas Wells" },
+  "license": "MIT",
+  "keywords": ["powerbi", "power-bi", "dax", "sigma", "migration", "bi", "converter"],
+  "skills": "./skills/"
+}

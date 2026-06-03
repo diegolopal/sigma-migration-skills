@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace-manifest.json",
+  "name": "sigma-migration-skills",
+  "description": "Claude Code skills for migrating BI tools (Tableau, Power BI, Qlik) to Sigma — converters + assessments, validated end-to-end with warehouse parity.",
+  "version": "1.0.0",
+  "owner": { "name": "Thomas Wells" },
+  "metadata": { "pluginRoot": "./plugins" },
+  "plugins": [
+    {
+      "name": "tableau-to-sigma",
+      "source": "./tableau-to-sigma",
+      "description": "Tableau workbooks/datasources → Sigma data model + workbook, with parity verification. Bundles tableau-to-sigma + tableau-assessment.",
+      "category": "migration",
+      "keywords": ["tableau", "migration", "bi"]
+    },
+    {
+      "name": "powerbi-to-sigma",
+      "source": "./powerbi-to-sigma",
+      "description": "Power BI models/reports → Sigma, DAX translation + gap-scout, with parity verification. Bundles powerbi-to-sigma + powerbi-assessment.",
+      "category": "migration",
+      "keywords": ["powerbi", "dax", "migration", "bi"]
+    },
+    {
+      "name": "qlik-to-sigma",
+      "source": "./qlik-to-sigma",
+      "description": "Qlik Sense / Qlik Cloud apps → Sigma, expression + Set Analysis translation, with parity verification. Bundles qlik-to-sigma + qlik-assessment.",
+      "category": "migration",
+      "keywords": ["qlik", "migration", "bi"]
+    }
+  ]
+}

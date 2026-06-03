@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "qlik-to-sigma",
+  "displayName": "Qlik → Sigma",
+  "version": "1.0.0",
+  "description": "Migrate Qlik Sense / Qlik Cloud apps to Sigma — discovery via qlik-cli, Qlik-expression → Sigma-formula translation (incl. Set Analysis + a gap-scout), data model + workbook build, and parity verification. Includes a tenant assessment skill.",
+  "author": { "name": "Thomas Wells" },
+  "license": "MIT",
+  "keywords": ["qlik", "qlik-sense", "qlik-cloud", "sigma", "migration", "bi", "converter"],
+  "skills": "./skills/"
+}
