@@ -43,9 +43,14 @@ A Qlik LOAD `SELECT ... AS ... FROM t` becomes a Sigma SQL element. Rules:
 - Use Sigma functions: **`CountDistinct([Order Id])`**, not `Count(DISTINCT ...)`.
 - Reference columns by bracketed display name: `Sum([Net Revenue])`.
 - Place a metric on the element that owns its referenced columns (ORDER_FACT).
-- `metric('<id>', t)` in a query sometimes returns "Missing Metric" — for parity,
-  just aggregate the columns directly (`SUM("<colId>")`); the metric formulas are
-  validated by `describe` showing them under AVAILABLE METRICS.
+- `metric('<id>', t)` in a `sigma-mcp-v2` data-model query returns **"Missing Metric"**
+  even for ids that `describe` lists under AVAILABLE METRICS (confirmed 2026-06-03).
+  For parity, **aggregate the element's raw columns directly** —
+  `SELECT SUM("<netRevColId>"), COUNT(DISTINCT "<orderIdColId>"), SUM("<netProfitColId>")/SUM("<netRevColId>") FROM "datamodel"."<elementId>" t`
+  (get the opaque colIds from `describe(datamodel-element)`). The metric formulas are
+  still valid — the failure is only the `metric()` resolver. The REST export API
+  (`POST /v2/workbooks/{id}/export` → poll `GET /v2/query/{queryId}/download`) is an
+  equally good parity path and reads the workbook element's *applied* aggregation.
 
 ## Workbook spec
 - Master table (on a hidden "Data" page) sourcing a DM element needs **all three**:
@@ -95,7 +100,7 @@ LEFT JOIN), add an element filter (verified shape):
 ## Layout is a SEPARATE step — don't skip it
 Posting chart elements WITHOUT a layout makes Sigma auto-stack them full-width
 (formatting is fine, arrangement is not). Apply a 24-col grid as a **top-level**
-`spec.layout` XML string (NOT per-page), via the vendored `scripts/vendor/put-layout.rb`:
+`spec.layout` XML string (NOT per-page), via `tableau-to-sigma/scripts/put-layout.rb`:
 ```
 <Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="page-overview">
   <LayoutElement elementId="<id>" gridColumn="1 / 9"  gridRow="1 / 4"/>   <!-- KPI -->

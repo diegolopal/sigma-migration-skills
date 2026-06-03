@@ -19,8 +19,8 @@ user-invocable: true
 
 **Read ALL of the following before replying or taking any action:**
 - `refs/sigma-build-gotchas.md` — the hard-won spec rules (SQL element, workbook master, YAML responses). **This is the difference between a 2xx that errors at query time and a working migration.**
-- The **Sigma data model converter MCP** ([github.com/twells89/sigma-data-model-mcp](https://github.com/twells89/sigma-data-model-mcp)) — provides the `convert_qlik_to_sigma` tool and documents the Sigma DM spec correctness rules.
-- The Sigma OpenAPI + the `sigma-workbooks` skill — canonical workbook spec. If `sigma-workbooks` is installed, defer to it; otherwise `refs/sigma-build-gotchas.md` here is self-sufficient for this migration.
+- The repo `~/Desktop/sigma-data-model-mcp/CLAUDE.md` — Sigma DM spec correctness rules + the verified CSA.TJ test connection.
+- `~/sigma-skills/sigma-workbooks/SKILL.md` + the Sigma OpenAPI — canonical workbook spec.
 
 ---
 
@@ -48,11 +48,10 @@ qlik-cli context (OAuth M2M or API key). `qlik context use <ctx>`.
 
 ### Sigma access
 ```bash
-bash -c 'eval "$(scripts/vendor/get-token.sh)"; <cmd>'   # sets SIGMA_BASE_URL + SIGMA_API_TOKEN (exchanges SIGMA_CLIENT_ID/SIGMA_CLIENT_SECRET)
+bash -c 'eval "$(~/sigma-skills-staging/tableau-to-sigma/scripts/get-token.sh)"; <cmd>'   # sets SIGMA_BASE_URL + SIGMA_API_TOKEN
 ```
 Need a Sigma connection pointing at the same warehouse as the Qlik app (for parity).
-Set `SIGMA_CONNECTION_ID` to **your** connection id (Sigma UI → Connections). *(For reference,
-our worked example used a Snowflake connection over the `CSA.TJ` retail schema — substitute your own.)*
+The verified CSA.TJ connection is `cb2f5180-641f-47bd-8efa-da9d590d855a` (Snowflake ymb68310).
 
 ---
 
@@ -89,6 +88,11 @@ POST `/v2/workbooks/spec`.
 Pull the source baseline from the warehouse (the same Snowflake the Qlik app loaded
 from) and compare to Sigma `query` results — at the metric level AND per chart
 (group-by). Migration is GREEN only on a match. (First run matched to the cent.)
+
+> **Querying for parity:** `metric('<id>', t)` against a data-model element can return
+> "Missing Metric" — aggregate the element's raw columns directly instead
+> (`SUM("<colId>")`/`COUNT(DISTINCT ...)`), or use the REST export API. See
+> `refs/sigma-build-gotchas.md` → Metrics.
 
 ---
 
