@@ -48,12 +48,11 @@ def build_dm(model_tml, name):
     dm = res["dataModelId"]
     # discover the denormalized "<root> View" element from the posted DM spec
     dmspec = yaml.safe_load(sigma("GET", f"/v2/dataModels/{dm}/spec"))
-    denorm = None
-    for el in dmspec["pages"][0]["elements"]:
-        if (el.get("name") or "").endswith(" View"):
-            denorm = el
+    els = dmspec["pages"][0]["elements"]
+    denorm = next((el for el in els if (el.get("name") or "").endswith(" View")), None)
     if not denorm:
-        raise RuntimeError("no denormalized '... View' element found in DM")
+        # no joins → no denormalized view; use the base fact element (most columns).
+        denorm = max(els, key=lambda e: len(e.get("columns", [])))
     print(f"  DM {dm}  ·  denorm '{denorm['name']}' ({denorm['id']})  ·  "
           f"{conv['stats']['relationships']} rels, {conv['stats']['elements']} elements")
     return dm, denorm["id"], denorm["name"]
@@ -79,10 +78,30 @@ def migrate_liveboard(lb_id, dm, denorm_id, denorm_name, resolver, name):
         apply_layouts.apply(wb)
     return wb, len(specs)
 
+def migrate_answer(ans_id, dm, denorm_id, denorm_name, resolver, name):
+    """A standalone Answer is a single viz — build a one-element workbook."""
+    edoc, err = ts_lib.export_tml(ans_id, "ANSWER")
+    if err:
+        raise RuntimeError("export failed: " + err)
+    spec_v = ts_common.parse_ts_viz({"answer": yaml.safe_load(edoc)["answer"]})
+    master = ts_common.master_element([spec_v], resolver, dm, denorm_id, denorm_name)
+    spec = {"name": f"{name} (from ThoughtSpot)", "folderId": FOLDER, "schemaVersion": 1,
+            "pages": [{"id": "p-data", "name": "Data", "elements": [master]},
+                      {"id": "p-main", "name": name[:40], "elements": [ts_common.sigma_element(spec_v, resolver)]}]}
+    import re
+    resp = sigma("POST", "/v2/workbooks/spec", spec)
+    m = re.search(r'workbookId["\s:]+([0-9a-f-]{36})', resp)
+    wb = m.group(1) if m else None
+    if not wb:
+        raise RuntimeError("workbook POST: " + resp[:300])
+    apply_layouts.apply(wb)
+    return wb
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, help="ThoughtSpot model (LOGICAL_TABLE) id")
     ap.add_argument("--liveboard", action="append", help="specific Liveboard id(s); default = all that read the model")
+    ap.add_argument("--answer", action="append", help="standalone Answer id(s) to migrate as one-element workbooks")
     ap.add_argument("--name", default=None, help="name prefix (default: the model name)")
     a = ap.parse_args()
 
@@ -119,6 +138,14 @@ def main():
         except Exception as ex:
             results[lb_name] = {"error": str(ex)}
             print(f"  ✗ {lb_name[:34]:34s} {ex}")
+    for ans_id in (a.answer or []):
+        try:
+            wb = migrate_answer(ans_id, dm, denorm_id, denorm_name, resolver, "Answer " + ans_id[:8])
+            results["answer:" + ans_id] = {"answer": ans_id, "workbook": wb}
+            print(f"  ✓ answer {ans_id[:8]}  WB {wb}")
+        except Exception as ex:
+            results["answer:" + ans_id] = {"error": str(ex)}
+            print(f"  ✗ answer {ans_id[:8]}  {ex}")
     json.dump({"model": a.model, "dataModel": dm, "results": results},
               open(os.path.expanduser("~/thoughtspot-migration/migrate_out.json"), "w"), indent=2)
     print(f"\nDM: {dm}  ·  {sum(1 for r in results.values() if r.get('workbook'))}/{len(targets)} workbooks")

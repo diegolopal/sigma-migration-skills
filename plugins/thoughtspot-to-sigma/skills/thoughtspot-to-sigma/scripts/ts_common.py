@@ -28,6 +28,25 @@ def sigma_display_name(s):
 def nid(p="el"):
     return p + "-" + "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(8))
 
+_CUR = {"USD": "$", "CAD": "$", "AUD": "$", "NZD": "$", "EUR": "€", "GBP": "£",
+        "JPY": "¥", "CNY": "¥", "INR": "₹", "KRW": "₩", "BRL": "R$"}
+
+def ts_format_to_sigma(pattern, currency_iso=None):
+    """Map a ThoughtSpot column `format_pattern` (Java DecimalFormat, e.g. '#,##0.00',
+    '0.0%') + optional `currency_type.iso_code` to a Sigma column format. The pattern
+    never carries a currency symbol (that's currency_type) — so a '$' only appears
+    when the source actually set a currency. Returns None if neither is set."""
+    if not pattern and not currency_iso:
+        return None
+    pct = "%" in (pattern or "")
+    core = (pattern or "").replace("%", "")
+    decimals = len(core.split(".")[1]) if "." in core else (2 if currency_iso else 0)
+    grp = "," if (not pattern or "," in core or currency_iso) else ""
+    if currency_iso and not pct:
+        sym = _CUR.get(currency_iso.upper(), currency_iso.upper() + " ")
+        return {"kind": "number", "formatString": f"{sym}{grp}.{decimals}f", "currencySymbol": sym}
+    return {"kind": "number", "formatString": f"{grp}.{decimals}{'%' if pct else 'f'}"}
+
 def build_resolver(model_root):
     """model_root = the `model:`/`worksheet:` dict from a ThoughtSpot model TML.
     Returns { model_column_name: {"measure": bool, "ofv": <denorm display name>,
@@ -44,15 +63,22 @@ def build_resolver(model_root):
     resolver = {}
     for c in model_root.get("columns", model_root.get("worksheet_columns", [])):
         cid = c.get("column_id", "")
-        if "::" not in cid:        # formula columns — skip (resolved by name if charted)
+        props = c.get("properties") or {}
+        ctype = (c.get("type") or props.get("column_type") or "").upper()
+        iso = (props.get("currency_type") or {}).get("iso_code")
+        fmt = ts_format_to_sigma(props.get("format_pattern"), iso)
+        if "::" in cid:                       # physical column
+            table, phys = cid.split("::", 1)
+            field = sigma_display_name(phys)
+            ofv = field if table == fact else f"{field} ({table})"
+            name = c.get("name", field)
+        elif c.get("formula_id"):             # formula column (lives on the fact element)
+            name = c.get("name", c["formula_id"])
+            ofv = name
+        else:
             continue
-        table, phys = cid.split("::", 1)
-        field = sigma_display_name(phys)
-        ofv = field if table == fact else f"{field} ({table})"
-        ctype = (c.get("type") or (c.get("properties") or {}).get("column_type") or "").upper()
-        name = c.get("name", field)
         friendly = re.sub(r'\s+', ' ', name.replace("(", "").replace(")", "")).strip()
-        resolver[name] = {"measure": ctype == "MEASURE", "ofv": ofv, "friendly": friendly}
+        resolver[name] = {"measure": ctype == "MEASURE", "ofv": ofv, "friendly": friendly, "fmt": fmt}
     return resolver
 
 # ── ThoughtSpot side: a viz spec -> a Liveboard visualization dict (fixtures) ─
@@ -105,10 +131,9 @@ KIND = {"KPI": "kpi-chart", "COLUMN": "bar-chart", "BAR": "bar-chart", "LINE": "
         "PIE": "bar-chart", "STACKED_COLUMN": "bar-chart", "ADVANCED_COLUMN": "table", "TABLE": "table"}
 
 def _fmt(entry):
-    nm = entry["friendly"].lower()
-    if any(w in nm for w in ("revenue", "profit", "cost", "discount", "price", "amount", "lease")):
-        return _NUM("$,.0f")
-    return _NUM(",.0f")
+    # Honor the column's actual ThoughtSpot format_pattern when present; otherwise
+    # a neutral grouped number — do NOT invent a currency symbol the source lacked.
+    return entry.get("fmt") or _NUM(",.0f")
 
 def _resolve(resolver, base):
     return resolver.get(base) or {"measure": True, "ofv": base, "friendly": re.sub(r'[()]', '', base).strip()}
@@ -142,11 +167,10 @@ def _element_core(spec, resolver, master="OFV"):
         cid = nid("c"); vid = nid("v")
         cols = [{"id": cid, "formula": dref(dims[0]), "name": dims[0]},
                 {"id": vid, "formula": mref(meas[0]), "name": meas[0], "format": _fmt(_resolve(resolver, meas[0]))}]
-        el = {"id": nid(), "kind": "pie-chart", "name": name, "source": src, "columns": cols,
-              "value": {"id": vid}, "color": {"id": cid}}
-        if chart == "DONUT":
-            el["holeValue"] = 50
-        return el
+        # ThoughtSpot renders pies as donuts → use the donut-chart kind (the hole is
+        # inherent to the kind; holeValue is only an optional center-label column ref).
+        return {"id": nid(), "kind": "donut-chart", "name": name, "source": src, "columns": cols,
+                "value": {"id": vid}, "color": {"id": cid}}
     if chart in ("PIVOT_TABLE", "PIVOT") and len(dims) >= 2:
         rid = nid("r"); cidd = nid("k")
         cols = [{"id": rid, "formula": dref(dims[0]), "name": dims[0]},

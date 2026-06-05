@@ -45,9 +45,13 @@ Liveboard that reads the model (or just the `--liveboard` ones).
    suffix, fact columns don't). No hardcoded registry → works for any model.
 4. **Build workbooks** — per Liveboard, map each visualization
    (`answer.search_query` + `chart.type`) to a Sigma element off the master table.
-   Chart map: KPI→kpi-chart, COLUMN/BAR→bar-chart, LINE→line-chart, TABLE→grouped
-   table (PIE currently → bar). KPI value uses `{"columnId": c}`; grouped tables
-   need `groupings:[{groupBy, calculations}]`.
+   Chart map: KPI→kpi-chart, COLUMN/BAR→bar-chart, LINE→line-chart, PIE/DONUT→
+   **donut-chart** (ThoughtSpot renders pies as donuts), PIVOT_TABLE→pivot-table,
+   TABLE→grouped table. Search-query filters (`[Col]='v'`) → element list-filters.
+   Aggregate formulas (`sum(x)/sum(y)`, `sqrt(sum())`) become DM **metrics**; column
+   formats come from the TML `format_pattern`/`currency_type`. KPI value uses
+   `{"columnId": c}`; donut `value`/`color` use `{"id": c}`; grouped tables need
+   `groupings:[{groupBy, calculations}]`.
 5. **Layout** — `apply_layouts.py` applies a clean grid (KPIs top row, charts
    2-wide) as the **LAST** write (a bare spec PUT wipes layout).
 6. **Parity** — query the model via `ts_lib.searchdata` (ground truth) vs the
@@ -58,11 +62,12 @@ Liveboard that reads the model (or just the `--liveboard` ones).
 - `convert_model.mjs` — model TML → Sigma DM spec (imports the built converter)
 - `ts_lib.py` — ThoughtSpot REST v2 (whoami/search/export_tml/import_tml/searchdata)
 - `ts_discover.py` — inventory / per-object summary
-- `ts_common.py` — `build_resolver` (from model TML) + viz↔element mappers
-- `dashboards.py` — themed dashboard specs (fixtures)
-- `run_migrations.py` — fixture batch: create themed Liveboards + migrate + ground truth
-- `apply_layouts.py` — grid layout pass
-- `get-token.sh` — Sigma token (vendored)
+- `ts_common.py` — `build_resolver` (from model TML), viz↔element mappers, format/currency mapping
+- `apply_layouts.py` — grid layout pass (run last)
+- `compare.py` — visual + structural compare (TS viz PNG vs Sigma element PNG → HTML)
+- `ts_screenshot.py` — per-viz PNG export from ThoughtSpot (report/liveboard)
+- `gap-scout.md` + `scout-validate.py` + `learned-rules.py` — formula gap-scout (validate + persist unhandled-TML translations)
+- `get-token.sh` — Sigma token; `get-ts-token.sh` — ThoughtSpot Trusted-Auth service token
 
 ## Worked example
 The CSA.TJ retail star (ORDER_FACT + 5 dims) → ThoughtSpot model "Retail Analytics"
