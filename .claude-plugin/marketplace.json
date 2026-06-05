@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace-manifest.json",
   "name": "sigma-migration-skills",
-  "description": "Claude Code skills for migrating BI tools (Tableau, Power BI, Qlik) to Sigma — converters + assessments, validated end-to-end with warehouse parity.",
+  "description": "Claude Code skills for migrating BI tools (Tableau, Power BI, Qlik, ThoughtSpot) to Sigma — converters + assessments, validated end-to-end with warehouse parity.",
   "version": "1.0.0",
   "owner": { "name": "Thomas Wells" },
   "metadata": { "pluginRoot": "./plugins" },
@@ -26,6 +26,13 @@
       "description": "Qlik Sense / Qlik Cloud apps → Sigma, expression + Set Analysis translation, with parity verification. Bundles qlik-to-sigma + qlik-assessment.",
       "category": "migration",
       "keywords": ["qlik", "migration", "bi"]
+    },
+    {
+      "name": "thoughtspot-to-sigma",
+      "source": "./thoughtspot-to-sigma",
+      "description": "ThoughtSpot models/worksheets + Liveboards → Sigma, TML conversion + Liveboard rebuild (KPI/bar/line/pie/pivot/table, search-query filters) + layout, with parity verification. Bundles thoughtspot-to-sigma + thoughtspot-assessment.",
+      "category": "migration",
+      "keywords": ["thoughtspot", "tml", "migration", "bi"]
     }
   ]
 }

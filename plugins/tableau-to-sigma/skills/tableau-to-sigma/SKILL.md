@@ -79,16 +79,19 @@ Run the setup script once:
 ruby scripts/setup.rb
 ```
 
-It writes credentials to a config file your agent loads automatically.
+It writes credentials to two places: `~/.claude/settings.json` (which Claude
+Code auto-loads) and `~/.sigma-migration/env` (a neutral, sourceable file any
+other agent or plain shell can use). The scripts fall back to the neutral file
+automatically when the env vars aren't already set, so the skill works under
+any agent.
 <!-- agents:claude-only -->
-For Claude Code that's `~/.claude/settings.json` — open a new Claude Code
-session (or run `! source ~/.claude/settings.json`) so the env vars are live.
+On Claude Code, open a new session (or run `! source ~/.claude/settings.json`)
+so the env vars are live — no manual sourcing needed thereafter.
 <!-- /agents:claude-only -->
 <!-- agents:non-claude
-Source the resulting env file in your shell before running anything that
-needs the Sigma API — e.g. `source ~/.claude/settings.json` if you let the
-script write there by default, or whatever path you configured. Then start
-a new agent session so the env vars are live.
+On other agents (Cursor, Cortex Code, plain shell), the scripts auto-source
+`~/.sigma-migration/env` for you. To have the vars live in your own shell too,
+run `source ~/.sigma-migration/env` once per session.
 agents:end -->
 
 Required env vars:

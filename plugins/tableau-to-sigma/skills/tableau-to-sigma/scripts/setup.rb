@@ -1,10 +1,35 @@
 #!/usr/bin/env ruby
-# Store Sigma credentials in ~/.claude/settings.json so Claude Code loads them automatically.
+# Store Sigma credentials so any coding agent can load them:
+#   - ~/.claude/settings.json   — Claude Code auto-loads this into the env
+#   - ~/.sigma-migration/env    — neutral, sourceable file every other agent
+#                                 (Cursor, Cortex Code, plain shell) can use
+# get-token.sh and lib/sigma_rest.rb fall back to the neutral file when the
+# env vars aren't already set, so the skill works under any agent.
 
 require 'io/console'
 require 'json'
+require 'fileutils'
 
 SETTINGS_PATH = File.expand_path("~/.claude/settings.json")
+NEUTRAL_PATH  = File.expand_path("~/.sigma-migration/env")
+
+# Upsert `export KEY='value'` lines into the neutral cred file (0600), preserving
+# any other vars already there (e.g. Tableau creds from setup-tableau.rb).
+def upsert_neutral_env(pairs)
+  FileUtils.mkdir_p(File.dirname(NEUTRAL_PATH), mode: 0o700)
+  body = File.exist?(NEUTRAL_PATH) ? File.read(NEUTRAL_PATH) : ""
+  pairs.each do |k, v|
+    line = "export #{k}='#{v}'"
+    if body =~ /^export #{Regexp.escape(k)}=.*$/
+      body = body.sub(/^export #{Regexp.escape(k)}=.*$/, line)
+    else
+      body += "\n" unless body.empty? || body.end_with?("\n")
+      body += line + "\n"
+    end
+  end
+  File.write(NEUTRAL_PATH, body)
+  File.chmod(0o600, NEUTRAL_PATH)
+end
 
 puts "Sigma credential setup"
 puts "Values are stored in #{SETTINGS_PATH} and loaded automatically into every Claude Code session."
@@ -30,5 +55,17 @@ settings["env"]["SIGMA_CLIENT_SECRET"] = sec
 
 File.write(SETTINGS_PATH, JSON.pretty_generate(settings))
 
+upsert_neutral_env(
+  "SIGMA_BASE_URL"      => base,
+  "SIGMA_CLIENT_ID"     => cid,
+  "SIGMA_CLIENT_SECRET" => sec,
+)
+
 puts
-puts "Credentials saved. Open a new Claude Code session (or run `! source ~/.claude/settings.json`) to pick them up."
+puts "Credentials saved to:"
+puts "  #{SETTINGS_PATH}  (Claude Code auto-loads this)"
+puts "  #{NEUTRAL_PATH}  (any other agent / shell)"
+puts
+puts "Claude Code: open a new session (or run `! source ~/.claude/settings.json`)."
+puts "Other agents / shell: run `source ~/.sigma-migration/env` once per shell —"
+puts "though get-token.sh and the Ruby scripts auto-source it for you."

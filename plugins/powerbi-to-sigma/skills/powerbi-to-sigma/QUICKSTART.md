@@ -15,10 +15,13 @@ Manually rebuilding Power BI reports in another tool means re-creating the seman
 model, re-writing every DAX measure, and re-laying-out each page — then proving the
 numbers still match.
 
-This quickstart automates it with **Claude Code** + a set of Power BI→Sigma skills: it
-extracts the semantic model (TMSL) and report layout (PBIR) from Fabric, translates DAX
-measures to Sigma formulas, builds a Sigma data model + workbook, and **verifies data
-parity** against the same warehouse.
+This quickstart automates it with **your coding agent** (Claude Code, Cursor, Cortex
+Code, …) + a set of Power BI→Sigma skills: it extracts the semantic model (TMSL) and
+report layout (PBIR) from Fabric, translates DAX measures to Sigma formulas, builds a
+Sigma data model + workbook, and **verifies data parity** against the same warehouse.
+
+positive
+: These skills are **agent-neutral** — each is a `SKILL.md` plus `scripts/`. `AGENTS.md` at the repo root maps each task to its skill, and the scripts auto-load credentials from `~/.sigma-migration/env`, so they run the same under any agent. Where this guide says "Claude Code," substitute your agent.
 
 positive
 : DAX → Sigma is the heart of this migration. ~70% of measures are *mechanical* (direct rewrites); time-intelligence (YTD, same-period-last-year, running totals) maps to Sigma's `DateLookback`/`CumulativeSum` in a date-grouped element; only a small genuine tail has no equivalent.
@@ -37,7 +40,7 @@ model queries (import or DirectQuery).
 ## Prerequisites
 Duration: 2
 
-- **Claude Code** (CLI or desktop) installed
+- **A coding agent that runs skills** — Claude Code (CLI or desktop), Cursor, Cortex Code, etc.
 - **Python** with `msal` + `truststore` (for Microsoft auth over corporate TLS)
 - **Power BI / Fabric access** — you do **not** need to register an Entra app. The skill uses **device-code auth** with the well-known Power BI Desktop public client, which works against *My workspace* and any workspace you can access.
 - **Sigma API credentials** (`SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET`)
@@ -66,12 +69,14 @@ Duration: 5
    git clone --filter=blob:none --sparse https://github.com/sigmacomputing/quickstarts-public
    cd quickstarts-public && git sparse-checkout set powerbi-migration-skills
    ```
-2. **Symlink into Claude Code:**
-   ```bash
-   ln -s "$PWD/powerbi-migration-skills/powerbi-to-sigma"   ~/.claude/skills/powerbi-to-sigma
-   ln -s "$PWD/powerbi-migration-skills/powerbi-assessment" ~/.claude/skills/powerbi-assessment
-   ```
-3. **Sigma credentials** — export `SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET`; `scripts/get-token.sh` exchanges them for a `SIGMA_API_TOKEN`.
+2. **Make the skills available to your agent:**
+   - **Claude Code** — symlink them in:
+     ```bash
+     ln -s "$PWD/powerbi-migration-skills/powerbi-to-sigma"   ~/.claude/skills/powerbi-to-sigma
+     ln -s "$PWD/powerbi-migration-skills/powerbi-assessment" ~/.claude/skills/powerbi-assessment
+     ```
+   - **Other agents (Cursor, Cortex Code, …)** — no install step; open the repo and point your agent at the skill folder. `AGENTS.md` at the repo root indexes every skill.
+3. **Sigma credentials** — export `SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET` (or run `ruby scripts/setup.rb` in the tableau-to-sigma skill, which writes a neutral `~/.sigma-migration/env` the scripts auto-source under any agent). `scripts/get-token.sh` exchanges them for a `SIGMA_API_TOKEN`.
 4. **Power BI auth** — run the device-code flow:
    ```bash
    python3 powerbi-to-sigma/scripts/fabric-auth-check.py   # opens device-code login, caches token
