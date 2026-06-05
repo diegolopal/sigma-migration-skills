@@ -65,6 +65,14 @@ Assemble into the converter's input JSON (`refs/example-converter-input.json`):
 `{appName, tables:[{name, noOfRows, fields:[{name}]}], masterMeasures:[{title,qDef}], masterDimensions:[]}`.
 **Use the post-rename Qlik field names** so relationships come out clean.
 
+> **Legacy QlikView `.qvw`?** There's no Qlik Cloud API and no `.qvw` parser. Have the
+> customer enable "Create project folder" in QlikView Desktop and send the `<name>-prj/`
+> folder, then call **`mcp__sigma-data-model__convert_qlikview_prj_to_sigma`** with the
+> folder's files (`[{name,content}]` — `LoadScript.txt` + `CH*.xml`). It parses the load
+> script (tables/fields incl. `AS` renames) + chart expressions (measures) and runs the
+> same Phase-2 translation. No row counts in a `-prj` folder → relationships are by shared
+> field name only; review join directions.
+
 ## Phase 2 — Translate (convert_qlik_to_sigma)
 Call `mcp__sigma-data-model__convert_qlik_to_sigma(model_json, connection_id, database, schema)`.
 Output = Sigma DM spec (warehouse-table elements + relationships on shared keys +
