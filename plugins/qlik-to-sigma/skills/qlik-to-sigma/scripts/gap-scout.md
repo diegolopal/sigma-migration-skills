@@ -14,14 +14,19 @@ loads them; the build step applies them before falling back to a WARN.
 After discovery, for each Qlik expression the converter omits/flags as unhandled — these
 are the `qlikExprToSigma` warning cases:
 
+**Auto-handled by the converter now (2026-06-05) — do NOT scout these:** simple Set
+Analysis (`Sum({<F={v}>} X)`→`Sum(If([F]=v,[X]))`, `{1}`, `-=`, multi-value/flag,
+`Count({<…>} DISTINCT X)`), row-wise multi-arg `Range*` (→`+`/`Greatest`/`Least`),
+`Dual`, `Class`, `Count(DISTINCT)`. Scout only the genuinely-unhandled patterns below.
+
 | Qlik pattern | Why flagged | Candidate Sigma translation to try |
 |---|---|---|
 | `Aggr(<agg>, <dim>)` | nested-aggregate, no 1:1 | a **grouped/level element** or a pre-aggregated DM element; sometimes `WindowSum`/`WindowAvg` over a partition |
-| `RangeSum/RangeAvg/RangeMin/RangeMax(...)` | row-wise range agg | `Sum(...)`/`Avg(...)` if it's really an aggregate; else explicit arithmetic |
-| `Class(<field>, <size>)` | binning | `If()` range buckets, or `Floor([x]/n)*n` |
-| `Dual(text, num)` | dual text/number | keep the numeric part; surface text via a separate label column |
+| `Above/Below/Peek/Previous(...)` | inter-record (running total, MoM) | a workbook-level window fn (`*Over`) on a date-grouped element — NOT a DM calc col (those silently error); escalate to workbook build |
+| `Rank/HRank(...)` | ranking | `Rank()` is a Sigma **window** fn — build it in a grouping table, not a DM metric |
+| `Class(<field>, <size>, <label>)` w/ 3rd label arg | labeled binning | converter keeps the lower edge; add an `If()`-range label column if the text matters |
 | `GetSelectedCount / GetFieldSelections / GetCurrentSelections` | selection state | no Sigma equivalent — usually a control-driven measure; escalate |
-| Set Analysis `Sum({<F={v}>} X)` | (handled) | `SumIf([X], [F]=v)` — already validated; only scout exotic set modifiers |
+| Set Analysis with `$()`, `P()/E()`, search `"*x*"`, set operators `+/-/*` | too complex | hand-write `SumIf`/`CountIf`; for `$(=Max(YEAR))` use a date control or `Max` window |
 
 Spawn ONE scout per distinct pattern; run them in parallel — they're independent.
 

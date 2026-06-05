@@ -19,8 +19,8 @@ user-invocable: true
 
 **Read ALL of the following before replying or taking any action:**
 - `refs/sigma-build-gotchas.md` — the hard-won spec rules (SQL element, workbook master, YAML responses). **This is the difference between a 2xx that errors at query time and a working migration.**
-- The **Sigma data model converter MCP** ([github.com/twells89/sigma-data-model-mcp](https://github.com/twells89/sigma-data-model-mcp)) — provides the `convert_qlik_to_sigma` tool and documents the Sigma DM spec correctness rules.
-- The Sigma OpenAPI + the `sigma-workbooks` skill — canonical workbook spec. If `sigma-workbooks` is installed, defer to it; otherwise `refs/sigma-build-gotchas.md` here is self-sufficient for this migration.
+- The repo `~/Desktop/sigma-data-model-mcp/CLAUDE.md` — Sigma DM spec correctness rules + the verified CSA.TJ test connection.
+- `~/sigma-skills/sigma-workbooks/SKILL.md` + the Sigma OpenAPI — canonical workbook spec.
 
 ---
 
@@ -48,11 +48,10 @@ qlik-cli context (OAuth M2M or API key). `qlik context use <ctx>`.
 
 ### Sigma access
 ```bash
-bash -c 'eval "$(scripts/vendor/get-token.sh)"; <cmd>'   # sets SIGMA_BASE_URL + SIGMA_API_TOKEN (exchanges SIGMA_CLIENT_ID/SIGMA_CLIENT_SECRET)
+bash -c 'eval "$(~/sigma-skills-staging/tableau-to-sigma/scripts/get-token.sh)"; <cmd>'   # sets SIGMA_BASE_URL + SIGMA_API_TOKEN
 ```
 Need a Sigma connection pointing at the same warehouse as the Qlik app (for parity).
-Set `SIGMA_CONNECTION_ID` to **your** connection id (Sigma UI → Connections). *(For reference,
-our worked example used a Snowflake connection over the `CSA.TJ` retail schema — substitute your own.)*
+The verified CSA.TJ connection is `cb2f5180-641f-47bd-8efa-da9d590d855a` (Snowflake ymb68310).
 
 ---
 
@@ -69,8 +68,25 @@ Assemble into the converter's input JSON (`refs/example-converter-input.json`):
 ## Phase 2 — Translate (convert_qlik_to_sigma)
 Call `mcp__sigma-data-model__convert_qlik_to_sigma(model_json, connection_id, database, schema)`.
 Output = Sigma DM spec (warehouse-table elements + relationships on shared keys +
-metrics from measures + auto "Dim View" denormalized elements). Set Analysis is
-flagged + omitted (→ Sigma `SumIf`/`CountIf` cross-element; defer or hand-add).
+metrics from measures + auto "Dim View" denormalized elements).
+
+**Expression coverage (validated against live Sigma 2026-06-05):** the converter now
+auto-translates the common Qlik idioms instead of dropping them:
+- **Set Analysis (simple)** `Sum({<F={v}>} X)` → `Sum(If([F]=v, [X]))`; `{1}` (ignore
+  selections) → plain agg; `{<F-={v}>}` → `<>`; multi-value `{a,b}` → `or`-chain;
+  multi-flag → `and`-chain; `Count({<…>} DISTINCT X)` → `CountDistinct(If(…, [X]))`.
+- **Row-wise Range\*** (multi-arg): `RangeSum`→`a + b`, `RangeMax`→`Greatest`, `RangeMin`→`Least`, `RangeAvg`→`(a+b)/n`.
+- **Dual(text, num)** → numeric arg; **Class(x,n)** → `Floor([x]/n)*n`; **Count(DISTINCT x)** → `CountDistinct(x)`.
+
+**Still dropped (warned, not silently emitted):** `$(var)` dollar-expansion (would
+POST-block the whole DM), inter-record `Above/Below/Peek/Previous/RowNo`, ranking
+`Rank/HRank`, set-element `P()/E()`, `Aggr()`, `FirstSortedValue`, exotic set modifiers
+(search/`$()`/set operators). These → run the **gap-scout** (`scripts/gap-scout.md`).
+
+**Cross-element caveat:** a translated measure whose condition field lives on a *dim*
+(e.g. `Sum(If([Is Holiday]=1, [Net Revenue]))`) is placed on the fact element and the
+converter emits an `ℹ … references fields from N elements` warning — host that metric on
+the **denormalized element** (which carries all fields) or it errors as cross-element.
 
 ## Phase 3 — Build the Sigma data model  (`scripts/build-sigma-dm.py`)
 Reconcile the converter output to the real warehouse and POST:
@@ -119,8 +135,12 @@ app and cleans up) — qlik-cli's `object ls` does NOT list master items. The tw
 by DM/element/connection IDs at the top; generalize the table/column maps per app.
 
 ## Open work
-- ✅ Set Analysis → Sigma `SumIf` — validated (Holiday Revenue, exact parity). Put the flag column on the denorm element so it's not cross-element.
+- ✅ Set Analysis (simple) → `Sum(If(...))` — auto-translated in the converter + validated live (2026-06-05). Host dim-flag measures on the denorm element.
+- ✅ Range\*/Dual/Class/Count(DISTINCT) — auto-translated + validated.
+- ✅ `$(var)`/Above/Rank/P()/Aggr — drop+warn (no longer emitted verbatim; previously `$()` POST-blocked the whole DM).
+- ✅ Multi-fact metric placement — measures now land on the element that owns their fields (bare-name resolution), not always `elements[0]`.
 - ✅ Phase-3 reconciliation — `scripts/reconcile-columns.py` auto-derives it from the load-script `AS` aliases.
 - ✅ Before/after PNGs — `scripts/qlik-screenshot.py` (Qlik reporting API).
+- ✅ `scout-validate.py` kpi-chart bug fixed (`value.columnId`, was `value.id` → every kpi validation failed POST).
 - Companion `qlik-assessment` skill — built (sibling dir).
-- Remaining: feed the reconcile map directly into `build-sigma-dm.py` (currently the SQL element is hand-written); auto-place charts (layout heuristics) instead of fixed grids.
+- **Remaining (beads):** multi-fact relationship topology — two facts sharing dim keys still get fact↔fact links/fan-trap (`beads-sigma-uw5c`, relationship half); denorm "View" column bloat/dupes on multi-fact (`beads-sigma-hsua`); full multi-fact END-TO-END parity needs a real 2nd Snowflake fact + Qlik app (`task`). Aggr() guidance (`beads-sigma-16xc`). Feed reconcile map into `build-sigma-dm.py`; auto-layout charts.
