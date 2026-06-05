@@ -31,9 +31,9 @@ lastUpdated: 2026-05-28
 ## Overview
 Duration: 5
 
-This QuickStart **QS** walks through migrating a single Tableau dashboard to a Sigma workbook using **Claude Code** and the **tableau-to-sigma skill**. You'll point Claude at a Tableau dashboard URL and watch it discover the workbook structure, build (or reuse) a Sigma data model, generate the workbook spec, position the layout to mirror the source dashboard, and verify chart-level data parity against Tableau before declaring done.
+This QuickStart **QS** walks through migrating a single Tableau dashboard to a Sigma workbook using **your coding agent** (Claude Code, Cursor, Cortex Code, …) and the **tableau-to-sigma skill**. You'll point your agent at a Tableau dashboard URL and watch it discover the workbook structure, build (or reuse) a Sigma data model, generate the workbook spec, position the layout to mirror the source dashboard, and verify chart-level data parity against Tableau before declaring done.
 
-The skill is a structured set of Ruby scripts and an `SKILL.md` runbook that Claude follows phase-by-phase. It's been hardened against the four most common conversion regressions — silent Phase 6 skip, orphan workbooks left in the customer's My Documents, runtime errors past the gate, and the auto-stack single-column layout fallback. A final hard-gate script (`assert-phase6-ran.rb`) refuses to declare success unless every check passes.
+The skill is a structured set of Ruby scripts and an `SKILL.md` runbook that your agent follows phase-by-phase. It's been hardened against the four most common conversion regressions — silent Phase 6 skip, orphan workbooks left in the customer's My Documents, runtime errors past the gate, and the auto-stack single-column layout fallback. A final hard-gate script (`assert-phase6-ran.rb`) refuses to declare success unless every check passes.
 
 ![tts_arch](assets/tts_arch.png)
 
@@ -49,9 +49,9 @@ Sigma SEs, technical CSMs, and migration partners running 1:1 Tableau-to-Sigma c
 ### Prerequisites
 
 <ul>
-  <li><strong>Claude Code</strong> installed (CLI or desktop). The skill ships as a directory under <code>~/.claude/skills/tableau-to-sigma/</code>.</li>
-  <li><strong>Sigma API credentials</strong> — client ID + secret. Run <code>ruby scripts/setup.rb</code> once to write them to <code>~/.claude/settings.json</code>.</li>
-  <li><strong>Tableau access</strong> — either the Tableau MCP tools loaded in your Claude session (preferred) or a Tableau Personal Access Token via <code>ruby scripts/setup-tableau.rb</code> (PAT mode fallback). PAT mode is required when you need the workbook's <code>.twb</code> XML (most conversions).</li>
+  <li><strong>A coding agent that runs skills</strong> — Claude Code (CLI or desktop), Cursor, Cortex Code, etc. These skills are <strong>agent-neutral</strong>: each is a <code>SKILL.md</code> plus <code>scripts/</code>, indexed by <code>AGENTS.md</code> at the repo root. For Claude Code, the skill ships as a directory under <code>~/.claude/skills/tableau-to-sigma/</code>; other agents read the skill folder directly. Where this guide says "Claude," substitute your agent.</li>
+  <li><strong>Sigma API credentials</strong> — client ID + secret. Run <code>ruby scripts/setup.rb</code> once; it writes them to both <code>~/.claude/settings.json</code> (Claude Code auto-loads it) and a neutral <code>~/.sigma-migration/env</code> that the scripts auto-source under any agent.</li>
+  <li><strong>Tableau access</strong> — either the Tableau MCP tools loaded in your agent session (preferred) or a Tableau Personal Access Token via <code>ruby scripts/setup-tableau.rb</code> (PAT mode fallback). PAT mode is required when you need the workbook's <code>.twb</code> XML (most conversions).</li>
   <li>A target Tableau workbook you're authorized to convert. Sample dashboards live at <a href="https://public.tableau.com/app/profile/tableau.docs.team">Tableau Public's docs profile</a> if you don't have one handy.</li>
   <li>The source workbook's underlying tables must be reachable via a Sigma connection (Snowflake, BigQuery, Databricks, Redshift, Postgres, etc.). If the data only lives inside a Tableau extract, land it first with the <strong><code>tableau-vds-to-snowflake</code></strong> sibling skill — see the decision tree in the next section.</li>
 </ul>
@@ -123,21 +123,30 @@ Duration: 5
 ## **Install and Configure the Skill**
 Duration: 10
 
-The skill ships in the `sigma-migration-skills` marketplace. Install it in Claude Code:
+The skill ships in the `sigma-migration-skills` repo. Install depends on your agent:
 
+**Claude Code** (plugin marketplace):
 ```console
 /plugin marketplace add twells89/sigma-migration-skills
 /plugin install tableau-to-sigma@sigma-migration-skills
 ```
 
-Run the two setup scripts once per machine:
+**Other agents (Cursor, Cortex Code, …):** clone the repo and point your agent at the skill folder — `AGENTS.md` at the repo root maps each task to its skill. No marketplace step needed.
 
 ```console
-ruby ~/.claude/skills/tableau-to-sigma/scripts/setup.rb
-ruby ~/.claude/skills/tableau-to-sigma/scripts/setup-tableau.rb
+git clone https://github.com/twells89/sigma-migration-skills
+# then open the repo in your agent; the skill lives at
+#   plugins/tableau-to-sigma/skills/tableau-to-sigma/
 ```
 
-`setup.rb` writes `SIGMA_BASE_URL`, `SIGMA_CLIENT_ID`, and `SIGMA_CLIENT_SECRET` into Claude's settings. `setup-tableau.rb` writes your Tableau site URL + PAT name + token. Both prompt interactively and only need to run once.
+Run the two setup scripts once per machine (from the skill's `scripts/` directory):
+
+```console
+ruby scripts/setup.rb
+ruby scripts/setup-tableau.rb
+```
+
+`setup.rb` writes `SIGMA_BASE_URL`, `SIGMA_CLIENT_ID`, and `SIGMA_CLIENT_SECRET`; `setup-tableau.rb` writes your Tableau site URL + PAT name + token. Both write to **`~/.claude/settings.json`** (Claude Code auto-loads it) **and** a neutral **`~/.sigma-migration/env`** that the scripts auto-source under any agent — so credentials work the same everywhere. Both prompt interactively and only need to run once.
 
 <aside class="negative">
 <strong>NOTE:</strong><br> Tokens are 1-hour bearer tokens fetched on demand via <code>scripts/get-token.sh</code>. Never hard-code tokens in scripts — every long-running script in the skill re-fetches on cold start.
@@ -145,13 +154,13 @@ ruby ~/.claude/skills/tableau-to-sigma/scripts/setup-tableau.rb
 
 ![Alt text](assets/horizonalline.png)
 
-Verify the install by starting a fresh Claude Code session and typing:
+Verify the install. In **Claude Code**, start a fresh session and type:
 
 ```console
 /tableau-to-sigma
 ```
 
-Claude should respond with the skill's preamble — a short summary of phases and a prompt for a Tableau dashboard URL.
+Your agent should respond with the skill's preamble — a short summary of phases and a prompt for a Tableau dashboard URL. In **other agents**, ask it to read the skill's `SKILL.md` and begin a Tableau→Sigma migration.
 
 ![Footer](assets/sigma_footer.png)
 <!-- END OF SECTION -->

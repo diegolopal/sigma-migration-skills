@@ -15,10 +15,14 @@ Rebuilding Qlik Sense apps in a new BI tool by hand is slow and error-prone — 
 re-derive the data model from the load script, re-type every master measure, and
 hope the numbers still tie out.
 
-This quickstart automates the whole path with **Claude Code** + a set of Qlik→Sigma
-skills: it discovers a Qlik app, translates its master measures and expressions to
-Sigma formulas, builds a Sigma data model and matching workbook, and **verifies data
-parity** against the same warehouse — typically to the cent.
+This quickstart automates the whole path with **your coding agent** (Claude Code,
+Cursor, Cortex Code, …) + a set of Qlik→Sigma skills: it discovers a Qlik app,
+translates its master measures and expressions to Sigma formulas, builds a Sigma data
+model and matching workbook, and **verifies data parity** against the same warehouse —
+typically to the cent.
+
+positive
+: These skills are **agent-neutral** — each is a `SKILL.md` plus `scripts/`. `AGENTS.md` at the repo root maps each task to its skill, and the scripts auto-load credentials from `~/.sigma-migration/env`, so they run the same under any agent. Where this guide says "Claude Code," substitute your agent.
 
 positive
 : The Sigma side reads your warehouse **live**, so the migrated workbook stays current with no reload/extract step — a difference you'll see in the parity check when new rows land.
@@ -37,7 +41,7 @@ connection reaches the same warehouse the Qlik app loads from.
 ## Prerequisites
 Duration: 2
 
-- **Claude Code** (CLI or desktop) installed
+- **A coding agent that runs skills** — Claude Code (CLI or desktop), Cursor, Cortex Code, etc.
 - **qlik-cli** on your PATH (official; reaches both the REST API and the Engine/qix API — the Engine API is required for sheet/chart definitions, the data model, and the load script). Install the GitHub-release binary from `qlik-oss/qlik-cli`.
 - **Qlik Cloud access** — an API key *or* an OAuth client (Admin → OAuth). For creating/round-tripping content, an **M2M impersonation** client is ideal (acts as a real user so content is visible).
 - **Sigma API credentials** (`SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET`).
@@ -66,12 +70,14 @@ Duration: 5
    git clone --filter=blob:none --sparse https://github.com/sigmacomputing/quickstarts-public
    cd quickstarts-public && git sparse-checkout set qlik-migration-skills
    ```
-2. **Symlink the skills into Claude Code:**
-   ```bash
-   ln -s "$PWD/qlik-migration-skills/qlik-to-sigma"   ~/.claude/skills/qlik-to-sigma
-   ln -s "$PWD/qlik-migration-skills/qlik-assessment" ~/.claude/skills/qlik-assessment
-   ```
-3. **Sigma credentials** — export `SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET`; the skill's `scripts/vendor/get-token.sh` exchanges them for a `SIGMA_API_TOKEN`.
+2. **Make the skills available to your agent:**
+   - **Claude Code** — symlink them in:
+     ```bash
+     ln -s "$PWD/qlik-migration-skills/qlik-to-sigma"   ~/.claude/skills/qlik-to-sigma
+     ln -s "$PWD/qlik-migration-skills/qlik-assessment" ~/.claude/skills/qlik-assessment
+     ```
+   - **Other agents (Cursor, Cortex Code, …)** — no install step; open the repo and point your agent at the skill folder. `AGENTS.md` at the repo root indexes every skill.
+3. **Sigma credentials** — export `SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET` (or run `ruby scripts/setup.rb` in the tableau-to-sigma skill, which writes a neutral `~/.sigma-migration/env` the scripts auto-source under any agent). The skill's `scripts/vendor/get-token.sh` exchanges them for a `SIGMA_API_TOKEN`.
 4. **Qlik context** — create a qlik-cli context (do this in your own terminal so the secret stays out of any transcript):
    ```bash
    # API key (acts as you):
