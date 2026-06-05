@@ -1,12 +1,19 @@
 # Sigma migration skills
 
-A [Claude Code](https://claude.com/claude-code) **plugin marketplace** for migrating
-BI tools to [Sigma](https://www.sigmacomputing.com/). Each plugin is a pair of skills —
+A **plugin marketplace** of skills for migrating BI tools to
+[Sigma](https://www.sigmacomputing.com/). Each plugin is a pair of skills —
 a **converter** (rebuild the content in Sigma) and an **assessment** (inventory + complexity
 + a value/cost shortlist) — validated end-to-end with **parity checked against the source
 warehouse**, not just a best-effort port.
 
+**Works with any coding agent.** Install it as a [Claude Code](https://claude.com/claude-code)
+plugin, or use it from Cursor, Cortex Code, and others via [`AGENTS.md`](AGENTS.md) — the
+skills themselves are agent-neutral (a `SKILL.md` + `scripts/`), and credentials load from a
+shared `~/.sigma-migration/env` under any agent.
+
 ## Install
+
+**Claude Code** — add the marketplace and install the plugins you need:
 
 ```text
 /plugin marketplace add twells89/sigma-migration-skills
@@ -14,6 +21,14 @@ warehouse**, not just a best-effort port.
 /plugin install powerbi-to-sigma@sigma-migration-skills
 /plugin install qlik-to-sigma@sigma-migration-skills
 /plugin install thoughtspot-to-sigma@sigma-migration-skills
+```
+
+**Other agents (Cursor, Cortex Code, …)** — clone the repo and point your agent at the
+skill folders; [`AGENTS.md`](AGENTS.md) maps each task to its skill. For example, Cortex Code:
+
+```bash
+git clone https://github.com/twells89/sigma-migration-skills
+cortex skill add sigma-migration-skills/plugins/tableau-to-sigma/skills/tableau-to-sigma
 ```
 
 Then just describe what you want migrated — e.g. *"migrate this Power BI report to Sigma"* —
@@ -28,7 +43,7 @@ and the skill drives discovery → translation → build → parity.
 | [`qlik-to-sigma`](plugins/qlik-to-sigma/) | Qlik Sense / Cloud | `qlik-to-sigma`, `qlik-assessment` |
 | [`thoughtspot-to-sigma`](plugins/thoughtspot-to-sigma/) | ThoughtSpot | `thoughtspot-to-sigma`, `thoughtspot-assessment` |
 
-Once installed, skills are namespaced — e.g. `/powerbi-to-sigma:powerbi-assessment`.
+In Claude Code, installed skills are namespaced — e.g. `/powerbi-to-sigma:powerbi-assessment`.
 
 ## The shared shape
 
@@ -48,7 +63,7 @@ gotchas and `scripts/` the pipeline. Skills are self-contained — no external p
 
 ## Requirements
 
-- **Claude Code** with the [Sigma data model converter MCP](https://github.com/twells89/sigma-data-model-mcp) available (provides the `convert_*_to_sigma` tools).
+- **A coding agent that runs skills** (Claude Code, Cursor, Cortex Code, …) with the [Sigma data model converter MCP](https://github.com/twells89/sigma-data-model-mcp) available (provides the `convert_*_to_sigma` tools).
 - A **Sigma API token** and a Sigma **connection** pointing at the same warehouse as the source content (needed for the parity gate).
 - Per-tool source access — see each plugin's `refs/connection.md` (e.g. `qlik-cli` for Qlik; device-code / Fabric `getDefinition` for Power BI).
 
