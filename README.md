@@ -13,6 +13,7 @@ warehouse**, not just a best-effort port.
 /plugin install tableau-to-sigma@sigma-migration-skills
 /plugin install powerbi-to-sigma@sigma-migration-skills
 /plugin install qlik-to-sigma@sigma-migration-skills
+/plugin install thoughtspot-to-sigma@sigma-migration-skills
 ```
 
 Then just describe what you want migrated — e.g. *"migrate this Power BI report to Sigma"* —
@@ -25,6 +26,7 @@ and the skill drives discovery → translation → build → parity.
 | [`tableau-to-sigma`](plugins/tableau-to-sigma/) | Tableau | `tableau-to-sigma`, `tableau-assessment` |
 | [`powerbi-to-sigma`](plugins/powerbi-to-sigma/) | Power BI | `powerbi-to-sigma`, `powerbi-assessment` |
 | [`qlik-to-sigma`](plugins/qlik-to-sigma/) | Qlik Sense / Cloud | `qlik-to-sigma`, `qlik-assessment` |
+| [`thoughtspot-to-sigma`](plugins/thoughtspot-to-sigma/) | ThoughtSpot | `thoughtspot-to-sigma`, `thoughtspot-assessment` |
 
 Once installed, skills are namespaced — e.g. `/powerbi-to-sigma:powerbi-assessment`.
 
