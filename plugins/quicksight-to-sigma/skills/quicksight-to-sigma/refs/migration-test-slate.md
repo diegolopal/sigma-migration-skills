@@ -12,17 +12,32 @@ against this stack's known coverage + gaps.
   periodOverPeriod*, percentOfTotal, window*, percentile*Over) → `/* TODO */` placeholder;
   S3Source & SaaSTable → placeholder; analysis-level FilterGroups → skipped;
   ColumnConfigurations (formatting) → skipped; dataset-of-datasets → out of scope.
-- **Workbook builder** recreates: KPI, bar, line, donut/pie. NOT built: table, pivot, combo,
-  scatter, gauge, funnel, treemap, histogram, boxplot, waterfall, sankey, wordcloud, radar,
-  maps (geospatial/filled/layer), insight, customcontent, plugin.
+- **Workbook builder** recreates (native Sigma kind): KPI, bar, line, area, donut/pie,
+  combo, scatter, table, pivot, **region-map** (FilledMap + name-based GeospatialMap) and
+  **point-map** (GeospatialMap with real lat/long). Approximated (no native kind): gauge→kpi,
+  funnel/treemap→bar. NOT built — no Sigma element kind, emitted as a per-visual warning in
+  `<out>.warnings.json` + STDERR: histogram, heat-map, box-plot, waterfall, sankey, word-cloud,
+  radar, layer-map (multi-layer), insight (ML), customcontent, plugin, empty.
+  - **Sigma's real chart-kind universe** (confirmed against the public OpenAPI element union,
+    `/v2/workbooks/spec`, 2026-06-06): `kpi-chart`, `bar-chart`, `line-chart`, `area-chart`,
+    `pie-chart`, `donut-chart`, `scatter-chart`, `combo-chart`, `table`, `pivot-table`,
+    `point-map`, `region-map`, `geography-map` (+ non-chart `control`/`text`/`image`/`embed`/
+    `container`/`divider`). There is **no** histogram/heat-map/treemap/waterfall/box-plot/
+    radar/sankey/word-cloud kind — those names appear nowhere in the element union. `region-map`
+    persistence + query parity verified live (POST→readback→MCP query) on the D17 DM.
 
-## Visual catalog (API `Visual` union — 24 nodes)
-BUILT: `KPIVisual`, `BarChartVisual`, `LineChartVisual`, `PieChartVisual`.
-NOT BUILT: `ComboChartVisual`, `TableVisual`, `PivotTableVisual`, `ScatterPlotVisual`,
-`HeatMapVisual`, `GaugeChartVisual`, `FunnelChartVisual`, `TreeMapVisual`, `HistogramVisual`,
-`BoxPlotVisual`, `WaterfallVisual`, `SankeyDiagramVisual`, `WordCloudVisual`, `RadarChartVisual`,
-`GeospatialMapVisual`, `FilledMapVisual`, `LayerMapVisual`, `InsightVisual`,
-`CustomContentVisual`, `PluginVisual`, `EmptyVisual`(no-op).
+## Visual catalog (API `Visual` union — 24 nodes) — per-node build status
+**BUILT (native Sigma kind):** `KPIVisual`→kpi-chart, `BarChartVisual`→bar-chart,
+`LineChartVisual`→line-chart, `PieChartVisual`→pie/donut-chart, `ComboChartVisual`→combo-chart,
+`ScatterPlotVisual`→scatter-chart, `TableVisual`→table, `PivotTableVisual`→pivot-table,
+`FilledMapVisual`→**region-map**, `GeospatialMapVisual`→**region-map** (name-based) or
+**point-map** (lat/long).
+**APPROXIMATED (no exact kind):** `GaugeChartVisual`→kpi-chart, `FunnelChartVisual`→bar-chart,
+`TreeMapVisual`→bar-chart.
+**(c)-TAIL — no Sigma element kind, dropped with a per-visual warning:** `HeatMapVisual`,
+`HistogramVisual` (re-author as binned bar), `BoxPlotVisual`, `WaterfallVisual`,
+`SankeyDiagramVisual`, `WordCloudVisual`, `RadarChartVisual`, `LayerMapVisual` (multi-layer),
+`InsightVisual` (ML), `CustomContentVisual`, `PluginVisual`, `EmptyVisual` (no-op).
 
 ## Complexity axes (easy / medium / hard)
 - **A. Data topology**: 1 RelationalTable → CustomSql → multi-table JoinInstruction → dataset-of-datasets(out of scope). S3/SaaS sources = GAP.
@@ -54,8 +69,17 @@ NOT BUILT: `ComboChartVisual`, `TableVisual`, `PivotTableVisual`, `ScatterPlotVi
 - D14 **Visual actions**: filter + navigation(+param) + URL — actions GAP (inventory/warn).
 - D15 **Free-form layout** w/ overlap + text box + image.
 - D16 **Section-based** paginated report (header/footer/page-break) + table.
-- D17 **Maps**: geospatial points + filled choropleth.
+- D17 **Maps**: geospatial points + filled choropleth. **BUILT (2026-06-06):** both →
+  Sigma `region-map` (FilledMap STATE→us-state choropleth; GeospatialMap CITY→us-postal-place,
+  since the dataset carries geo NAMES not lat/long — point-map is auto-selected only when real
+  latitude+longitude fields are present). Live parity verified: avg-salary-by-state matches
+  Snowflake exactly. Was 0 chart elements → now 2.
 - D18 **Exotic zoo**: waterfall + sankey + boxplot + histogram + wordcloud + radar.
+  **(c)-TAIL — confirmed:** none of these six has a Sigma element kind (verified against the
+  OpenAPI element union). The builder now emits a per-visual warning manifest
+  (`wb-spec.warnings.json`) + STDERR for each instead of silently producing nothing. Was 0
+  chart elements / silent → now 0 chart elements + 6 explicit, reasoned warnings. DM still
+  posts clean (6 columns).
 
 **Tier 4 — very hard / governance + un-migratable:**
 - D19 **RLS + CLS** secured + conditional formatting (color rules, data bars) on a table.
@@ -64,9 +88,14 @@ NOT BUILT: `ComboChartVisual`, `TableVisual`, `PivotTableVisual`, `ScatterPlotVi
 
 ## Un-migratable → scope as known-(c)-tail, never "failed":
 `InsightVisual` ML (forecast/anomaly/narrative); `CustomContentVisual` (iframe/HTML); `PluginVisual`
-(Highcharts etc.); Sankey + map family (best-effort parity); SectionBasedLayout + free-form pixel
-overlap; cascading filter *actions*; SPICE ingestion metadata; dataset-of-datasets recursion.
-Always emit a partial migration + warning manifest for these.
+(Highcharts etc.); `SankeyDiagramVisual`, `RadarChartVisual`, `WordCloudVisual`, `BoxPlotVisual`,
+`WaterfallVisual`, `HistogramVisual`, `HeatMapVisual`, `LayerMapVisual` (each has NO Sigma element
+kind — confirmed against the OpenAPI element union, 2026-06-06); SectionBasedLayout + free-form
+pixel overlap; cascading filter *actions*; SPICE ingestion metadata; dataset-of-datasets recursion.
+The builder emits a structured `<out>.warnings.json` + STDERR line per dropped visual.
+**NOTE — the map family is NO LONGER (c)-tail:** `FilledMapVisual` and name/lat-long-based
+`GeospatialMapVisual` now build natively (Sigma `region-map`/`point-map`); only the multi-layer
+`LayerMapVisual` remains a warning.
 
 _Doc sources: QuickSight API_Visual, AnalysisDefinition, FilterGroup/FilterScopeConfiguration,
 LayoutConfiguration/GridLayoutConfiguration, custom-actions, table-calculation-functions, RLS/CLS, ML-insights._
