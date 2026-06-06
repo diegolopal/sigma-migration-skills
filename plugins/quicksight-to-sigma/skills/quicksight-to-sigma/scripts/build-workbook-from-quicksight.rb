@@ -290,7 +290,17 @@ defn['Sheets'].each do |sh|
     end
     eid = nid
     vis_map[inner['VisualId']] = eid
-    kind = 'donut-chart' if vtype == 'PieChartVisual' && inner.dig('ChartConfiguration', 'DonutOptions')
+    # PieChartVisual → pie-chart by default. Map to donut-chart ONLY when QuickSight
+    # is rendering a REAL donut: DonutOptions.ArcOptions.ArcThickness is present AND
+    # not 'WHOLE'. QuickSight's ArcThickness enum is WHOLE|SMALL|MEDIUM|LARGE — WHOLE
+    # means a solid pie (no hole), SMALL/MEDIUM/LARGE are donuts. (The QS console also
+    # emits a DonutOptions block for a plain pie, so presence of the key alone is not a
+    # donut signal — orders-overview "Net Revenue by Region"=MEDIUM stays a donut;
+    # D3 "Revenue Mix by Channel"=WHOLE becomes a pie.)
+    if vtype == 'PieChartVisual'
+      arc = inner.dig('ChartConfiguration', 'DonutOptions', 'ArcOptions', 'ArcThickness')
+      kind = 'donut-chart' if arc && arc.to_s.upcase != 'WHOLE'
+    end
     fw = (inner['ChartConfiguration'] || {})['FieldWells'] || {}
     w = fw.values.find { |x| x.is_a?(Hash) } || fw
     rol = ->(key) { (w[key] || []).map { |f| field_role(f) }.compact }
