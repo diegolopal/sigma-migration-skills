@@ -14,6 +14,7 @@
 #        --map /tmp/wb-spec.map.json --out /tmp/layout.xml
 require 'json'
 require 'optparse'
+require 'set'
 require_relative 'lib/layout'
 include SigmaLayout
 
@@ -56,115 +57,139 @@ def scale_cols(x, w, canvas)
   [c0, c1]
 end
 
-placed = []   # [elId, c0, c1, r0, r1]
-sheet = defn['Sheets'][0] || {}
-cfg = (sheet['Layouts'] || [{}])[0].fetch('Configuration', {})
 
-if (g = cfg['GridLayout'])
-  els = g['Elements'] || []
-  explicit = els.any? { |e| !e['ColumnIndex'].nil? }
-  if explicit
-    # Honor QuickSight's explicit ColumnIndex/RowIndex/ColumnSpan/RowSpan, scaling the
-    # columns by the sheet's INFERRED grid width (not a hardcoded 36) so the relative
-    # widths + the dashboard's overall horizontal extent are faithfully reproduced.
-    # Rows are kept in QS row-units (RowIndex/RowSpan map 1:1 to Sigma grid rows), which
-    # preserves relative heights + vertical arrangement. (beads-sigma — QS grid width)
-    grid_w = infer_grid_width(els)
-    els.each do |e|
-      eid = v2e[e['ElementId']]; next unless eid
-      c0, c1 = scale_cols(e['ColumnIndex'] || 0, e['ColumnSpan'] || (grid_w / 2), grid_w)
-      r0 = (e['RowIndex'] || 0) + 1
-      r1 = r0 + (e['RowSpan'] || 8)
-      placed << [eid, c0, c1, r0, r1]
-    end
-  else
-    # auto-flow by span: wrap when the running column exceeds the inferred grid width
-    grid_w = infer_grid_width(els)
-    grid_w = GRID if grid_w <= 0
-    col = 0; row = 1; row_h = 0
-    els.each do |e|
-      eid = v2e[e['ElementId']]; next unless eid
-      span = e['ColumnSpan'] || (grid_w / 2)
-      col = 0 if col + span > grid_w
-      row += row_h if col.zero? && row_h.positive?
-      c0, c1 = scale_cols(col, span, grid_w)
-      h = (e['RowSpan'] || 12)
-      placed << [eid, c0, c1, row, row + h]
-      col += span; row_h = [row_h, h].max
-      if col >= grid_w
-        col = 0; row += row_h; row_h = 0
-      end
-    end
-  end
-elsif (sb = cfg['SectionBasedLayout'])
-  # QuickSight paginated/section layout (header/body/footer). Sigma has no page-section
-  # concept; flatten every section's free-form sub-elements into a single stacked column
-  # in document order so the report's vertical sequence is preserved. (D16 paginated)
-  sects = []
-  sects.concat(sb['HeaderSections'] || [])
-  sects.concat(sb['BodySections'] || [])
-  sects.concat(sb['FooterSections'] || [])
-  row = 1
-  sects.each do |sec|
-    sec_els = (sec.dig('Content', 'Layout', 'FreeFormLayout', 'Elements') || sec['Elements'] || [])
-    cw = sec_els.map { |e| num(e['XAxisLocation']) + num(e['Width']) }.max
-    cw = 1.0 if cw.nil? || cw <= 0
-    sec_els.each do |e|
-      eid = v2e[e['ElementId']]; next unless eid
-      c0, c1 = scale_cols(num(e['XAxisLocation']), num(e['Width']), cw)
-      h = [(num(e['Height']) / 40.0).round, 4].max
-      placed << [eid, c0, c1, row, row + h]
-      row += h
-    end
-  end
-elsif (f = cfg['FreeFormLayout'])
-  els = f['Elements'] || []
-  cw = els.map { |e| num(e['XAxisLocation']) + num(e['Width']) }.max || 1.0
-  ch_unit = 40.0 # ~px per Sigma row
-  els.each do |e|
-    eid = v2e[e['ElementId']]; next unless eid
-    c0, c1 = scale_cols(num(e['XAxisLocation']), num(e['Width']), cw <= 0 ? 1 : cw)
-    r0 = (num(e['YAxisLocation']) / ch_unit).round + 1
-    r1 = r0 + [(num(e['Height']) / ch_unit).round, 4].max
-    placed << [eid, c0, c1, r0, r1]
-  end
-end
-
-# fallback: 2-per-row flow over whatever elements we have a mapping for
-if placed.empty?
-  col = 1; row = 1
-  v2e.each_value do |eid|
-    if col > 13
-      col = 1; row += 12
-    end
-    placed << [eid, col, col + 12, row, row + 12]
-    col += 12
-  end
-end
-
-# Collision guard (D15 free-form overlap → Sigma rejects "Element collisions").
-# Two elements collide when their column AND row ranges both overlap. If ANY pair
-# collides, fall back to a clean stacked layout: full-width rows in placement
-# order, each a fixed height. (beads-sigma — free-form overlap)
+# Collision guard helper (D15 free-form overlap -> Sigma rejects "Element collisions").
+# Two elements collide when their column AND row ranges both overlap.
 def collides?(a, b)
   _, ac0, ac1, ar0, ar1 = a
   _, bc0, bc1, br0, br1 = b
   (ac0 < bc1 && bc0 < ac1) && (ar0 < br1 && br0 < ar1)
 end
-overlap = placed.combination(2).any? { |a, b| collides?(a, b) }
-if overlap
-  STDERR.puts "layout: detected element collisions in free-form layout — collapsing #{placed.size} elements to stacked rows"
-  row = 1; row_h = 12
-  placed = placed.map do |eid, _c0, _c1, _r0, _r1|
-    r0 = row; row += row_h
-    [eid, 1, SIG + 1, r0, r0 + row_h]
+
+# Lay out ONE QuickSight sheet onto a Sigma grid. Returns [[elId, c0, c1, r0, r1], ...]
+# using ONLY the element ids that belong to this sheet (eids_for_sheet) so a multi-sheet
+# analysis lays out each page from its OWN sheet's QS layout (no cross-sheet bleed).
+def layout_sheet(sheet, v2e, eids_for_sheet)
+  cfg = (sheet['Layouts'] || [{}])[0].fetch('Configuration', {})
+  placed = []
+  if (g = cfg['GridLayout'])
+    els = g['Elements'] || []
+    explicit = els.any? { |e| !e['ColumnIndex'].nil? }
+    if explicit
+      grid_w = infer_grid_width(els)
+      els.each do |e|
+        eid = v2e[e['ElementId']]; next unless eid && eids_for_sheet.include?(eid)
+        c0, c1 = scale_cols(e['ColumnIndex'] || 0, e['ColumnSpan'] || (grid_w / 2), grid_w)
+        r0 = (e['RowIndex'] || 0) + 1
+        r1 = r0 + (e['RowSpan'] || 8)
+        placed << [eid, c0, c1, r0, r1]
+      end
+    else
+      grid_w = infer_grid_width(els); grid_w = GRID if grid_w <= 0
+      col = 0; row = 1; row_h = 0
+      els.each do |e|
+        eid = v2e[e['ElementId']]; next unless eid && eids_for_sheet.include?(eid)
+        span = e['ColumnSpan'] || (grid_w / 2)
+        col = 0 if col + span > grid_w
+        row += row_h if col.zero? && row_h.positive?
+        c0, c1 = scale_cols(col, span, grid_w)
+        h = (e['RowSpan'] || 12)
+        placed << [eid, c0, c1, row, row + h]
+        col += span; row_h = [row_h, h].max
+        if col >= grid_w
+          col = 0; row += row_h; row_h = 0
+        end
+      end
+    end
+  elsif (sb = cfg['SectionBasedLayout'])
+    # QuickSight paginated/section layout (header/body/footer). Sigma has no page-section
+    # concept; flatten every section's free-form sub-elements into a single stacked column
+    # in document order so the report's vertical sequence is preserved. (D16 paginated)
+    sects = []
+    sects.concat(sb['HeaderSections'] || [])
+    sects.concat(sb['BodySections'] || [])
+    sects.concat(sb['FooterSections'] || [])
+    row = 1
+    sects.each do |sec|
+      sec_els = (sec.dig('Content', 'Layout', 'FreeFormLayout', 'Elements') || sec['Elements'] || [])
+      cw = sec_els.map { |e| num(e['XAxisLocation']) + num(e['Width']) }.max
+      cw = 1.0 if cw.nil? || cw <= 0
+      sec_els.each do |e|
+        eid = v2e[e['ElementId']]; next unless eid && eids_for_sheet.include?(eid)
+        c0, c1 = scale_cols(num(e['XAxisLocation']), num(e['Width']), cw)
+        h = [(num(e['Height']) / 40.0).round, 4].max
+        placed << [eid, c0, c1, row, row + h]
+        row += h
+      end
+    end
+  elsif (f = cfg['FreeFormLayout'])
+    els = f['Elements'] || []
+    cw = els.map { |e| num(e['XAxisLocation']) + num(e['Width']) }.max || 1.0
+    ch_unit = 40.0 # ~px per Sigma row
+    els.each do |e|
+      eid = v2e[e['ElementId']]; next unless eid && eids_for_sheet.include?(eid)
+      c0, c1 = scale_cols(num(e['XAxisLocation']), num(e['Width']), cw <= 0 ? 1 : cw)
+      r0 = (num(e['YAxisLocation']) / ch_unit).round + 1
+      r1 = r0 + [(num(e['Height']) / ch_unit).round, 4].max
+      placed << [eid, c0, c1, r0, r1]
+    end
   end
+
+  # fallback: 2-per-row flow over this sheet's mapped elements (preserving sheet order)
+  if placed.empty?
+    sheet_eids = (sheet['Visuals'] || []).map { |v| _t, inner = v.first; v2e[inner['VisualId']] }
+                                          .compact.select { |eid| eids_for_sheet.include?(eid) }
+    col = 1; row = 1
+    sheet_eids.each do |eid|
+      if col > 13
+        col = 1; row += 12
+      end
+      placed << [eid, col, col + 12, row, row + 12]
+      col += 12
+    end
+  end
+
+  # collision guard: collapse to stacked full-width rows if any pair overlaps
+  if placed.combination(2).any? { |a, b| collides?(a, b) }
+    STDERR.puts "layout: collisions on sheet \"#{sheet['Name']}\" -> collapsing #{placed.size} elements to stacked rows"
+    row = 1; row_h = 12
+    placed = placed.map { |eid, _c0, _c1, _r0, _r1| r0 = row; row += row_h; [eid, 1, SIG + 1, r0, r0 + row_h] }
+  end
+  [placed, cfg.keys.first || 'flow-fallback']
 end
 
-dash_children = placed.map { |eid, c0, c1, r0, r1| le(eid, c0, c1, r0, r1) }
-data_page = page_xml('page-data', le(map['masterElementId'], 1, 25, 1, 15))
-dash_page = page_xml(map['dashPageId'], *dash_children)
+# ----- assemble: one Sigma page per QS sheet (plus the shared Data page) -----
+# The map's sheetPages (written by build-workbook-from-quicksight.rb) tells us which
+# Sigma page each QS sheet maps to. Fall back to the legacy single dashPageId when an
+# older map (no sheetPages) is supplied.
+sheet_pages = map['sheetPages']
+sheets = defn['Sheets'] || []
+pages_xml = []
+total_placed = 0
 
-File.write(opts[:out], assemble(data_page, dash_page))
-STDERR.puts "layout: #{placed.size} elements mapped from QuickSight #{cfg.keys.first || 'flow-fallback'} → #{opts[:out]}"
-placed.each { |eid, c0, c1, r0, r1| STDERR.puts "  #{eid}  col #{c0}-#{c1}  row #{r0}-#{r1}" }
+if sheet_pages && !sheet_pages.empty?
+  sheet_pages.each do |sp|
+    idx = sp['sheetIndex']
+    sheet = sheets[idx] || {}
+    # element ids that belong to THIS sheet = the elements for this sheet's visuals
+    eids_for_sheet = (sheet['Visuals'] || []).map { |v| _t, inner = v.first; v2e[inner['VisualId']] }.compact.to_set
+    placed, src = layout_sheet(sheet, v2e, eids_for_sheet)
+    total_placed += placed.size
+    children = placed.map { |eid, c0, c1, r0, r1| le(eid, c0, c1, r0, r1) }
+    pages_xml << page_xml(sp['pageId'], *children)
+    STDERR.puts "layout: page \"#{sp['name']}\" (#{sp['pageId']}) <- QS sheet[#{idx}] #{src}: #{placed.size} element(s)"
+    placed.each { |eid, c0, c1, r0, r1| STDERR.puts "  #{eid}  col #{c0}-#{c1}  row #{r0}-#{r1}" }
+  end
+else
+  # legacy single-page path (old map without sheetPages)
+  all_eids = v2e.values.to_set
+  placed, src = layout_sheet(sheets[0] || {}, v2e, all_eids)
+  total_placed += placed.size
+  children = placed.map { |eid, c0, c1, r0, r1| le(eid, c0, c1, r0, r1) }
+  pages_xml << page_xml(map['dashPageId'], *children)
+  STDERR.puts "layout: #{placed.size} elements mapped from QuickSight #{src} (legacy single-page)"
+end
+
+data_page = page_xml('page-data', le(map['masterElementId'], 1, 25, 1, 15))
+File.write(opts[:out], assemble(data_page, *pages_xml))
+STDERR.puts "layout: #{total_placed} elements across #{pages_xml.size} page(s) -> #{opts[:out]}"

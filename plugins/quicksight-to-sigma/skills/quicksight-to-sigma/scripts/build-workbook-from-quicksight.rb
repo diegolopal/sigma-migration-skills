@@ -44,6 +44,18 @@ end.parse!
 
 an = JSON.parse(File.read(opts[:an]))
 defn = an['Definition']
+# QuickSight what-if PARAMETERS (Decimal/Integer/String/DateTime ParameterDeclaration).
+# A calc field references a parameter as ${ParamName}. Sigma has no 1:1 parameter inside a
+# data-model formula, so for parity we inline the parameter's DEFAULT value as a constant
+# (the default-view value the QS dashboard shows on load). This is recorded as a warning so
+# the (interactive) what-if control is understood to be a manual re-author in Sigma.
+PARAM_DEFAULTS = {}
+(defn['ParameterDeclarations'] || []).each do |pd|
+  decl = pd.values.first
+  next unless decl.is_a?(Hash) && decl['Name']
+  dv = (decl.dig('DefaultValues', 'StaticValues') || [])[0]
+  PARAM_DEFAULTS[decl['Name']] = dv unless dv.nil?
+end
 rb = JSON.parse(File.read(opts[:rb]))
 dm_id = rb['dataModelId']
 
@@ -159,8 +171,14 @@ def qs_window_func?(expr)
 end
 
 # minimal QuickSight-expr → Sigma-formula translator for calc fields referenced by visuals
-def qs_expr_to_sigma(expr, dmel)
+def qs_expr_to_sigma(expr, dmel, params = {})
   s = expr.to_s.dup
+  # ${Param} -> inlined default constant (what-if parameters have no DM-formula equivalent).
+  s = s.gsub(/\$\{([^}]+)\}/) do
+    nm = Regexp.last_match(1).strip
+    v = params[nm]
+    v.nil? ? '0' : (v.is_a?(String) ? "\"#{v}\"" : v.to_s)
+  end
   s = s.gsub(/\{([^}]+)\}/) { "[#{dmel}/#{disp(Regexp.last_match(1).strip)}]" }
   s = s.gsub('<>', '!=')
   s = s.gsub(/\bifelse\s*\(/i, 'If(')
@@ -355,7 +373,7 @@ def master_ref(colname, calc, master_cols, dmel)
                                '_window' => true }
       return master_cols[colname]
     end
-    formula = qs_expr_to_sigma(calc[colname], dmel); nm = colname
+    formula = qs_expr_to_sigma(calc[colname], dmel, defined?(PARAM_DEFAULTS) ? PARAM_DEFAULTS : {}); nm = colname
   else
     formula = "[#{dmel}/#{disp(colname)}]"; nm = disp(colname)
   end
@@ -405,9 +423,27 @@ def meas_col(role, calc, mc, dmel, m)
      'format' => NUM.(fmt_for(ref['name'])) }, id]
 end
 
-elements = []
-vis_map = {}
-defn['Sheets'].each do |sh|
+# D12: a measure that resolves to a QuickSight window / table-calc field (runningSum,
+# percentOfTotal, rank, difference, ...) is neutralized to Null in the master (it can't
+# be a live Sigma formula). Surfacing those as columns in a chart/table renders BLANK
+# columns that look broken. We DROP such measures from the workbook ELEMENT (they stay
+# in the data model's master with their original expr in the description, so the intent
+# is preserved and re-authorable) and record a per-visual warning.
+def window_meas?(role, calc)
+  return false unless role && role[0] == :meas
+  name = role[1]
+  calc.key?(name) && qs_window_func?(calc[name])
+end
+
+# MULTI-SHEET -> MULTI-PAGE (the big fidelity fix): every QuickSight SHEET becomes its
+# own Sigma PAGE (page name = sheet name), each page holding only that sheet's visuals.
+# Previously ALL sheets flattened onto a single "page-dash", so the layout step (which
+# only read Sheets[0]) silently lost every visual on sheet 2..N. We now collect elements
+# PER SHEET and record the sheet<->page<->visual mapping for the layout step.
+sheet_pages = []   # [{ "pageId"=>, "name"=>, "sheetIndex"=>, "elements"=>[...] }]
+vis_map = {}       # QS VisualId -> Sigma element id (globally unique within an analysis)
+defn['Sheets'].each_with_index do |sh, sheet_idx|
+  elements = []
   (sh['Visuals'] || []).each do |v|
     vtype, inner = v.first
     title = (inner.dig('Title', 'FormatText', 'PlainText') || (inner.is_a?(Hash) ? inner['VisualId'] : nil) || vtype)
@@ -470,6 +506,15 @@ defn['Sheets'].each do |sh|
         dims = [[:dim, vals[0][1], nil]]
         vals = [[:meas, vals[0][1], 'COUNT']]
       end
+      # D12: drop null window/table-calc measures (they render as blank series); keep them
+      # in the DM master. If none survive, the chart has nothing to plot -> skip it.
+      dropped_w = vals.select { |mv| window_meas?(mv, calc) }
+      dropped_w.each { |mv| build_warnings << { 'visual' => title, 'type' => 'WindowCalcColumn', 'reason' => "measure '#{mv[1]}' is a QuickSight window/table-calc - dropped from the chart (kept in the data model); re-author in Sigma" } }
+      vals -= dropped_w
+      if vals.empty?
+        STDERR.puts "  ! skipped #{kind} (#{title}): only measure(s) were QuickSight window/table-calc (null in Sigma)"
+        next
+      end
       (next if dims.empty? || vals.empty?)
       # D20: a date dimension carrying a QS DateGranularity (e.g. MONTH on a line chart)
       # is truncated to that grain so the x-axis aggregates by month/quarter/year instead
@@ -495,17 +540,37 @@ defn['Sheets'].each do |sh|
       el = base.merge('columns' => [dc, mc2], 'color' => { 'id' => did }, 'value' => { 'id' => mid })
     when 'combo-chart'
       dims = rol.('Category'); bars = rol.('BarValues'); lines = rol.('LineValues')
+      [bars, lines].each do |arr|
+        arr.select { |mv| window_meas?(mv, calc) }.each do |mv|
+          build_warnings << { 'visual' => title, 'type' => 'WindowCalcColumn', 'reason' => "measure '#{mv[1]}' is a QuickSight window/table-calc - dropped from the combo chart (kept in the data model)" }
+        end
+      end
+      bars  = bars.reject  { |mv| window_meas?(mv, calc) }
+      lines = lines.reject { |mv| window_meas?(mv, calc) }
+      if bars.empty? && lines.empty?
+        STDERR.puts "  ! skipped combo-chart (#{title}): only measure(s) were QuickSight window/table-calc"
+        next
+      end
       (next if dims.empty? || (bars.empty? && lines.empty?))
       dc, did = dim_col(dims[0], calc, master_cols, DMEL, M); cols = [dc]; ycids = []
       bars.each  { |mv| c, id = meas_col(mv, calc, master_cols, DMEL, M); cols << c; ycids << id }
       lines.each { |mv| c, id = meas_col(mv, calc, master_cols, DMEL, M); cols << c; ycids << { 'columnId' => id, 'type' => 'line' } }
       el = base.merge('columns' => cols, 'xAxis' => { 'columnId' => did }, 'yAxis' => { 'columnIds' => ycids })
     when 'scatter-chart'
-      xs = rol.('XAxis'); ys = rol.('YAxis'); cat = rol.('Category'); (next if xs.empty? || ys.empty?)
+      xs = rol.('XAxis'); ys = rol.('YAxis'); cat = rol.('Category'); sz = rol.('Size')
+      (next if xs.empty? || ys.empty?)
       xc, xid = meas_col(xs[0], calc, master_cols, DMEL, M); yc, yid = meas_col(ys[0], calc, master_cols, DMEL, M)
       el = base.merge('columns' => [xc, yc], 'xAxis' => { 'columnId' => xid }, 'yAxis' => { 'columnIds' => [yid] })
       if cat.any?
         dc, did = dim_col(cat[0], calc, master_cols, DMEL, M); el['columns'] << dc; el['color'] = { 'by' => 'category', 'column' => did }
+      end
+      # D8: QuickSight scatter Size (bubble radius). Sigma scatter has no verified spec
+      # size/radius channel (mirrors bar/line shape: xAxis+yAxis+color only), so we PROJECT
+      # the size measure as a column (data migrates + available in the element) and record a
+      # warning that bubble-sizing itself is a Sigma UI-only/limitation, not data loss.
+      if sz.any?
+        szc, _szid = meas_col(sz[0], calc, master_cols, DMEL, M); el['columns'] << szc
+        build_warnings << { 'visual' => title, 'type' => 'ScatterBubbleSize', 'reason' => "QuickSight scatter bubble-size ('#{sz[0][1]}') has no Sigma scatter size channel; the measure is projected as a column but bubbles render uniform-size (Sigma limitation)" }
       end
     when 'table'
       cf_fieldmap = {}   # QS FieldId -> Sigma column id (for D19 conditional formatting)
@@ -518,6 +583,15 @@ defn['Sheets'].each do |sh|
       else
         dims = rol.('GroupBy'); vals = rol.('Values')
         raw_dims = (w['GroupBy'] || []); raw_vals = (w['Values'] || [])
+      end
+      # D12: drop null window/table-calc measures from the TABLE (blank columns look broken);
+      # they remain in the DM master with their original expr in the description.
+      unless is_fallback
+        keep_idx = vals.each_index.reject { |i| window_meas?(vals[i], calc) }
+        dropped_idx = vals.each_index.to_a - keep_idx
+        dropped_idx.each { |i| build_warnings << { 'visual' => title, 'type' => 'WindowCalcColumn', 'reason' => "column '#{vals[i][1]}' is a QuickSight window/table-calc - dropped from the table (kept in the data model); re-author in Sigma" } }
+        vals = keep_idx.map { |i| vals[i] }
+        raw_vals = keep_idx.map { |i| raw_vals[i] }
       end
       cols = []; gids = []; cids = []
       dims.each_with_index { |d, i| c, id = dim_col(d, calc, master_cols, DMEL, M); cols << c; gids << id; (fi = field_id(raw_dims[i])) && (cf_fieldmap[fi] = id) }
@@ -572,9 +646,24 @@ defn['Sheets'].each do |sh|
     end
     elements << el if el
   end
+  # one Sigma page per QS sheet (skip a sheet that produced zero elements)
+  pid = sheet_idx.zero? ? 'page-dash' : "page-sheet-#{sheet_idx}"
+  sheet_pages << { 'pageId' => pid, 'name' => (sh['Name'] || "Sheet #{sheet_idx + 1}"),
+                   'sheetIndex' => sheet_idx, 'elements' => elements }
+end
+
+# Record a (c)-tail warning for any what-if PARAMETER inlined as a constant (the
+# interactive control itself is a manual Sigma re-author; the default value is what
+# the migrated workbook shows).
+PARAM_DEFAULTS.each do |nm, dv|
+  used = (defn['CalculatedFields'] || []).any? { |c| c['Expression'].to_s.include?("${#{nm}}") }
+  next unless used
+  build_warnings << { 'visual' => '(parameter)', 'type' => 'WhatIfParameter',
+                      'reason' => "QuickSight what-if parameter '#{nm}' inlined as its default (#{dv}); add a Sigma control to make it interactive" }
 end
 
 # strip the private _window marker before emit
+
 master_cols.each_value { |c| c.delete('_window'); c.delete('description') if c['formula'] != 'Null' }
 
 master = { 'id' => 'master', 'name' => M, 'kind' => 'table', 'visibleAsSource' => false,
@@ -607,15 +696,34 @@ end
 # refresh master columns (master_ref may have added the filter column)
 master['columns'] = master_cols.values
 
+# Build one Sigma page per QS sheet. A sheet that produced zero elements is still
+# emitted (named after the sheet) so the page exists — but a single dash page is the
+# common case. The shared Data page (master) is always page 0.
+dash_pages = sheet_pages.map do |sp|
+  { 'id' => sp['pageId'], 'name' => sp['name'], 'elements' => sp['elements'] }
+end
+# defensive: if an analysis somehow had no sheets, keep an empty dash page so the
+# workbook is still valid.
+if dash_pages.empty?
+  dash_pages = [{ 'id' => 'page-dash', 'name' => (an['Name'] || 'Dashboard'), 'elements' => [] }]
+  sheet_pages = [{ 'pageId' => 'page-dash', 'name' => (an['Name'] || 'Dashboard'), 'sheetIndex' => 0, 'elements' => [] }]
+end
+
 spec = { 'name' => (an['Name'] || 'QuickSight Migration') + ' (from QuickSight)',
          'schemaVersion' => 1,
-         'pages' => [{ 'id' => 'page-data', 'name' => 'Data', 'elements' => [master] },
-                     { 'id' => 'page-dash', 'name' => (an['Name'] || 'Dashboard'), 'elements' => elements }] }
+         'pages' => [{ 'id' => 'page-data', 'name' => 'Data', 'elements' => [master] }] + dash_pages }
 spec['folderId'] = opts[:folder] if opts[:folder]
 
 File.write(opts[:out], JSON.pretty_generate(spec))
 map_out = opts[:out].sub(/\.json$/, '') + '.map.json'
-File.write(map_out, JSON.pretty_generate('dashPageId' => 'page-dash', 'masterElementId' => 'master', 'visualToElement' => vis_map))
+# Map carries: the legacy single dashPageId (= first sheet's page, for back-compat),
+# the per-sheet page list (sheetIndex -> pageId/name) so the layout step lays out EACH
+# page from its OWN sheet's QS layout, and the global visual->element map.
+File.write(map_out, JSON.pretty_generate(
+  'dashPageId' => (sheet_pages.first && sheet_pages.first['pageId']) || 'page-dash',
+  'masterElementId' => 'master',
+  'sheetPages' => sheet_pages.map { |sp| { 'pageId' => sp['pageId'], 'name' => sp['name'], 'sheetIndex' => sp['sheetIndex'] } },
+  'visualToElement' => vis_map))
 
 # Persist a machine-readable per-visual warning manifest for any QuickSight visual
 # Sigma can't recreate (sankey/radar/box-plot/waterfall/word-cloud/histogram/heat-map/
@@ -624,8 +732,12 @@ File.write(map_out, JSON.pretty_generate('dashPageId' => 'page-dash', 'masterEle
 warn_out = opts[:out].sub(/\.json$/, '') + '.warnings.json'
 File.write(warn_out, JSON.pretty_generate('warnings' => build_warnings))
 
-STDERR.puts "workbook spec: master sources DM element \"#{DMEL}\" (#{dm_el}); #{elements.size} chart elements, #{master_cols.size} master cols#{applied_filters.empty? ? '' : "; #{applied_filters.size} filter(s) applied"} → #{opts[:out]} (+ #{map_out})"
-elements.each { |e| STDERR.puts "  - #{e['kind']}: #{e['name']}" }
+all_elements = sheet_pages.flat_map { |sp| sp['elements'] }
+STDERR.puts "workbook spec: master sources DM element \"#{DMEL}\" (#{dm_el}); #{sheet_pages.size} page(s)/#{all_elements.size} chart elements, #{master_cols.size} master cols#{applied_filters.empty? ? '' : "; #{applied_filters.size} filter(s) applied"} → #{opts[:out]} (+ #{map_out})"
+sheet_pages.each do |sp|
+  STDERR.puts "  page \"#{sp['name']}\" (#{sp['pageId']}): #{sp['elements'].size} element(s)"
+  sp['elements'].each { |e| STDERR.puts "    - #{e['kind']}: #{e['name']}" }
+end
 unless build_warnings.empty?
   fb, dropped = build_warnings.partition { |w| QS_FALLBACK.key?(w['type']) }
   STDERR.puts "#{build_warnings.size} visual(s) with no native Sigma kind → #{warn_out}" \
