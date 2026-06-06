@@ -93,25 +93,44 @@ dm_spec = opts[:dmspec] && File.exist?(opts[:dmspec]) ? JSON.parse(File.read(opt
 needed_disp = needed_resolved.map { |c| disp(c) }.to_set
 
 best = nil
+best_idx = nil
 if dm_spec
   spec_els = (dm_spec['pages'] || []).flat_map { |pg| pg['elements'] || [] }
-  scored = spec_els.map do |el|
+  scored = spec_els.each_with_index.map do |el, i|
     names = (el['columns'] || []).map { |c| c['name'] }.compact.to_set
     cover = needed_disp.count { |d| names.include?(d) }
-    [cover, (el['columns'] || []).size, el['name']]
+    [cover, (el['columns'] || []).size, el['name'], i]
   end
   # most coverage; tie-break on more columns (the denormalized view wins)
-  top = scored.max_by { |cover, ncols, _| [cover, ncols] }
+  top = scored.max_by { |cover, ncols, _name, _i| [cover, ncols] }
   best = top && top[2]
+  best_idx = top && top[3]
 end
 
 rb_els = (rb['pages'] || []).flat_map { |pg| pg['elements'] || [] }
 dm_el_obj =
   if best
-    rb_els.find { |e| e['name'] == best } || rb_els.first
+    # DM element names can COLLIDE (e.g. two "D20 Kitchen Sink" elements: a source +
+    # the denormalized join). Selecting by name alone would grab the first match and
+    # miss the join element that actually covers the charted columns. The dm-spec and
+    # dm-readback element lists are in the same order, so prefer the readback element at
+    # the winning spec index; fall back to name match, then first.
+    (best_idx && rb_els[best_idx]) || rb_els.find { |e| e['name'] == best } || rb_els.first
+  elsif rb_els.any? { |e| (e['columns'] || []).any? }
+    # No dm-spec, but the readback carries column names: score coverage directly off the
+    # readback so we pick the element that actually COVERS the charted columns (handles
+    # name-collision + arbitrary element ordering — beads D20). Tie-break on more columns
+    # (the denormalized join wins).
+    scored_rb = rb_els.map do |el|
+      names = (el['columns'] || []).map { |c| c['name'] }.compact.to_set
+      cover = needed_disp.count { |d| names.include?(d) }
+      [cover, (el['columns'] || []).size, el]
+    end
+    top = scored_rb.max_by { |cover, ncols, _| [cover, ncols] }
+    (top && top[2]) || rb_els.first
   else
-    # no dm-spec: pick the readback element with the most columns isn't available,
-    # so prefer the last (synthesized join element is appended last) else first.
+    # no dm-spec and no readback columns: prefer the last (synthesized join element is
+    # appended last) else first.
     rb_els.last || rb_els.first
   end
 abort 'no DM elements in readback' unless dm_el_obj
@@ -160,8 +179,68 @@ def field_role(f)
   elsif (df = f['CategoricalDimensionField'])
     [:dim, df['Column']['ColumnName'], nil]
   elsif (df = f['DateDimensionField'])
-    [:dim, df['Column']['ColumnName'], nil]
+    # 4th tuple slot carries the QS DateGranularity (YEAR/QUARTER/MONTH/WEEK/DAY/...)
+    # so a date x-axis can be truncated to that grain (D20 line-chart monthly).
+    [:dim, df['Column']['ColumnName'], nil, df['DateGranularity']]
   end
+end
+
+# Generic field-well flattener for the D18 fallback path. The unsupported QS visual
+# types use non-standard well names (Categories / Source / Destination / Weight /
+# GroupBy / Size / Color / ...), so the named-well lambda in the dispatch cannot find
+# them. This walks EVERY well in the field-well object, in document order, and returns
+# [dims, measures] (each an array of field_role tuples). Used only for fallbacks.
+def all_field_roles(w)
+  dims = []; meas = []
+  (w || {}).each do |_well, fields|
+    next unless fields.is_a?(Array)
+    fields.each do |f|
+      r = field_role(f); next unless r
+      (r[0] == :dim ? dims : meas) << r
+    end
+  end
+  [dims, meas]
+end
+
+# The QuickSight FieldId of a single field-well entry (e.g. "f_cnt"). Needed to map a
+# ConditionalFormatting rule (keyed by FieldId) back to the Sigma column we built.
+def field_id(f)
+  return nil unless f.is_a?(Hash)
+  (f['NumericalMeasureField'] || f['CategoricalMeasureField'] ||
+   f['CategoricalDimensionField'] || f['DateDimensionField'] || {})['FieldId']
+end
+
+# Translate a QuickSight TableVisual ConditionalFormatting block into Sigma
+# `conditionalFormats` (D19). Supported QS -> Sigma mappings (verified spec-expressible
+# + round-tripping via /v2/workbooks/spec, 2026-06-06):
+#   - TextFormat.BackgroundColor.Gradient  -> type:"backgroundScale" (gradient on cell bg)
+#   - TextFormat.TextColor.Gradient        -> type:"fontScale"
+#   - DataBars                             -> type:"dataBars"
+# The gradient Color.Stops (offset/color) become the Sigma `scheme` color-stop array.
+# fieldmap maps QS FieldId -> Sigma column id (only measure cells are colored).
+def qs_conditional_formats(cf_block, fieldmap)
+  out = []
+  (cf_block['ConditionalFormattingOptions'] || []).each do |opt|
+    cell = opt['Cell'] || opt['Row'] || {}
+    fid  = cell['FieldId']
+    colid = fieldmap[fid]
+    next unless colid
+    tf = cell['TextFormat'] || {}
+    if (grad = tf.dig('BackgroundColor', 'Gradient'))
+      scheme = (grad.dig('Color', 'Stops') || []).map { |st| st['Color'] }.compact
+      scheme = ['#FFFFFF', '#D13212'] if scheme.size < 2
+      out << { 'type' => 'backgroundScale', 'columnIds' => [colid], 'scheme' => scheme }
+    elsif (grad = tf.dig('TextColor', 'Gradient'))
+      scheme = (grad.dig('Color', 'Stops') || []).map { |st| st['Color'] }.compact
+      scheme = ['#FFFFFF', '#D13212'] if scheme.size < 2
+      out << { 'type' => 'fontScale', 'columnIds' => [colid], 'scheme' => scheme }
+    elsif cell['DataBars']
+      db = cell['DataBars']
+      pos = db['PositiveColor'] || '#1f77b4'
+      out << { 'type' => 'dataBars', 'columnIds' => [colid], 'scheme' => [pos] }
+    end
+  end
+  out
 end
 
 # QuickSight visual type -> Sigma element kind.
@@ -189,22 +268,46 @@ KIND = { 'KPIVisual' => 'kpi-chart', 'BarChartVisual' => 'bar-chart',
          'TreeMapVisual' => 'bar-chart',
          'FilledMapVisual' => 'region-map', 'GeospatialMapVisual' => 'region-map' }
 
-# QuickSight visual types Sigma has NO equivalent for. We deliberately do NOT build
-# these; instead the builder records a clear per-visual warning (vs. silently
-# emitting nothing). Reason text is surfaced to STDERR + a sidecar warnings file.
+# QuickSight visual types Sigma has NO native equivalent for. Rather than dropping
+# them (which left whole dashboards empty - beads D18), we DATA-MIGRATE each one as a
+# Sigma fallback element built from the visual\'s underlying dims + measures, so the
+# query/data still migrates with parity. A clear per-visual warning is still recorded
+# (the chart KIND is the (c)-tail, not the data).
+#
+#   QS_FALLBACK maps the type -> the Sigma kind to approximate it with:
+#     - \'bar-chart\'  where a single category+measure shape reads sensibly as bars
+#       (waterfall: a running category total; histogram: a binned distribution that
+#       we approximate as a per-value bar - true auto-binning is still (c)-tail).
+#     - \'table\'      for everything multi-dimensional or non-cartesian (sankey: a
+#       source->dest->weight table; box-plot/word-cloud/radar/heat-map: the underlying
+#       grouped measure table). A table is always data-complete + query-parity.
+# Reason text is surfaced to STDERR + a sidecar warnings file either way.
 QS_UNSUPPORTED = {
-  'HeatMapVisual'       => 'Sigma has no heat-map element kind',
-  'HistogramVisual'     => 'Sigma has no histogram element kind (auto-binning); re-author as a binned bar-chart in Sigma',
-  'BoxPlotVisual'       => 'Sigma has no box-plot element kind',
-  'WaterfallVisual'     => 'Sigma has no waterfall element kind',
-  'SankeyDiagramVisual' => 'Sigma has no sankey element kind',
-  'WordCloudVisual'     => 'Sigma has no word-cloud element kind',
-  'RadarChartVisual'    => 'Sigma has no radar/spider element kind',
+  'HeatMapVisual'       => 'Sigma has no heat-map element kind; migrated as a grouped table of the underlying measure',
+  'HistogramVisual'     => 'Sigma has no histogram element kind (auto-binning); approximated as a bar-chart of the measure (true binning is manual in Sigma)',
+  'BoxPlotVisual'       => 'Sigma has no box-plot element kind; migrated as a grouped table of the underlying values',
+  'WaterfallVisual'     => 'Sigma has no waterfall element kind; approximated as a bar-chart of the category totals',
+  'SankeyDiagramVisual' => 'Sigma has no sankey element kind; migrated as a source/destination/weight table',
+  'WordCloudVisual'     => 'Sigma has no word-cloud element kind; migrated as a grouped table of the term counts',
+  'RadarChartVisual'    => 'Sigma has no radar/spider element kind; migrated as a grouped table of the measure',
   'LayerMapVisual'      => 'Sigma has no multi-layer map element kind (single-layer point/region-map only)',
-  'InsightVisual'       => 'QuickSight ML insight (forecast/anomaly/narrative) — no Sigma equivalent',
-  'CustomContentVisual' => 'QuickSight custom content (iframe/HTML/image embed) — re-author as a Sigma image/embed element',
-  'PluginVisual'        => 'QuickSight third-party plugin visual (e.g. Highcharts) — no Sigma equivalent',
-  'EmptyVisual'         => 'QuickSight placeholder (no chart configured) — nothing to build'
+  'InsightVisual'       => 'QuickSight ML insight (forecast/anomaly/narrative) - no Sigma equivalent',
+  'CustomContentVisual' => 'QuickSight custom content (iframe/HTML/image embed) - re-author as a Sigma image/embed element',
+  'PluginVisual'        => 'QuickSight third-party plugin visual (e.g. Highcharts) - no Sigma equivalent',
+  'EmptyVisual'         => 'QuickSight placeholder (no chart configured) - nothing to build'
+}.freeze
+
+# Fallback Sigma kind for each unsupported QS type (D18 data-migration). Types absent
+# here (Insight / CustomContent / Plugin / Empty / LayerMap) have no underlying
+# dim+measure field-well to migrate, so they remain genuine drops with a warning.
+QS_FALLBACK = {
+  'WaterfallVisual'     => 'bar-chart',
+  'HistogramVisual'     => 'bar-chart',
+  'HeatMapVisual'       => 'table',
+  'BoxPlotVisual'       => 'table',
+  'SankeyDiagramVisual' => 'table',
+  'WordCloudVisual'     => 'table',
+  'RadarChartVisual'    => 'table'
 }.freeze
 build_warnings = []
 
@@ -264,6 +367,33 @@ def dim_col(role, calc, mc, dmel, m)
   [{ 'id' => id, 'formula' => "[#{m}/#{ref['name']}]", 'name' => ref['name'] }, id]
 end
 
+# QuickSight DateGranularity -> Sigma DateTrunc() part. (D20: a LineChartVisual with a
+# DateDimensionField DateGranularity=MONTH must aggregate the x-axis by month, not plot
+# raw datetime. Sigma truncates via DateTrunc("month", <date>).)
+QS_GRAIN = { 'YEAR' => 'year', 'QUARTER' => 'quarter', 'MONTH' => 'month',
+             'WEEK' => 'week', 'DAY' => 'day', 'HOUR' => 'hour',
+             'MINUTE' => 'minute', 'SECOND' => 'second' }.freeze
+
+# Date dimension column truncated to a QS DateGranularity. Returns the same
+# [col, id] shape as dim_col. The truncated column gets a date format string so the
+# axis renders as e.g. "Jun 2026" for month grain.
+def date_dim_col(role, calc, mc, dmel, m)
+  grain = QS_GRAIN[role[3].to_s.upcase]
+  return dim_col(role, calc, mc, dmel, m) unless grain
+  ref = master_ref(role[1], calc, mc, dmel); id = nid('d')
+  # Sigma datetime formatStrings are strftime conventions (NOT moment.js MMM/YYYY).
+  fmt = case grain
+        when 'year' then '%Y'
+        when 'quarter' then '%b %Y'
+        when 'month' then '%b %Y'
+        when 'week', 'day' then '%Y-%m-%d'
+        else '%Y-%m-%d %H:%M'
+        end
+  [{ 'id' => id, 'name' => ref['name'],
+     'formula' => "DateTrunc(\"#{grain}\", [#{m}/#{ref['name']}])",
+     'format' => { 'kind' => 'datetime', 'formatString' => fmt } }, id]
+end
+
 def meas_col(role, calc, mc, dmel, m)
   _, col, agg = role; ref = master_ref(col, calc, mc, dmel); id = nid('m')
   # a neutralized window calc field can't be aggregated as a live formula either
@@ -282,11 +412,21 @@ defn['Sheets'].each do |sh|
     vtype, inner = v.first
     title = (inner.dig('Title', 'FormatText', 'PlainText') || (inner.is_a?(Hash) ? inner['VisualId'] : nil) || vtype)
     kind = KIND[vtype]
+    is_fallback = false
     unless kind
+      # D18: a QS type with no native Sigma kind. If it has a dim+measure fallback
+      # mapping, DATA-MIGRATE it (build a Sigma table/bar from the underlying fields)
+      # and still warn; otherwise it is a genuine drop (Insight/CustomContent/Plugin/
+      # Empty/LayerMap) and we skip it.
+      fk = QS_FALLBACK[vtype]
       reason = QS_UNSUPPORTED[vtype] || "unrecognized QuickSight visual type '#{vtype}'"
       build_warnings << { 'visual' => title, 'type' => vtype, 'reason' => reason }
-      STDERR.puts "  ! skipped #{vtype} (#{title}): #{reason}"
-      next
+      unless fk
+        STDERR.puts "  ! skipped #{vtype} (#{title}): #{reason}"
+        next
+      end
+      kind = fk; is_fallback = true
+      STDERR.puts "  ~ #{vtype} (#{title}): no native Sigma kind -> migrated as #{fk} (#{reason})"
     end
     eid = nid
     vis_map[inner['VisualId']] = eid
@@ -315,12 +455,40 @@ defn['Sheets'].each do |sh|
       el = base.merge('columns' => [c.merge('name' => title)], 'value' => { 'columnId' => cid })
     when 'bar-chart', 'line-chart', 'area-chart'
       # funnel/treemap land here too: their dim is in Category/Groups, measure in Values/Sizes
-      dims = rol.('Category'); dims = rol.('Groups') if dims.empty?
-      vals = rol.('Values'); vals = rol.('Sizes') if vals.empty?
+      if is_fallback
+        # D18 waterfall/histogram -> bar. Use the generic flattener (non-standard wells).
+        fdims, fmeas = all_field_roles(w)
+        dims = fdims; vals = fmeas
+      else
+        dims = rol.('Category'); dims = rol.('Groups') if dims.empty?
+        vals = rol.('Values'); vals = rol.('Sizes') if vals.empty?
+      end
+      # Histogram fallback has only a numeric measure and NO category. Use that column
+      # as the (un-aggregated) x dimension and Count the rows as y, so the per-value
+      # distribution still migrates as bars.
+      if is_fallback && dims.empty? && !vals.empty?
+        dims = [[:dim, vals[0][1], nil]]
+        vals = [[:meas, vals[0][1], 'COUNT']]
+      end
       (next if dims.empty? || vals.empty?)
-      dc, did = dim_col(dims[0], calc, master_cols, DMEL, M); cols = [dc]; ycids = []
+      # D20: a date dimension carrying a QS DateGranularity (e.g. MONTH on a line chart)
+      # is truncated to that grain so the x-axis aggregates by month/quarter/year instead
+      # of plotting raw datetime (otherwise the line is spiky/per-row).
+      dc, did = if dims[0][3]
+                  date_dim_col(dims[0], calc, master_cols, DMEL, M)
+                else
+                  dim_col(dims[0], calc, master_cols, DMEL, M)
+                end
+      cols = [dc]; ycids = []
       vals.each { |mv| c, id = meas_col(mv, calc, master_cols, DMEL, M); cols << c; ycids << id }
       el = base.merge('columns' => cols, 'xAxis' => { 'columnId' => did }, 'yAxis' => { 'columnIds' => ycids })
+      # D20: honor QuickSight BarChartVisual Orientation. HORIZONTAL -> Sigma
+      # orientation:"horizontal"; VERTICAL (default) is expressed by OMITTING the field
+      # (Sigma rejects orientation:"vertical"). Only meaningful for bar charts.
+      if kind == 'bar-chart'
+        qs_orient = (inner['ChartConfiguration'] || {})['Orientation']
+        el['orientation'] = 'horizontal' if qs_orient.to_s.upcase == 'HORIZONTAL'
+      end
     when 'pie-chart', 'donut-chart'
       dims = rol.('Category'); vals = rol.('Values'); (next if dims.empty? || vals.empty?)
       dc, did = dim_col(dims[0], calc, master_cols, DMEL, M); mc2, mid = meas_col(vals[0], calc, master_cols, DMEL, M)
@@ -340,12 +508,32 @@ defn['Sheets'].each do |sh|
         dc, did = dim_col(cat[0], calc, master_cols, DMEL, M); el['columns'] << dc; el['color'] = { 'by' => 'category', 'column' => did }
       end
     when 'table'
-      dims = rol.('GroupBy'); vals = rol.('Values'); cols = []; gids = []; cids = []
-      dims.each { |d| c, id = dim_col(d, calc, master_cols, DMEL, M); cols << c; gids << id }
-      vals.each { |mv| c, id = meas_col(mv, calc, master_cols, DMEL, M); cols << c; cids << id }
+      cf_fieldmap = {}   # QS FieldId -> Sigma column id (for D19 conditional formatting)
+      if is_fallback
+        # D18 sankey/box-plot/word-cloud/radar/heat-map -> table. Flatten every well
+        # (Source/Destination/Weight, GroupBy/Size, Category/Color/Values, ...) into a
+        # grouped table: all dims become group-bys, all measures become aggregates.
+        dims, vals = all_field_roles(w)
+        raw_dims = []; raw_vals = []  # fallback has no CF
+      else
+        dims = rol.('GroupBy'); vals = rol.('Values')
+        raw_dims = (w['GroupBy'] || []); raw_vals = (w['Values'] || [])
+      end
+      cols = []; gids = []; cids = []
+      dims.each_with_index { |d, i| c, id = dim_col(d, calc, master_cols, DMEL, M); cols << c; gids << id; (fi = field_id(raw_dims[i])) && (cf_fieldmap[fi] = id) }
+      vals.each_with_index { |mv, i| c, id = meas_col(mv, calc, master_cols, DMEL, M); cols << c; cids << id; (fi = field_id(raw_vals[i])) && (cf_fieldmap[fi] = id) }
       (next if cols.empty?)
       el = base.merge('columns' => cols)
       el['groupings'] = [{ 'id' => nid('g'), 'groupBy' => gids, 'calculations' => cids }] unless gids.empty?
+      # D19: migrate QS TableVisual ConditionalFormatting (gradient cell color / data bars)
+      # into Sigma `conditionalFormats` on the table element.
+      if (cfb = inner['ConditionalFormatting'])
+        cfmts = qs_conditional_formats(cfb, cf_fieldmap)
+        unless cfmts.empty?
+          el['conditionalFormats'] = cfmts
+          STDERR.puts "  + #{cfmts.size} conditional format rule(s) migrated on table \"#{title}\""
+        end
+      end
     when 'pivot-table'
       rows = rol.('Rows'); pcols = rol.('Columns'); vals = rol.('Values'); cols = []; rids = []; coids = []; vids = []
       rows.each  { |d| c, id = dim_col(d, calc, master_cols, DMEL, M); cols << c; rids << id }
@@ -439,6 +627,9 @@ File.write(warn_out, JSON.pretty_generate('warnings' => build_warnings))
 STDERR.puts "workbook spec: master sources DM element \"#{DMEL}\" (#{dm_el}); #{elements.size} chart elements, #{master_cols.size} master cols#{applied_filters.empty? ? '' : "; #{applied_filters.size} filter(s) applied"} → #{opts[:out]} (+ #{map_out})"
 elements.each { |e| STDERR.puts "  - #{e['kind']}: #{e['name']}" }
 unless build_warnings.empty?
-  STDERR.puts "#{build_warnings.size} visual(s) dropped (no Sigma equivalent) → #{warn_out}"
-  build_warnings.each { |w| STDERR.puts "  ! #{w['type']}: #{w['reason']}" }
+  fb, dropped = build_warnings.partition { |w| QS_FALLBACK.key?(w['type']) }
+  STDERR.puts "#{build_warnings.size} visual(s) with no native Sigma kind → #{warn_out}" \
+              " (#{fb.size} data-migrated as table/bar fallback, #{dropped.size} genuinely dropped)"
+  fb.each      { |w| STDERR.puts "  ~ #{w['type']}: #{w['reason']}" }
+  dropped.each { |w| STDERR.puts "  ! #{w['type']}: #{w['reason']}" }
 end
