@@ -164,15 +164,49 @@ def field_role(f)
   end
 end
 
-# QuickSight visual type -> Sigma element kind. Sigma has no native gauge/funnel/
-# treemap kind, so (mirroring the PBI builder, beads-sigma-1zh9): gauge -> kpi-chart
-# (single value), funnel/treemap -> bar-chart (category + measure).
+# QuickSight visual type -> Sigma element kind.
+#
+# Sigma's REAL workbook chart kinds (confirmed against the public OpenAPI element
+# union — /v2/workbooks/spec): kpi-chart, bar-chart, line-chart, area-chart,
+# pie-chart, donut-chart, scatter-chart, combo-chart, table, pivot-table, AND the
+# three geographic kinds point-map / region-map / geography-map. There is NO native
+# histogram, heat-map, treemap, waterfall, box-plot, radar, sankey, or word-cloud
+# kind (verified: those names do not appear anywhere in the element union).
+#
+# Approximations (no native kind, mirror the PBI builder, beads-sigma-1zh9):
+#   gauge -> kpi-chart (single value); funnel/treemap -> bar-chart (category+measure).
+# Geographic (NEW — region-map shape verified to round-trip via live POST+readback
+# + MCP query parity on the D17 DM, 2026-06-06): QuickSight FilledMapVisual and
+# GeospatialMapVisual both map to Sigma region-map when their geo field is a region
+# NAME (state/country/city/zip); GeospatialMapVisual maps to point-map only when it
+# carries real latitude+longitude fields (handled in the dispatch). LayerMapVisual
+# (multi-layer) has no clean single-element equivalent -> dropped with a warning.
 KIND = { 'KPIVisual' => 'kpi-chart', 'BarChartVisual' => 'bar-chart',
          'LineChartVisual' => 'line-chart', 'PieChartVisual' => 'pie-chart',
          'ComboChartVisual' => 'combo-chart', 'ScatterPlotVisual' => 'scatter-chart',
          'TableVisual' => 'table', 'PivotTableVisual' => 'pivot-table',
          'GaugeChartVisual' => 'kpi-chart', 'FunnelChartVisual' => 'bar-chart',
-         'TreeMapVisual' => 'bar-chart' }
+         'TreeMapVisual' => 'bar-chart',
+         'FilledMapVisual' => 'region-map', 'GeospatialMapVisual' => 'region-map' }
+
+# QuickSight visual types Sigma has NO equivalent for. We deliberately do NOT build
+# these; instead the builder records a clear per-visual warning (vs. silently
+# emitting nothing). Reason text is surfaced to STDERR + a sidecar warnings file.
+QS_UNSUPPORTED = {
+  'HeatMapVisual'       => 'Sigma has no heat-map element kind',
+  'HistogramVisual'     => 'Sigma has no histogram element kind (auto-binning); re-author as a binned bar-chart in Sigma',
+  'BoxPlotVisual'       => 'Sigma has no box-plot element kind',
+  'WaterfallVisual'     => 'Sigma has no waterfall element kind',
+  'SankeyDiagramVisual' => 'Sigma has no sankey element kind',
+  'WordCloudVisual'     => 'Sigma has no word-cloud element kind',
+  'RadarChartVisual'    => 'Sigma has no radar/spider element kind',
+  'LayerMapVisual'      => 'Sigma has no multi-layer map element kind (single-layer point/region-map only)',
+  'InsightVisual'       => 'QuickSight ML insight (forecast/anomaly/narrative) — no Sigma equivalent',
+  'CustomContentVisual' => 'QuickSight custom content (iframe/HTML/image embed) — re-author as a Sigma image/embed element',
+  'PluginVisual'        => 'QuickSight third-party plugin visual (e.g. Highcharts) — no Sigma equivalent',
+  'EmptyVisual'         => 'QuickSight placeholder (no chart configured) — nothing to build'
+}.freeze
+build_warnings = []
 
 master_cols = {}   # colname(raw or calc) -> {id, formula, name}
 def fmt_for(name)
@@ -181,6 +215,30 @@ def fmt_for(name)
   when /revenue|profit|cost|sales|amount|price|discount/i then '$,.0f'
   else ',.0f'
   end
+end
+
+# Infer a Sigma region-map regionType from the geo dimension's (raw) column name.
+# Sigma regionType enum (OpenAPI): country, us-state, us-county, us-zipcode,
+# us-cbsa, us-postal-place, ca-province. Default to us-postal-place for free
+# city/place names (the most permissive name-based bucket).
+def region_type_for(rawname)
+  n = rawname.to_s.downcase
+  return 'country'         if n =~ /country|nation/
+  return 'us-state'        if n =~ /\bstate\b|province_state|^st$/
+  return 'us-county'       if n =~ /county/
+  return 'us-zipcode'      if n =~ /zip|postal_?code|postcode/
+  return 'us-cbsa'         if n =~ /cbsa|metro/
+  return 'ca-province'     if n =~ /province/
+  'us-postal-place'  # city / place name
+end
+
+# Does a Geospatial field-well carry an explicit latitude / longitude pair? If so
+# the QuickSight geo visual should become a Sigma point-map; otherwise (a region
+# NAME like state/city) it becomes a region-map.
+def latlong_pair(geo_roles)
+  lat = geo_roles.find { |r| r[1].to_s =~ /lat(itude)?/i }
+  lon = geo_roles.find { |r| r[1].to_s =~ /lon(g|gitude)?/i }
+  (lat && lon) ? [lat, lon] : nil
 end
 
 def master_ref(colname, calc, master_cols, dmel)
@@ -222,8 +280,14 @@ vis_map = {}
 defn['Sheets'].each do |sh|
   (sh['Visuals'] || []).each do |v|
     vtype, inner = v.first
-    kind = KIND[vtype]; next unless kind
-    title = (inner.dig('Title', 'FormatText', 'PlainText') || inner['VisualId'])
+    title = (inner.dig('Title', 'FormatText', 'PlainText') || (inner.is_a?(Hash) ? inner['VisualId'] : nil) || vtype)
+    kind = KIND[vtype]
+    unless kind
+      reason = QS_UNSUPPORTED[vtype] || "unrecognized QuickSight visual type '#{vtype}'"
+      build_warnings << { 'visual' => title, 'type' => vtype, 'reason' => reason }
+      STDERR.puts "  ! skipped #{vtype} (#{title}): #{reason}"
+      next
+    end
     eid = nid
     vis_map[inner['VisualId']] = eid
     kind = 'donut-chart' if vtype == 'PieChartVisual' && inner.dig('ChartConfiguration', 'DonutOptions')
@@ -280,6 +344,33 @@ defn['Sheets'].each do |sh|
       (next if rids.empty? || vids.empty?)
       el = base.merge('columns' => cols, 'rowsBy' => rids.map { |i| { 'id' => i } }, 'values' => vids)
       el['columnsBy'] = coids.map { |i| { 'id' => i } } unless coids.empty?
+    when 'region-map', 'point-map'
+      # QuickSight FilledMap/GeospatialMap: Geospatial holds the geo field(s),
+      # Values holds the measure that fills/sizes the map. (Colors is optional and
+      # rendered automatically by Sigma from the measure, so it is not a separate well.)
+      geo  = rol.('Geospatial')
+      vals = rol.('Values')
+      (next if geo.empty?)
+      pair = latlong_pair(geo)
+      cols = []
+      if pair
+        # real lat/long -> point-map
+        latc, latid = meas_col([:meas, pair[0][1], 'AVERAGE'], calc, master_cols, DMEL, M)
+        lonc, lonid = meas_col([:meas, pair[1][1], 'AVERAGE'], calc, master_cols, DMEL, M)
+        # carry lat/long as dimension-style refs (no aggregation) for the point geometry
+        latc = { 'id' => latid, 'formula' => latc['formula'].sub(/^Avg\(/, '').sub(/\)$/, ''), 'name' => latc['name'] }
+        lonc = { 'id' => lonid, 'formula' => lonc['formula'].sub(/^Avg\(/, '').sub(/\)$/, ''), 'name' => lonc['name'] }
+        cols << latc << lonc
+        vals.each { |mv| c, _ = meas_col(mv, calc, master_cols, DMEL, M); cols << c }
+        el = base.merge('kind' => 'point-map', 'columns' => cols,
+                        'latitude' => { 'id' => latid }, 'longitude' => { 'id' => lonid })
+      else
+        # geo NAME (state/city/country/zip) -> region-map
+        dc, did = dim_col(geo[0], calc, master_cols, DMEL, M); cols << dc
+        vals.each { |mv| c, _ = meas_col(mv, calc, master_cols, DMEL, M); cols << c }
+        el = base.merge('kind' => 'region-map', 'columns' => cols,
+                        'region' => { 'id' => did, 'regionType' => region_type_for(geo[0][1]) })
+      end
     end
     elements << el if el
   end
@@ -327,5 +418,17 @@ spec['folderId'] = opts[:folder] if opts[:folder]
 File.write(opts[:out], JSON.pretty_generate(spec))
 map_out = opts[:out].sub(/\.json$/, '') + '.map.json'
 File.write(map_out, JSON.pretty_generate('dashPageId' => 'page-dash', 'masterElementId' => 'master', 'visualToElement' => vis_map))
+
+# Persist a machine-readable per-visual warning manifest for any QuickSight visual
+# Sigma can't recreate (sankey/radar/box-plot/waterfall/word-cloud/histogram/heat-map/
+# layer-map/insight-ML/custom-content/plugin). This is the (c)-tail record — a clear
+# "dropped, here's why" rather than a silent omission.
+warn_out = opts[:out].sub(/\.json$/, '') + '.warnings.json'
+File.write(warn_out, JSON.pretty_generate('warnings' => build_warnings))
+
 STDERR.puts "workbook spec: master sources DM element \"#{DMEL}\" (#{dm_el}); #{elements.size} chart elements, #{master_cols.size} master cols#{applied_filters.empty? ? '' : "; #{applied_filters.size} filter(s) applied"} → #{opts[:out]} (+ #{map_out})"
 elements.each { |e| STDERR.puts "  - #{e['kind']}: #{e['name']}" }
+unless build_warnings.empty?
+  STDERR.puts "#{build_warnings.size} visual(s) dropped (no Sigma equivalent) → #{warn_out}"
+  build_warnings.each { |w| STDERR.puts "  ! #{w['type']}: #{w['reason']}" }
+end
