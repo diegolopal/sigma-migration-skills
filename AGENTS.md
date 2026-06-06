@@ -30,6 +30,8 @@ reading the relevant `SKILL.md` and executing its scripts.
 | Scope/assess a Qlik Cloud tenant | `qlik-assessment` | `plugins/qlik-to-sigma/skills/qlik-assessment/` |
 | Convert a ThoughtSpot model + Liveboards → Sigma (TML) | `thoughtspot-to-sigma` | `plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/` |
 | Scope/assess a ThoughtSpot instance | `thoughtspot-assessment` | `plugins/thoughtspot-to-sigma/skills/thoughtspot-assessment/` |
+| Convert an Amazon QuickSight analysis/dashboard → Sigma | `quicksight-to-sigma` | `plugins/quicksight-to-sigma/skills/quicksight-to-sigma/` |
+| Scope/assess a QuickSight instance | `quicksight-assessment` | `plugins/quicksight-to-sigma/skills/quicksight-assessment/` |
 
 Assessments are read-only (never write to the source or post to Sigma); run one
 to pick what to convert, then hand off to the matching converter.
