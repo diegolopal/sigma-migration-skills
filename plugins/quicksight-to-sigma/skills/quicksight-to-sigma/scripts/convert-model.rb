@@ -3,23 +3,29 @@
 #
 # MODE A (--emit-mcp): print the exact convert_quicksight_to_sigma MCP-tool call the agent
 #                      should run (files = analysis.json + each dataset json from discovery).
-# MODE B (--fixup):    take the converter's output Sigma DM JSON and make it POST-ready:
-#                        - force schemaVersion = 1
-#                        - ensure EVERY element has a non-empty, paren-free `name`
-#                          (beads-sigma-vy4k: nameless elements; beads-sigma-nc6g: join-view
-#                           and warehouse-table elements also need names)
-#                        - rewrite kind:sql refs to [Custom SQL/RAW] form
-#                        - rewrite kind:table (join "view") refs so the leading segment is the
-#                          SOURCE ELEMENT's display name (beads-sigma-nc6g)
-#                        - synthesize a single denormalized kind:sql element for CustomSql
-#                          multi-table JoinInstruction datasets (beads-sigma-nc6g)
-#                        - fix CastColumnType self-reference (Text([self]) -> Text([Custom SQL/RAW]))
-#                          (beads-sigma-23xu)
-#                        - neutralize window/table-calc placeholder formulas to `Null` + description
-#                          (beads-sigma-woaa)
-#                        - drop unapplied FilterOperation boolean calc columns from the DM and
-#                          surface the filter so the workbook builder can apply it (beads-sigma-23xu)
-#                        - optionally inject folderId
+# MODE B (--fixup):    take the merged QuickSight converter's output Sigma DM JSON and
+#                      do ONLY the post-processing the converter itself cannot, plus
+#                      make it POST-ready. The converter (src/quicksight.ts, beads
+#                      vy4k/nc6g/woaa/23xu) is now the single source of truth for
+#                      element/column naming, [Custom SQL/RAW] refs, multi-element +
+#                      relationship joins, window->Null+description, and CastColumnType
+#                      self-ref — those steps were REMOVED here (beads-sigma-dqyv,
+#                      verified no-ops on D1/D5/D6/D10/D12). Remaining fixup steps:
+#                        - synthesize ONE denormalized kind:sql element for any
+#                          JoinInstruction dataset (CustomSql OR RelationalTable),
+#                          collapsing the converter's multi-element+relationship output
+#                          so the workbook master sources every charted column from a
+#                          single element with simple [Custom SQL/RAW] refs (no builder
+#                          cross-element ref logic needed). KEPT because the converter's
+#                          CustomSql-join path emits NO derived view projecting the dim
+#                          columns, so the builder couldn't reach them. (beads-sigma-nc6g)
+#                        - drop the UNAPPLIED FilterOperation boolean calc column the
+#                          converter emits and surface its predicate to dm-filters.json so
+#                          the workbook builder can apply it as a real element-level list
+#                          filter — a true row-filter genuinely cannot live on a
+#                          warehouse-table DM element. (beads-sigma-23xu)
+#                        - name the synthesized join element + its columns, force
+#                          schemaVersion = 1, optionally inject folderId.
 #
 # Usage:
 #   ruby scripts/convert-model.rb --emit-mcp --discover-dir DIR --connection-id ID [--database DB --schema SCH]
@@ -51,38 +57,6 @@ end
 # (beads-sigma-nc6g point 3)
 def sanitize_name(s)
   s.to_s.gsub(/\s*\([^)]*\)/, '').gsub(/[()\[\]]/, '').strip
-end
-
-# QuickSight window / table-calc function names. A DM/workbook calc column that
-# uses any of these silently errors in Sigma (window aggregates aren't allowed in
-# a calc-column context), so we neutralize them to a valid `Null` formula and move
-# the original QS expression into the column description. (beads-sigma-woaa)
-QS_WINDOW_FUNCS = %w[
-  runningSum runningAvg runningCount runningMax runningMin
-  percentOfTotal percentDifference difference
-  rank denseRank percentileRank
-  lag lead firstValue lastValue
-  windowSum windowAvg windowCount windowMax windowMin
-  movingSum movingAverage
-].freeze
-
-def qs_window_func?(expr)
-  e = expr.to_s
-  QS_WINDOW_FUNCS.any? { |fn| e =~ /(?<![A-Za-z0-9_])#{Regexp.escape(fn)}\s*\(/ }
-end
-
-# True when a formula is ONLY a /* ... */ comment (the converter's window
-# placeholder). Sigma rejects a comment-only formula as "Invalid formula", which
-# fails the WHOLE all-or-nothing DM POST. (beads-sigma-woaa)
-def comment_only_formula?(f)
-  f.to_s.strip =~ /\A\/\*.*\*\/\z/m ? true : false
-end
-
-# Recover the original QS expression embedded in a placeholder comment, e.g.
-# "/* TODO QuickSight table-calc — re-author in Sigma: runningSum(...) */".
-def expr_from_comment(f)
-  m = f.to_s.match(/re-author in Sigma:\s*(.*?)\s*\*\/\s*\z/m)
-  m ? m[1] : f.to_s.gsub(%r{\A/\*\s*}, '').gsub(%r{\s*\*/\z}, '').strip
 end
 
 # Reconstruct a single denormalized SELECT for a QuickSight dataset whose
@@ -210,8 +184,6 @@ if opts[:fixup]
   end
 
   fixed = 0
-  rewrote = 0
-  neutralized = 0
   filter_exprs = []
 
   if join_dataset
@@ -274,14 +246,7 @@ if opts[:fixup]
   end
 
   id_to_name = {}
-  table_to_name = {}
-  all_els.each do |el|
-    id_to_name[el['id']] = el['name']
-    src = el['source'] || {}
-    if src['kind'] == 'warehouse-table' && src['path'].is_a?(Array) && !src['path'].empty?
-      table_to_name[src['path'].last] = el['name']
-    end
-  end
+  all_els.each { |el| id_to_name[el['id']] = el['name'] }
 
   all_els.each do |el|
     next unless el.dig('source', 'kind') == 'table'
@@ -303,67 +268,14 @@ if opts[:fixup]
       c['name'] = sanitize_name(c['name']) if c['name']
     end
 
-    cols.each do |c|
-      f = c['formula'].to_s
-      orig = nil
-      if comment_only_formula?(f)
-        orig = expr_from_comment(f)
-      elsif qs_window_func?(f)
-        orig = f
-      end
-      next unless orig
-      c['formula'] = 'Null'
-      existing = c['description'].to_s
-      note = "QuickSight table-calc (neutralized — re-author in Sigma): #{orig}"
-      c['description'] = existing.empty? ? note : "#{existing}\n#{note}"
-      neutralized += 1
-    end
-
-    if src['kind'] == 'sql'
-      disp_to_alias = {}
-      cols.each do |c|
-        alias_raw = c['id'].to_s.split('/').last
-        next if alias_raw.nil? || alias_raw.empty?
-        disp_to_alias[titleize(alias_raw)] = alias_raw
-        disp_to_alias[sanitize_name(titleize(alias_raw))] = alias_raw
-        f = c['formula'].to_s
-        m = f.match(/\A\[(.+)\]\z/)
-        disp_to_alias[m[1]] = alias_raw if m
-      end
-      cols.each do |c|
-        next unless c['formula']
-        next if c['formula'] == 'Null'
-        new_f = c['formula'].gsub(/\[([^\]\/]+)\]/) do
-          inner = Regexp.last_match(1)
-          disp_to_alias[inner] ? "[Custom SQL/#{disp_to_alias[inner]}]" : "[#{inner}]"
-        end
-        if new_f != c['formula']
-          c['formula'] = new_f
-          rewrote += 1
-        end
-      end
-
-    elsif src['kind'] == 'table'
-      src_name = id_to_name[src['elementId']]
-      cols.each do |c|
-        next unless c['formula']
-        next if c['formula'] == 'Null'
-        new_f = c['formula'].gsub(/\[([^\]]+)\]/) do
-          ref = Regexp.last_match(1)
-          parts = ref.split('/')
-          if table_to_name.key?(parts[0])
-            parts[0] = table_to_name[parts[0]]
-          elsif src_name
-            parts[0] = src_name
-          end
-          "[#{parts.join('/')}]"
-        end
-        if new_f != c['formula']
-          c['formula'] = new_f
-          rewrote += 1
-        end
-      end
-    end
+    # NOTE: window/table-calc neutralization, [Custom SQL/RAW] ref rewriting,
+    # join-"view" ref rewriting and CastColumnType self-ref repair USED to live
+    # here, but the merged QuickSight converter now does all of that at source
+    # (beads-sigma-vy4k/nc6g/woaa/23xu). Verified no-ops on D1/D5/D6/D10/D12, so
+    # they were removed (beads-sigma-dqyv). The fixup now only does post-processing
+    # the converter genuinely cannot: collapse a join dataset to one SQL element
+    # (above), surface an UNAPPLIED FilterOperation to the workbook builder (below),
+    # set folderId/schemaVersion, and name the synthesized join element + its cols.
 
     before = cols.size
     keep = cols.reject do |c|
@@ -390,7 +302,7 @@ if opts[:fixup]
 
   out = opts[:out] || 'dm-spec.json'
   File.write(out, JSON.pretty_generate(model))
-  STDERR.puts "fixup: named #{fixed} element(s); rewrote #{rewrote} ref(s); neutralized #{neutralized} window calc(s); schemaVersion=1#{opts[:folder] ? '; folderId set' : ''} -> #{out}"
+  STDERR.puts "fixup: named #{fixed} element(s); schemaVersion=1#{opts[:folder] ? '; folderId set' : ''} -> #{out}"
   exit 0
 end
 
