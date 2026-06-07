@@ -66,13 +66,37 @@ def chart_pos(z, opts)
   h  = z['h_pct'] || 0
   y1 = y0 + h
   remaining_rows = opts[:page_rows] - (opts[:chart_row0] - 1)
-  row_start = (opts[:chart_row0] + (y0 - opts[:chart_y0]) / (opts[:chart_y1] - opts[:chart_y0]) * remaining_rows).round
-  row_end   = (opts[:chart_row0] + (y1 - opts[:chart_y0]) / (opts[:chart_y1] - opts[:chart_y0]) * remaining_rows).round
+  span = (opts[:chart_y1] - opts[:chart_y0]).to_f
+  span = 1.0 if span <= 0
+  row_start = (opts[:chart_row0] + (y0 - opts[:chart_y0]) / span * remaining_rows).round
+  row_end   = (opts[:chart_row0] + (y1 - opts[:chart_y0]) / span * remaining_rows).round
+  # Sigma rejects non-positive grid positions ("Invalid element position").
+  # Clamp into the legal band [chart_row0 .. page_rows+1] and guarantee a span.
+  max_row   = opts[:page_rows] + 1
+  row_start = [[row_start, opts[:chart_row0]].max, max_row - 1].min
+  row_end   = [[row_end,   row_start + 1].max,      max_row].min
   row_end   = row_start + 1 if row_end <= row_start
   col_start = [1,  (1 + (z['x_pct'] || 0) / 100.0 * opts[:page_cols]).round].max
   col_end   = [opts[:page_cols] + 1, (1 + ((z['x_pct'] || 0) + (z['w_pct'] || 0)) / 100.0 * opts[:page_cols]).round].min
   col_end   = col_start + 1 if col_end <= col_start
   [col_start, col_end, row_start, row_end]
+end
+
+# Auto-fit the chart band to the ACTUAL zone extents. The default chart_y0=29.7
+# assumes a title/filter band at the top; a dashboard whose charts start near
+# y=0 would otherwise map to negative grid rows. Fit chart_y0/chart_y1 to the
+# min/max zone y so the mapping always lands inside the page.
+zone_y0s = chart_zones.map { |z| (z['y_pct'] || 0).to_f }
+zone_y1s = chart_zones.map { |z| (z['y_pct'] || 0).to_f + (z['h_pct'] || 0).to_f }
+unless zone_y0s.empty?
+  fit_y0 = zone_y0s.min
+  fit_y1 = [zone_y1s.max, fit_y0 + 1].max
+  # Only override when the zones fall (partly) above the assumed band, to avoid
+  # disturbing the tuned default for dashboards that DO have a top band.
+  if fit_y0 < opts[:chart_y0]
+    opts[:chart_y0] = fit_y0
+    opts[:chart_y1] = fit_y1
+  end
 end
 
 # Compute initial positions

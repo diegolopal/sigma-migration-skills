@@ -40,11 +40,13 @@ def main():
         if f.get("isExpression"): continue
         if f["realColumn"] == "*": continue
         select.append(f'f.{f["realColumn"]} AS {f["qlikField"]}')
+    # build a safe dim-alias sequence that skips 'f' (reserved for the fact table)
+    _dim_aliases = [c for c in 'abcdeghijklmnopqrstuvwxyz']
     a_i = 0
     for d in dims:
         # find join key: a *_KEY qlikField in this dim that the fact also has
         jk = next((k for k in keyfields(d) if k.upper() in factkeys), None)
-        al = chr(ord('a') + a_i); a_i += 1; alias[d["qlikTable"]] = al
+        al = _dim_aliases[a_i]; a_i += 1; alias[d["qlikTable"]] = al
         if jk:
             joins.append(f'LEFT JOIN {wh(d)} {al} ON f.{real(fact, jk)} = {al}.{real(d, jk)}')
         # dim descriptive columns (skip its own key columns to avoid dup)

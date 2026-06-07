@@ -105,7 +105,12 @@ spec.fetch('pages', []).each do |page|
                       "(known: #{(own_prefixes + all_known_set).to_a.sort.join(', ')})"
           end
         else
-          unless sibling_names.include?(ref)
+          # In a Custom SQL element a bare [X] resolves against the SQL statement's
+          # `AS "X"` output alias (which this validator can't see) — Sigma
+          # fuzzy-matches case/underscore variants. So a bare ref that isn't a
+          # named sibling is still valid here; don't flag it (Bug E: SQL-output
+          # columns are intentionally nameless, binding to their alias).
+          if src['kind'] != 'sql' && !sibling_names.include?(ref)
             errors << "#{name}.#{col['name']}: bare ref [#{ref}] not a sibling column"
           end
         end

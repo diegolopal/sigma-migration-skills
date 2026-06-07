@@ -11,6 +11,8 @@
 #   - move the logic into a Custom SQL data-model element (kind: "sql") and
 #     reference its columns as plain `[Custom SQL/COL]` refs
 
+require 'set'
+
 module SigmaFunctions
   CATEGORIES = {
     aggregate: %w[
@@ -71,6 +73,17 @@ module SigmaFunctions
   ALL = CATEGORIES.values.flatten.freeze
   ALL_SET = ALL.to_set rescue Set.new(ALL)
 
+  # Bug B (Tableau parity): bare Sigma boolean constants. Tableau calc fields use
+  # TRUE/FALSE (and NULL) as boolean/null literals; these are literals, not
+  # functions, and must never be treated as unknown identifiers by callers
+  # scanning a formula.
+  CONSTANTS = %w[True False TRUE FALSE Null null NULL].freeze
+  CONSTANTS_SET = CONSTANTS.to_set rescue Set.new(CONSTANTS)
+
+  def self.constant?(name)
+    CONSTANTS_SET.include?(name)
+  end
+
   def self.includes?(name)
     ALL_SET.include?(name)
   end
@@ -83,8 +96,17 @@ module SigmaFunctions
     # Strip string literals so SQL-ish content inside Custom SQL contexts doesn't
     # trigger false positives. Sigma calc formulas use "..." for strings.
     cleaned = formula.gsub(/"(?:\\.|[^"\\])*"/, '""')
+    # Bug B (Tableau parity): strip [...]-bracketed column refs BEFORE the
+    # function scan. A column name can contain "word(" — e.g.
+    # [Order Fact View/Customer Id (CUSTOMER_DIM)] — and the bare
+    # `\bword\s*\(` regex would otherwise flag "Id(" / "Name(" as an unknown
+    # function and FATAL-abort. Bracketed refs are never function calls, so
+    # remove them entirely first.
+    cleaned = cleaned.gsub(/\[[^\]]*\]/, '')
     names = cleaned.scan(/\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/).flatten.uniq
-    names.reject { |n| includes?(n) }
+    # TRUE/FALSE/NULL are Tableau boolean/null literals, not user functions —
+    # never report them as unknown (Bug B: they are valid constants).
+    names.reject { |n| includes?(n) || constant?(n) }
   end
 
   # Known Tableau-syntax leak patterns. These DEFINITELY don't work in Sigma

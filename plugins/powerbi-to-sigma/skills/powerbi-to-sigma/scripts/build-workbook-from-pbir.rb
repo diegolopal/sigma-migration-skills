@@ -75,8 +75,30 @@ SIGMA_KIND = {
 }.freeze
 
 # PBI role -> (dim_role?, value_role?) per visual kind handled below.
-def field_spec(queryref, fields)
-  fields[queryref] || { 'master' => nil, 'ref' => "[#{queryref}]", 'agg' => nil }
+# A field_map entry may carry `alts` — alternative {master, ref[, agg]} resolutions
+# on OTHER masters (used for time-intel: a field can live on both the View and a
+# grouped prior-year element). When the visual has chosen a master, prefer the
+# alt that lives on it so all of the visual's columns resolve on one element.
+def field_spec(queryref, fields, chosen_master = nil)
+  fs = fields[queryref]
+  # Case-insensitive fallback: PBIR queryRefs may carry the RAW warehouse column
+  # name ("EMPLOYEES.DEPARTMENT") while the master-map keys on the Sigma display
+  # name ("EMPLOYEES.Department"). Match ignoring case so the dimension resolves
+  # instead of leaking a literal [EMPLOYEES.DEPARTMENT] ref that error-types.
+  if fs.nil? && queryref
+    # Normalize case AND underscore/space so a raw warehouse queryRef
+    # ("ABSENCE_RECORDS.ABSENCE_TYPE") matches a display-name key
+    # ("ABSENCE_RECORDS.Absence Type").
+    norm = ->(s) { s.to_s.downcase.gsub(/[_\s]+/, ' ').strip }
+    @ci_index ||= fields.each_with_object({}) { |(k, v), h| h[norm.call(k)] ||= v }
+    fs = @ci_index[norm.call(queryref)]
+  end
+  fs ||= { 'master' => nil, 'ref' => "[#{queryref}]", 'agg' => nil }
+  if chosen_master && fs['master'] != chosen_master && fs['alts'].is_a?(Array)
+    alt = fs['alts'].find { |a| a['master'] == chosen_master }
+    return fs.merge(alt) if alt
+  end
+  fs
 end
 
 # PBI numeric format string (from signals 'formats' or master-map field 'format')
@@ -141,15 +163,30 @@ def short(id)
   "#{clean[-6, 6] || clean}#{h}"
 end
 
-# Resolve which master a visual sources from (first bound field's master).
+# Resolve which master a visual sources from. A Sigma chart can only reference
+# columns on ONE element, so pick the master that can satisfy the MOST of the
+# visual's bound fields (counting `alts` — a field reachable on multiple masters).
+# This makes a Year×NetRev×NetRevPY chart source from the grouped prior-year
+# element (which carries all three) instead of the View (missing the PY column).
+# Ties break toward the FIRST field's master (preserves prior behavior).
 def visual_master(rec, fields)
-  rec['bindings'].each_value do |refs|
-    refs.each do |qr|
-      m = (fields[qr] || {})['master']
-      return m if m
-    end
+  qrs = rec['bindings'].values.flatten.compact
+  return nil if qrs.empty?
+  # candidate masters a field can resolve on (primary + alts). Use field_spec so
+  # the case-insensitive fallback applies here too.
+  masters_for = lambda do |qr|
+    fs = field_spec(qr, fields)
+    ms = []
+    ms << fs['master'] if fs['master']
+    Array(fs['alts']).each { |a| ms << a['master'] if a['master'] }
+    ms.uniq
   end
-  nil
+  counts = Hash.new(0)
+  qrs.each { |qr| masters_for.call(qr).each { |m| counts[m] += 1 } }
+  return nil if counts.empty?
+  first_master = qrs.map { |qr| field_spec(qr, fields)['master'] }.compact.first
+  best = counts.max_by { |m, c| [c, (m == first_master ? 1 : 0)] }
+  best && best[0]
 end
 
 # Build chart element from a normalized visual record.
@@ -206,7 +243,7 @@ def build_element(rec, fields, masters)
     vals = (b['Values'] || b['Y'] || [])
     if vals.length > 1
       return vals.each_with_index.map do |qr, i|
-        fs = field_spec(qr, fields)
+        fs = field_spec(qr, fields, master)
         kid = "#{eid}-k#{i}"
         col = { 'id' => "#{kid}-v", 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
         apply_fmt(col, qr, fields, vfmts)
@@ -217,7 +254,7 @@ def build_element(rec, fields, masters)
       end
     end
     qr = vals.first
-    fs = field_spec(qr, fields)
+    fs = field_spec(qr, fields, master)
     cid = "#{eid}-v"
     col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => (qr || 'Value').split('.').last }
     apply_fmt(col, qr, fields, vfmts)
@@ -232,12 +269,12 @@ def build_element(rec, fields, masters)
     dim = (b['Category'] || b['Axis'] || b['X'] || b['Group'] || []).first
     meas = (b['Y'] || b['Values'] || [])
     series = (b['Series'] || b['Legend'] || []).first
-    dfs = field_spec(dim, fields)
+    dfs = field_spec(dim, fields, master)
     dcid = "#{eid}-x"
     cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => (dim || 'Dim').split('.').last }
     ycids = []
     meas.each_with_index do |qr, i|
-      fs = field_spec(qr, fields)
+      fs = field_spec(qr, fields, master)
       cid = "#{eid}-y#{i}"
       col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
       apply_fmt(col, qr, fields, vfmts)
@@ -261,7 +298,7 @@ def build_element(rec, fields, masters)
     # Series/Legend role. Never auto-color a line by a dimension that PBI did
     # not legend (see refs/measure-patterns.md §1 + §4).
     if series
-      sfs = field_spec(series, fields)
+      sfs = field_spec(series, fields, master)
       scid = "#{eid}-c"
       cols << { 'id' => scid, 'formula' => sfs['ref'], 'name' => series.split('.').last }
       el['color'] = { 'by' => 'category', 'column' => scid }
@@ -275,12 +312,12 @@ def build_element(rec, fields, masters)
     dim = (b['Category'] || b['Axis'] || b['X'] || []).first
     col_meas  = (b['Y'] || b['Values'] || [])
     line_meas = (b['Y2'] || [])
-    dfs = field_spec(dim, fields)
+    dfs = field_spec(dim, fields, master)
     dcid = "#{eid}-x"
     cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => (dim || 'Dim').split('.').last }
     ycids = []
     col_meas.each_with_index do |qr, i|
-      fs = field_spec(qr, fields)
+      fs = field_spec(qr, fields, master)
       cid = "#{eid}-y#{i}"
       col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
       apply_fmt(col, qr, fields, vfmts)
@@ -288,7 +325,7 @@ def build_element(rec, fields, masters)
       ycids << cid                                   # bare string -> primary (left) bars
     end
     line_meas.each_with_index do |qr, i|
-      fs = field_spec(qr, fields)
+      fs = field_spec(qr, fields, master)
       cid = "#{eid}-l#{i}"
       col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
       apply_fmt(col, qr, fields, vfmts)
@@ -303,7 +340,7 @@ def build_element(rec, fields, masters)
     xqr = (b['X'] || b['Values'] || []).first
     yqr = (b['Y'] || []).first
     detail = (b['Category'] || b['Details'] || b['Legend'] || []).first
-    xfs = field_spec(xqr, fields); yfs = field_spec(yqr, fields)
+    xfs = field_spec(xqr, fields, master); yfs = field_spec(yqr, fields, master)
     xcid = "#{eid}-x"; ycid = "#{eid}-y"
     cx = { 'id' => xcid, 'formula' => measure_formula(xfs), 'name' => (xqr || 'X').split('.').last }
     cy = { 'id' => ycid, 'formula' => measure_formula(yfs), 'name' => (yqr || 'Y').split('.').last }
@@ -312,7 +349,7 @@ def build_element(rec, fields, masters)
     el['xAxis'] = { 'columnId' => xcid }
     el['yAxis'] = { 'columnIds' => [ycid] }
     if detail
-      dfs = field_spec(detail, fields)
+      dfs = field_spec(detail, fields, master)
       dcid = "#{eid}-d"
       cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => detail.split('.').last }
       el['color'] = { 'by' => 'category', 'column' => dcid }
@@ -320,7 +357,7 @@ def build_element(rec, fields, masters)
   when 'pie-chart', 'donut-chart'
     dim = (b['Category'] || b['Legend'] || []).first
     val = (b['Values'] || b['Y'] || []).first
-    dfs = field_spec(dim, fields); vfs = field_spec(val, fields)
+    dfs = field_spec(dim, fields, master); vfs = field_spec(val, fields, master)
     dcid = "#{eid}-c"; vcid = "#{eid}-v"
     cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => (dim || 'Dim').split('.').last }
     cv = { 'id' => vcid, 'formula' => measure_formula(vfs), 'name' => (val || 'Value').split('.').last }
@@ -335,7 +372,7 @@ def build_element(rec, fields, masters)
     # aggregated column id goes into that grouping's calculations[].
     group_id = nil; calc_ids = []
     (b['Values'] || []).each_with_index do |qr, i|
-      fs = field_spec(qr, fields)
+      fs = field_spec(qr, fields, master)
       cid = "#{eid}-c#{i}"
       is_dim = fs['agg'].to_s.empty?
       col = { 'id' => cid, 'formula' => is_dim ? fs['ref'] : measure_formula(fs),
@@ -357,19 +394,19 @@ def build_element(rec, fields, masters)
     vals = (b['Values'] || [])
     rowids = []
     rows.each_with_index do |qr, i|
-      fs = field_spec(qr, fields); cid = "#{eid}-r#{i}"
+      fs = field_spec(qr, fields, master); cid = "#{eid}-r#{i}"
       cols << { 'id' => cid, 'formula' => fs['ref'], 'name' => qr.split('.').last }
       rowids << cid
     end
     colids = []
     colsby.each_with_index do |qr, i|
-      fs = field_spec(qr, fields); cid = "#{eid}-col#{i}"
+      fs = field_spec(qr, fields, master); cid = "#{eid}-col#{i}"
       cols << { 'id' => cid, 'formula' => fs['ref'], 'name' => qr.split('.').last }
       colids << cid
     end
     valids = []
     vals.each_with_index do |qr, i|
-      fs = field_spec(qr, fields); cid = "#{eid}-v#{i}"
+      fs = field_spec(qr, fields, master); cid = "#{eid}-v#{i}"
       col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
       apply_fmt(col, qr, fields, vfmts)
       cols << col
