@@ -1,0 +1,50 @@
+{
+  "_doc": "Per-dashboard token/$ estimator for migration assessments. Calibrated on the ONE-SHOT ORCHESTRATOR path (migrate-<tool>.rb): the agent runs ~1 command and the conversion is deterministic script work, so LLM cost is tiny and ~flat. Estimate = per_dashboard[bucket] * n_dashboards + per_review_item * n_review_items, where n_review_items = items whose assessment found unsupported/needs-review features (n_unhandled > 0). Tokens are the portable unit; rescale $ by your model's price.",
+  "calibration": {
+    "date": "2026-06-07",
+    "path": "one-shot orchestrator (migrate-<tool>.rb, --yes / auto-accepted defaults)",
+    "models": ["opus", "sonnet"],
+    "rates_per_million_usd": {
+      "opus":   { "input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.50 },
+      "sonnet": { "input": 3.0,  "output": 15.0, "cache_write": 3.75,  "cache_read": 0.30 }
+    },
+    "real_samples": {
+      "quicksight_D8": { "opus_usd": 0.69, "sonnet_usd": 0.14 },
+      "qlik_RetailOrders": { "opus_usd": 0.72, "sonnet_usd": 0.08 }
+    },
+    "for_reference_non_orchestrator": {
+      "naive_agent_path_standard_dashboard": { "opus_usd": 8.56, "sonnet_usd": 2.79 },
+      "optimized_brief_path": { "opus_usd": 3.48, "sonnet_usd": 1.16 },
+      "note": "The orchestrator path is ~12-20x cheaper than a naive agent-driven migration. These are shown so customers understand the savings of running via the orchestrator."
+    }
+  },
+  "per_dashboard": {
+    "mechanical": {
+      "tools": ["quicksight", "powerbi", "qlik", "thoughtspot"],
+      "opus_usd": 0.70,
+      "sonnet_usd": 0.11,
+      "tokens_output_plus_cache_creation": 25000,
+      "note": "Mechanical model converter → deterministic; cost is flat and tool-independent (measured on QuickSight + Qlik)."
+    },
+    "tableau": {
+      "opus_usd": 4.0,
+      "sonnet_usd": 1.0,
+      "tokens_output_plus_cache_creation": 250000,
+      "confidence": "estimate — NOT yet benchmarked on the orchestrator path",
+      "range_opus_usd": [2.0, 8.0],
+      "note": "Tableau has no mechanical converter; the data-model/workbook SPEC is agent-authored (pluggable Specs module), so cost is higher and scales with calc/LOD/custom-SQL complexity. Refine by benchmarking migrate-tableau.rb with a real Specs generator."
+    }
+  },
+  "per_review_item": {
+    "opus_usd": 0.50,
+    "sonnet_usd": 0.12,
+    "confidence": "estimate",
+    "note": "Each item the assessment flags with unsupported/needs-review features (n_unhandled > 0) adds ~one human decision round at the orchestrator's checkpoint. The --yes benchmarks auto-accepted defaults, so this increment is estimated, not directly measured."
+  },
+  "caveats": [
+    "Calibrated on Claude Code; rescale $ by your coding agent's per-token pricing — tokens are portable, $ is not.",
+    "Assumes the ONE-SHOT ORCHESTRATOR path. A naive agent-driven migration is ~12-20x more expensive.",
+    "Warehouse/compute cost (Sigma + Snowflake query) is separate and not included here — this is LLM cost only.",
+    "Tableau number is an estimate pending an orchestrator-path benchmark with a Specs generator."
+  ]
+}

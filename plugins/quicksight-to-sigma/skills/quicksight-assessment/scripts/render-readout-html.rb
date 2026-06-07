@@ -463,6 +463,63 @@ if complexity
   HTML
 end
 
+# ---------- estimated migration effort (token model) ----------
+effort_html = ''
+token_model_path = File.join(__dir__, '..', 'refs', 'token-model.json')
+if has_shortlist && File.exist?(token_model_path)
+  tm = JSON.parse(File.read(token_model_path)) rescue nil
+  if tm
+    bucket  = 'mechanical'
+    n_dash  = shortlist.size
+    n_rev   = n_with_unhandled
+    pd      = (tm['per_dashboard'] || {})[bucket] || {}
+    pr      = tm['per_review_item'] || {}
+    cal     = tm['calibration'] || {}
+    est = lambda { |m| (pd["#{m}_usd"].to_f * n_dash) + (pr["#{m}_usd"].to_f * n_rev) }
+    opus_usd   = est.call('opus')
+    sonnet_usd = est.call('sonnet')
+    fmt = lambda { |v| '$' + format('%.2f', v) }
+    effort_html = <<~HTML
+      <section>
+        <div class="section-head">
+          <span class="section-num">07</span>
+          <h2 class="section-title">Estimated migration effort (tokens / $)</h2>
+          <span class="section-aside">one-shot orchestrator path</span>
+        </div>
+        <p class="section-lede">A planning estimate of the LLM cost to migrate the shortlisted analyses via the <code>quicksight-to-sigma</code> one-shot orchestrator. The mechanical model converter is deterministic, so per-dashboard cost is flat; each analysis flagged for review adds one human-decision round.</p>
+        <div class="stat-row">
+          <div class="stat stat-go">
+            <div class="stat-l">Estimated cost · Opus</div>
+            <div class="stat-v go">#{fmt.call(opus_usd)}</div>
+            <div class="stat-sub">#{n_dash} analyses + #{n_rev} review</div>
+          </div>
+          <div class="stat">
+            <div class="stat-l">Estimated cost · Sonnet</div>
+            <div class="stat-v">#{fmt.call(sonnet_usd)}</div>
+            <div class="stat-sub">same scope, Sonnet pricing</div>
+          </div>
+          <div class="stat">
+            <div class="stat-l">Basis</div>
+            <div class="stat-v" style="font-size:20px;">#{n_dash}<span style="font-size:14px;color:var(--mute);font-weight:600;"> × per-dashboard</span></div>
+            <div class="stat-sub">+ #{n_rev} item#{n_rev == 1 ? '' : 's'} need review</div>
+          </div>
+        </div>
+        <table class="data">
+          <thead>
+            <tr><th>Component</th><th class="al-right">Opus</th><th class="al-right">Sonnet</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>#{n_dash} analyses × per-dashboard</td><td class="al-right num">#{fmt.call(pd['opus_usd'].to_f * n_dash)}</td><td class="al-right num">#{fmt.call(pd['sonnet_usd'].to_f * n_dash)}</td></tr>
+            <tr><td>+ #{n_rev} item#{n_rev == 1 ? '' : 's'} need review</td><td class="al-right num">#{fmt.call(pr['opus_usd'].to_f * n_rev)}</td><td class="al-right num">#{fmt.call(pr['sonnet_usd'].to_f * n_rev)}</td></tr>
+            <tr><td><strong>Total estimated</strong></td><td class="al-right num"><strong>#{fmt.call(opus_usd)}</strong></td><td class="al-right num"><strong>#{fmt.call(sonnet_usd)}</strong></td></tr>
+          </tbody>
+        </table>
+        <p class="note">Calibrated #{h(cal['date'])}, one-shot orchestrator path — LLM cost only; rescale $ by your coding agent's pricing. A naive agent-driven migration is ~12–20× more expensive.</p>
+      </section>
+    HTML
+  end
+end
+
 # ---------- assemble HTML ----------
 html = <<~HTML
 <!DOCTYPE html>
@@ -878,10 +935,11 @@ if has_shortlist
   </section>
 
   HTML
+  html += effort_html
 end
 
-priv_num = has_shortlist ? '07' : '06'
-next_num = has_shortlist ? '08' : '07'
+priv_num = has_shortlist ? '08' : '06'
+next_num = has_shortlist ? '09' : '07'
 
 html += <<~HTML
 <section class="section-tight">
