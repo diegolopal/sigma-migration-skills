@@ -160,6 +160,10 @@ end
 if opts[:fixup]
   abort 'need --in' unless opts[:in]
   model = JSON.parse(File.read(opts[:in]))
+  # The MCP converter wraps its output; unwrap to the bare model. Newer builds
+  # double-wrap as {sigmaDataModel: {name, schemaVersion, pages}}, older ones as
+  # {model: {...}} — handle both (and a sigmaDataModel that itself nests model).
+  model = model['sigmaDataModel'] if model.is_a?(Hash) && model['sigmaDataModel']
   model = model['model'] if model.is_a?(Hash) && model['model']
   model['schemaVersion'] = 1
   ds_names = signals ? signals['datasets'].map { |d| d['name'] }.compact : []
