@@ -29,8 +29,17 @@ yaml.SafeLoader.add_constructor("tag:yaml.org,2002:value",
 OUT = os.path.expanduser("~/thoughtspot-migration/assessment.json")
 
 # Chart kinds the thoughtspot-to-sigma pipeline maps to Sigma today.
-SUPPORTED = {"KPI", "COLUMN", "BAR", "LINE", "PIE", "TABLE", "ADVANCED_COLUMN",
-             "STACKED_COLUMN", "STACKED_BAR", "AREA", "STACKED_AREA", "LINE_COLUMN"}
+# ThoughtSpot vizTypes that map to a native Sigma element kind. Sigma's chart
+# universe: kpi / bar / line / area / pie / donut / scatter / combo / table /
+# pivot-table / region-map / point-map / geography-map. So pivot tables, scatter
+# (incl. bubble = scatter w/ size), donut, dual-axis combos, and geo area/bubble
+# maps ALL convert. Only kinds with no native Sigma equivalent (treemap,
+# waterfall, funnel, heat-map, sankey, histogram, radar/spider, pareto) stay
+# flagged for review.
+SUPPORTED = {"KPI", "COLUMN", "BAR", "STACKED_COLUMN", "STACKED_BAR", "ADVANCED_COLUMN",
+             "LINE", "AREA", "STACKED_AREA", "LINE_COLUMN", "LINE_STACKED_COLUMN",
+             "PIE", "DONUT", "SCATTER", "BUBBLE", "PIVOT_TABLE", "TABLE",
+             "GEO_AREA", "GEO_BUBBLE"}
 
 
 def _author(x):
