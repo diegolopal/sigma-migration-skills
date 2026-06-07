@@ -43,6 +43,7 @@
 # Exit codes: 0 = done (PARITY pass); 10 = decisions needed (OPEN QUESTIONS
 # printed, NO Sigma objects created); 3 = parity/guard fail; other = error.
 require 'json'
+require 'csv'
 require 'yaml'
 require 'optparse'
 require 'fileutils'
@@ -92,6 +93,44 @@ end
 def sigma_run!(cmd, allow_fail: false)
   joined = cmd.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')
   run!(['bash', '-c', "eval \"$(#{File.join(HERE, 'get-token.sh')})\" && #{joined}"], allow_fail: allow_fail)
+end
+
+# Raised when the MECHANICAL WORKBOOK layer (build / validate / POST) fails after
+# the data model is already posted + valid. The orchestrator catches this and
+# degrades to a FRIENDLY agent-path handoff instead of a bare crash — the DM is
+# ready, so the agent path can rebuild just the workbook against it.
+class WorkbookBuildError < StandardError
+  attr_reader :captured_output
+  def initialize(msg, captured_output = '')
+    super(msg)
+    @captured_output = captured_output.to_s
+  end
+end
+
+# Like run!, but on failure raises WorkbookBuildError (catchable) instead of
+# abort()ing the process. Captures the child output for field-name mining.
+def run_wb!(cmd)
+  out, st = Open3.capture2e(*cmd)
+  out.each_line { |l| puts "   #{l.rstrip}" } unless out.strip.empty?
+  raise WorkbookBuildError.new("command failed (#{st.exitstatus}): #{cmd.join(' ')}", out) unless st.success?
+  out
+end
+
+# sigma_run! variant that raises WorkbookBuildError instead of aborting.
+def sigma_run_wb!(cmd)
+  joined = cmd.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')
+  run_wb!(['bash', '-c', "eval \"$(#{File.join(HERE, 'get-token.sh')})\" && #{joined}"])
+end
+
+# Pull likely-offending field/column names out of a failed workbook build/POST log.
+def cull_failed_fields(*logs)
+  text = logs.join("\n")
+  names = []
+  text.scan(/Dependency not found:?\s*([^\n,]+)/i) { |m| names << m[0].strip }
+  text.scan(/Unknown column\s*"?\[?([^"\]\n]+)\]?"?/i) { |m| names << m[0].strip }
+  text.scan(/unmapped (?:derived[- ]dim|measure|field)\s*[:=]?\s*([^\n,]+)/i) { |m| names << m[0].strip }
+  text.scan(/Circular column reference[^\n]*\[([^\]]+)\]/i) { |m| names << m[0].strip }
+  names.map { |n| n.gsub(/[\[\]"]/, '').strip }.reject(&:empty?).uniq
 end
 
 def yp(s) YAML.safe_load(s, permitted_classes: [Date, Time]) rescue {} end
@@ -175,10 +214,123 @@ if have_twb
 end
 
 # ---------------------------------------------------------------------------
+# Spec generation. The DEFAULT path is MECHANICAL (no agent hand-authoring):
+#   convert_tableau_to_sigma → DM spec; parse-twb-layout + build-charts-from-
+#   signals + an auto-derived master-map → workbook spec. An explicit --specs
+#   <path> (or a per-workbook <workdir>/specs.rb the human dropped in) overrides
+#   the mechanical path with a hand-authored `Specs` module, used verbatim.
+# ---------------------------------------------------------------------------
+require File.join(HERE, 'mechanical-specs')
+specs_path = opts[:specs] || [File.join(WORK, 'specs.rb')].find { |p| File.exist?(p) }
+have_specs = false
+if specs_path && File.exist?(specs_path)
+  begin
+    require specs_path.sub(/\.rb$/, '')
+    have_specs = defined?(Specs) && Specs.respond_to?(:dm_spec) && Specs.respond_to?(:wb_spec)
+    line "spec generator: hand-authored Specs module (#{specs_path})" if have_specs
+  rescue StandardError => e
+    line "(spec generator at #{specs_path} failed to load: #{e.message})"
+  end
+end
+
+# Mechanical converter run (the default). Requires the .twb (parse-twb-layout
+# already gated on have_twb above) and the local build/tableau.js converter.
+mechanical = !have_specs
+conv = nil
+if mechanical
+  unless have_twb
+    abort <<~MSG
+      FATAL: mechanical conversion needs the workbook .twb (for the data model +
+      chart signals), but none was downloaded (MCP-only datasource?). Either
+      supply a hand-authored Specs module via --specs, or use a .twb-backed
+      workbook.
+    MSG
+  end
+  mcp_build = ENV['TABLEAU_MCP_BUILD'] || %w[
+    /Users/tjwells/Desktop/sigma-data-model-mcp/build/tableau.js
+    /Users/tjwells/sigma-data-model-mcp/build/tableau.js
+  ].find { |p| File.exist?(p) }
+  abort 'FATAL: cannot locate build/tableau.js (set TABLEAU_MCP_BUILD)' unless mcp_build
+  conv = MechanicalSpecs.run_converter(
+    twb_path: twb, conn: opts[:conn], db: (opts[:db] || 'CSA'),
+    schema: (opts[:schema] || 'TJ'), mcp_build: mcp_build, workdir: WORK)
+  st = conv['stats'] || {}
+  line "mechanical converter: #{st['elements']} element(s), #{st['columns']} column(s), " \
+       "#{st['metrics']} metric(s), #{st['relationships']} relationship(s); #{(conv['warnings'] || []).size} warning(s)"
+
+  # Mechanical DM fixup NOW (so dropped calcs feed the checkpoint): resolve
+  # raw-table-name prefixes + GUID sibling refs, and DROP calc columns that
+  # still cannot resolve (unknown functions / unresolved refs).
+  fx = MechanicalSpecs.fixup_dm_spec(conv['model'])
+  line "DM fixup: rewrote #{fx[:fixed]} formula(s); dropped #{fx[:dropped].size} unresolvable calc col(s)" if fx[:fixed].positive? || fx[:dropped].any?
+  dropped_calcs = fx[:dropped]
+
+  # Pre-derive the master-map now (deterministic; uses the converter element
+  # name — Phase 4 re-derives against the authoritative readback name). This lets
+  # us surface any chart-PLOTTED metric that did not fully translate (GUID refs
+  # the converter could not resolve) as an OPEN QUESTION rather than a silent
+  # blank chart. Metrics that aren't plotted by any view are ignored.
+  conv_fact = MechanicalSpecs.pick_fact(conv['model'])
+  conv_base = conv_fact ? MechanicalSpecs.base_of(conv['model'], conv_fact) : nil
+  pre = conv_fact ? MechanicalSpecs.derive_master(conv_fact, (conv_fact['name'] || 'Order Fact'), conv_base) : { 'untranslated_metrics' => [] }
+  csv_headers = Dir[File.join(WORK, 'views', '*.csv')].flat_map do |c|
+    (CSV.read(c).first rescue nil) || []
+  end.compact.map { |h| h.to_s.strip }.uniq
+  plotted_untranslated = (pre['untranslated_metrics'] || []).select do |nm|
+    csv_headers.any? { |h| h.casecmp?(nm) || h.sub(/^(sum|avg|min|max|median|distinct count|count) of /i, '').casecmp?(nm) }
+  end
+end
+
+# ---------------------------------------------------------------------------
 # DECISIONS CHECKPOINT — surface the genuine human questions ONLY. Mechanical
 # fixup / POST / layout / parity are never asked about.
 # ---------------------------------------------------------------------------
 questions = []
+
+# (a0) MECHANICAL CONVERTER WARNINGS — the authoritative un-mappable signal.
+# convert_tableau_to_sigma marks each calc/LOD/window translation outcome:
+#   ⛔ = no/failed translation (calc dropped → charts using it degrade)
+#   ⚠  = best-effort / unsupported mode (verify in Sigma)
+#   ℹ / ✅ = clean auto-handle (NOT a decision)
+(mechanical ? (conv['warnings'] || []) : []).each do |w|
+  ws = w.to_s.gsub(/\s+/, ' ').strip
+  next if ws.start_with?('ℹ', '✅')
+  next if ws.include?('Connection ID not set') # mechanical: --connection always supplied
+  if ws.start_with?('⛔')
+    questions << { 'id' => 'calc_no_translation', 'severity' => 'review', 'detail' => ws,
+                   'options' => ['proceed (calc dropped; dependent charts degrade)',
+                                 'abort and re-author the calc manually'],
+                   'default' => 'proceed (calc dropped; dependent charts degrade)' }
+  else # ⚠ and any unmarked warning
+    questions << { 'id' => 'calc_best_effort', 'severity' => 'review', 'detail' => ws,
+                   'options' => ['proceed (converter best-effort; verify in Sigma)',
+                                 'restructure manually'],
+                   'default' => 'proceed (converter best-effort; verify in Sigma)' }
+  end
+end
+
+# (a1) PLOTTED metrics whose formula did not fully translate (unresolved Tableau
+# internal field refs). These are charted by a Tableau view but cannot resolve
+# mechanically against the master — a genuine human decision.
+(mechanical ? (defined?(plotted_untranslated) && plotted_untranslated || []) : []).each do |nm|
+  questions << { 'id' => 'metric_untranslated', 'severity' => 'review', 'calc' => nm,
+                 'detail' => "Metric '#{nm}' is plotted in a Tableau view but the converter left unresolved " \
+                             'internal field references in its formula — it cannot be rebuilt mechanically.',
+                 'options' => ['proceed (chart measure left blank; re-author the calc in Sigma)',
+                               'skip this metric'],
+                 'default' => 'proceed (chart measure left blank; re-author the calc in Sigma)' }
+end
+
+# (a2) calc COLUMNS the mechanical fixup had to DROP (unknown function like
+# DATEPARSE, or refs that never resolved). Genuinely un-mappable → human.
+(mechanical ? (defined?(dropped_calcs) && dropped_calcs || []) : []).each do |nm|
+  questions << { 'id' => 'calc_dropped', 'severity' => 'review', 'calc' => nm,
+                 'detail' => "Calc column '#{nm}' could not be translated mechanically (unsupported function " \
+                             'or unresolved reference) and was dropped from the data model.',
+                 'options' => ['proceed (column dropped; re-author as a Custom SQL element or Sigma calc)',
+                               'skip this calc'],
+                 'default' => 'proceed (column dropped; re-author as a Custom SQL element or Sigma calc)' }
+end
 
 # (a) calc fields that have NO Sigma calc-column translation (window / table
 #     calc / LOD) — they become Custom-SQL DM elements or degrade.
@@ -308,21 +460,7 @@ else
   line 'no open questions — running straight through'
 end
 
-# ---------------------------------------------------------------------------
-# Locate a spec generator (the agent-owned DM/workbook step).
-# ---------------------------------------------------------------------------
-specs_path = opts[:specs] ||
-             [File.join(WORK, 'specs.rb'),
-              File.expand_path('~/orders-migration/specs.rb')].find { |p| File.exist?(p) }
-have_specs = false
-if specs_path && File.exist?(specs_path)
-  begin
-    require specs_path.sub(/\.rb$/, '')
-    have_specs = defined?(Specs) && Specs.respond_to?(:dm_spec) && Specs.respond_to?(:wb_spec)
-  rescue StandardError => e
-    line "(spec generator at #{specs_path} failed to load: #{e.message})"
-  end
-end
+
 
 # ---------------------------------------------------------------------------
 # Phase 2 — Discover warehouse column names (per table) for the DM build.
@@ -333,7 +471,11 @@ schema = opts[:schema] || 'TJ'
 # Table set: from the generator's DM spec when available, else inferred from the
 # datasource's logical tables.
 wh_tables =
-  if have_specs
+  if mechanical
+    (conv['model']['pages'] || []).flat_map { |p| p['elements'] || [] }
+      .select { |e| e.dig('source', 'kind') == 'warehouse-table' }
+      .map { |e| e.dig('source', 'path')&.last }.compact.uniq
+  elsif have_specs
     Specs.dm_spec['pages'].flat_map { |p| p['elements'] }
          .map { |e| e.dig('source', 'path')&.last }.compact.uniq
   else
@@ -362,26 +504,57 @@ end
 # ---------------------------------------------------------------------------
 hdr(3, 'Build data model')
 dm_spec_path = File.join(WORK, 'dm-spec.json')
-unless have_specs
-  abort <<~MSG
-    FATAL: no spec generator found and the general data-driven DM builder is not
-    wired for this datasource shape. Drop a Ruby file defining a `Specs` module
-    with `dm_spec` + `wb_spec(dm_id, fact_eid)` (+ optional `layout_xml`) next to
-    the working dir (#{WORK}/specs.rb) or pass --specs <path>. The validated
-    reference generator lives at ~/orders-migration/specs.rb.
-  MSG
+if mechanical
+  # The converter output IS the DM spec (schemaVersion:1 already set). Apply the
+  # mechanical fixup (resolve raw-table-name prefixes + GUID sibling refs the
+  # converter left unresolved) then stamp the human-supplied folderId. No agent
+  # authoring.
+  dm = conv['model'] # already fixed up in Phase 1 (prefixes/GUIDs resolved, bad calcs dropped)
+  dm['name'] = wb_name if dm['name'].to_s.empty?
+  # Phantom-column filter (needs Phase 2's live warehouse columns): Tableau
+  # virtual-connection datasources flatten dim columns into the fact and emit
+  # base-column refs that don't exist in the real table. Drop them so the POST
+  # resolves. Load the cols-<TABLE>.json files discovered in Phase 2.
+  real_cols = {}
+  Dir[File.join(WORK, 'cols-*.json')].each do |cf|
+    cj = (JSON.parse(File.read(cf)) rescue nil)
+    next unless cj && cj['columns']
+    tname = File.basename(cf, '.json').sub(/^cols-/, '')
+    real_cols[tname] = cj['columns'].map { |c| c['name'] }
+  end
+  unless real_cols.empty?
+    pf = MechanicalSpecs.fixup_dm_spec(dm, real_cols)
+    line "phantom-column filter: dropped #{pf[:phantom]} non-existent base column(s) using #{real_cols.size} live table catalog(s)" if pf[:phantom].to_i.positive?
+  end
+else
+  dm = Specs.dm_spec
 end
-dm = Specs.dm_spec
 dm['folderId'] = opts[:folder] if opts[:folder]
 File.write(dm_spec_path, JSON.pretty_generate(dm))
-run!(['ruby', File.join(HERE, 'validate-spec.rb'), '--type', 'datamodel', dm_spec_path])
+# In mechanical mode validate-spec.rb is advisory only: it flags cross-element
+# sibling refs that Sigma actually resolves via relationships (documented
+# false-negative class — see project CLAUDE.md). The authoritative gate is the
+# live POST + readback column-type guard below (post-and-readback exits 2 on any
+# error-typed column). For hand-authored Specs, keep validation hard.
+_, dvst = run!(['ruby', File.join(HERE, 'validate-spec.rb'), '--type', 'datamodel', dm_spec_path],
+               allow_fail: mechanical)
+line 'DM validate-spec flagged issues (advisory in mechanical mode — live POST is the gate)' if mechanical && !dvst.success?
 dm_ids_path = File.join(WORK, 'dm-ids.json')
 sigma_run!(['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'datamodel',
             '--spec', dm_spec_path, '--out', dm_ids_path, '--workdir', WORK])
 dm_ids = JSON.parse(File.read(dm_ids_path))
 dm_id = dm_ids['dataModelId']
 dm_els = dm_ids['pages'].flat_map { |p| p['elements'] }
-fact = dm_els.find { |e| e['name'] !~ / Dim$/i } || dm_els.first
+if mechanical
+  # The master must source the SAME chart-ready element pick_fact chose (the
+  # derived "<Fact> View" when present). Match it into the readback by name.
+  cf = MechanicalSpecs.pick_fact(conv['model'])
+  cf_name = cf && (cf['name'] || MechanicalSpecs.elem_name(cf))
+  fact = dm_els.find { |e| e['name'] == cf_name } ||
+         dm_els.find { |e| e['name'] !~ / Dim$/i } || dm_els.first
+else
+  fact = dm_els.find { |e| e['name'] !~ / Dim$/i } || dm_els.first
+end
 fact_eid = fact['id']
 line "dataModelId = #{dm_id}  (fact element '#{fact['name']}' = #{fact_eid})"
 
@@ -390,15 +563,84 @@ line "dataModelId = #{dm_id}  (fact element '#{fact['name']}' = #{fact_eid})"
 # ---------------------------------------------------------------------------
 hdr(4, 'Build workbook')
 wb_spec_path = File.join(WORK, 'wb-spec.json')
-spec = Specs.wb_spec(dm_id, fact_eid)
-spec['folderId'] = opts[:folder] if opts[:folder]
-layout_xml = (Specs.respond_to?(:layout_xml) ? Specs.layout_xml : nil)
+layout_xml = nil
+if mechanical
+  # 1) Derive the master-map DETERMINISTICALLY from the converter fact element,
+  #    using the AUTHORITATIVE readback element name for the [fact/Col] formulas,
+  #    AND the readback element's REAL column labels (the suffixed display names
+  #    Sigma assigns to joined-dim columns, e.g. "Customer Id (CUSTOMER_DIM)") so
+  #    the [fact/Col] formulas resolve for virtual-connection (denormalized) DMs.
+  conv_fact = MechanicalSpecs.pick_fact(conv['model'])
+  abort 'FATAL: mechanical path could not identify a fact element in the converter output' unless conv_fact
+  conv_base = MechanicalSpecs.base_of(conv['model'], conv_fact)
+  real_labels = fact['columnLabels'] # from post-and-readback /columns (may be nil)
+  derived = MechanicalSpecs.derive_master(conv_fact, fact['name'], conv_base, real_labels)
+  master_columns = derived['master_columns']
+  mmap = derived['mmap']
+  mmap_path = File.join(WORK, 'master-map.json')
+  File.write(mmap_path, JSON.pretty_generate(mmap))
+  line "master-map: #{master_columns.size} master column(s) (fact element '#{fact['name']}', #{real_labels ? real_labels.size : 0} readback labels)"
+
+  # 2) Build the chart-element specs from the parsed zones + view CSVs + map.
+  charts_path = File.join(WORK, 'chart-specs.json')
+  build_cmd = ['ruby', File.join(HERE, 'build-charts-from-signals.rb'),
+               '--tableau-dir', WORK, '--layout', layout_json,
+               '--master-map', mmap_path, '--master-element-id', 'master',
+               '--out', charts_path]
+  build_cmd += ['--meta', layout_json.sub(/\.json$/, '-meta.json')] if File.exist?(layout_json.sub(/\.json$/, '-meta.json'))
+  build_cmd += ['--auto-controls'] if File.exist?(layout_json.sub(/\.json$/, '-meta.json'))
+  run!(build_cmd, allow_fail: true)
+  raw_charts = (JSON.parse(File.read(charts_path)) rescue [])
+  chart_elements = raw_charts.is_a?(Hash) ? (raw_charts['pages'] || []).flat_map { |p| p['elements'] || [] } : raw_charts
+  if chart_elements.empty?
+    line 'WARN: build-charts produced 0 elements (no usable view CSVs / zones); emitting an empty dashboard page'
+  else
+    line "build-charts: #{chart_elements.size} chart/control element(s)"
+  end
+
+  # 3) Assemble the workbook spec (page-data master + dashboard page).
+  spec = MechanicalSpecs.build_wb_spec(
+    name: wb_name, dm_id: dm_id, fact_eid: fact_eid,
+    master_columns: master_columns, chart_elements: chart_elements,
+    folder_id: opts[:folder])
+else
+  spec = Specs.wb_spec(dm_id, fact_eid)
+  spec['folderId'] = opts[:folder] if opts[:folder]
+  layout_xml = (Specs.respond_to?(:layout_xml) ? Specs.layout_xml : nil)
+end
 File.write(wb_spec_path, JSON.pretty_generate(spec))
-run!(['ruby', File.join(HERE, 'validate-spec.rb'), '--type', 'workbook',
-      '--dm-context', dm_ids_path, wb_spec_path])
 wb_ids_path = File.join(WORK, 'wb-ids.json')
-sigma_run!(['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'workbook',
-            '--spec', wb_spec_path, '--out', wb_ids_path, '--workdir', WORK])
+
+# GRACEFUL AGENT-PATH FALLBACK. The DM is already posted + valid (dm_id above), so
+# if the MECHANICAL workbook layer (validate-spec / build / POST) hits a field it
+# cannot translate (Sigma rejects the spec / unresolved "Dependency not found" /
+# unmapped derived-dim or measure), we must NOT bare-crash. Catch it and exit with
+# a clear, FRIENDLY non-zero handoff: the agent path rebuilds the workbook against
+# this DM (see SKILL.md). Never worse than the proven agent path.
+begin
+  v_log = run_wb!(['ruby', File.join(HERE, 'validate-spec.rb'), '--type', 'workbook',
+                   '--dm-context', dm_ids_path, wb_spec_path])
+  p_log = sigma_run_wb!(['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'workbook',
+                         '--spec', wb_spec_path, '--out', wb_ids_path, '--workdir', WORK])
+rescue WorkbookBuildError => e
+  failed = cull_failed_fields(e.captured_output,
+                              (defined?(v_log) ? v_log : ''), (defined?(p_log) ? p_log : ''))
+  # Fall back to the mechanically-known untranslatable fields when the log itself
+  # doesn't name one (plotted-but-unresolved metrics + dropped calc columns).
+  if failed.empty? && mechanical
+    failed = ((defined?(plotted_untranslated) && plotted_untranslated || []) +
+              (defined?(dropped_calcs) && dropped_calcs || [])).compact.uniq
+  end
+  names = failed.empty? ? 'one or more fields' : failed.join(', ')
+  n = failed.empty? ? 'some' : failed.size.to_s
+  puts
+  puts "── Mechanical path: data model built OK (dataModelId=#{dm_id}). The WORKBOOK " \
+       "layer hit #{n} field(s) the mechanical path can't translate (#{names}). " \
+       "Falling back to the agent path: rebuild the workbook via the skill's " \
+       "agent-authored flow (see SKILL.md) against this DM. The data model is " \
+       "posted and ready to attach."
+  exit 4
+end
 wb_ids = JSON.parse(File.read(wb_ids_path))
 wb_id = wb_ids['workbookId']
 line "workbookId = #{wb_id}"
@@ -413,15 +655,20 @@ if layout_xml
   File.write(layout_path, layout_xml)
   line 'layout from spec generator'
 elsif File.exist?(layout_json)
-  run!(['ruby', File.join(HERE, 'build-dashboard-layout.rb'),
-        '--layout', layout_json, '--wb-ids', wb_ids_path, '--out', layout_path])
+  _, lst = run!(['ruby', File.join(HERE, 'build-dashboard-layout.rb'),
+                 '--layout', layout_json, '--wb-ids', wb_ids_path, '--out', layout_path],
+                allow_fail: true)
+  line 'WARN: layout build failed — workbook will render in default stacked order' unless lst.success?
 else
   line 'no layout source — skipping (workbook renders single-column stack)'
 end
+# Layout is cosmetic: a bad grid PUT must NOT fail an otherwise-good migration
+# (the workbook still renders + queries). Apply best-effort.
 if File.exist?(layout_path)
-  sigma_run!(['ruby', File.join(HERE, 'put-layout.rb'),
-              '--workbook', wb_id, '--layout', layout_path])
-  line "layout applied to workbook #{wb_id}"
+  _, pst = sigma_run!(['ruby', File.join(HERE, 'put-layout.rb'),
+                       '--workbook', wb_id, '--layout', layout_path], allow_fail: true)
+  line(pst.success? ? "layout applied to workbook #{wb_id}" :
+       'WARN: layout PUT rejected (Invalid element position) — keeping default stacked layout; charts unaffected')
 end
 
 # ---------------------------------------------------------------------------

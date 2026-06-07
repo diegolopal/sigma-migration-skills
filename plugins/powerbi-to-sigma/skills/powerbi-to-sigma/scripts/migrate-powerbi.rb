@@ -45,6 +45,7 @@ require 'optparse'
 require 'fileutils'
 require 'open3'
 require 'digest'
+require 'set'
 
 HERE = __dir__
 $LOAD_PATH.unshift File.expand_path('lib', HERE)
@@ -90,6 +91,42 @@ def run!(cmd, env: {})
   out.each_line { |l| puts "   #{l.rstrip}" } unless out.strip.empty?
   abort "FATAL: command failed (#{st.exitstatus}): #{cmd.join(' ')}" unless st.success?
   out
+end
+
+# Raised when the MECHANICAL WORKBOOK layer (build / validate / POST) fails after
+# the data model is already posted + valid. The orchestrator catches this and
+# degrades to a FRIENDLY agent-path handoff instead of a bare crash — the DM is
+# ready, so the agent path can rebuild just the workbook against it.
+class WorkbookBuildError < StandardError
+  attr_reader :captured_output
+  def initialize(msg, captured_output = '')
+    super(msg)
+    @captured_output = captured_output.to_s
+  end
+end
+
+# Like run!, but on failure raises WorkbookBuildError (catchable) instead of
+# abort()ing the process. Captures the child output so the caller can mine it for
+# the offending field name(s) ("Dependency not found", "Unknown column", etc.).
+def run_wb!(cmd, env: {})
+  out, st = Open3.capture2e(env, *cmd)
+  out.each_line { |l| puts "   #{l.rstrip}" } unless out.strip.empty?
+  raise WorkbookBuildError.new("command failed (#{st.exitstatus}): #{cmd.join(' ')}", out) unless st.success?
+  out
+end
+
+# Pull likely-offending field/column names out of a failed workbook build/POST log
+# so the fallback message can name them. Looks for the common rejection shapes:
+#   "Dependency not found: <X>", "Unknown column \"[<X>]\"", "source: {} ... <X>",
+#   "Invalid value: undefined", unresolved [El/Col] refs.
+def cull_failed_fields(*logs)
+  text = logs.join("\n")
+  names = []
+  text.scan(/Dependency not found:?\s*([^\n,]+)/i) { |m| names << m[0].strip }
+  text.scan(/Unknown column\s*"?\[?([^"\]\n]+)\]?"?/i) { |m| names << m[0].strip }
+  text.scan(/unmapped (?:derived[- ]dim|measure|field)\s*[:=]?\s*([^\n,]+)/i) { |m| names << m[0].strip }
+  text.scan(/Circular column reference[^\n]*\[([^\]]+)\]/i) { |m| names << m[0].strip }
+  names.map { |n| n.gsub(/[\[\]"]/, '').strip }.reject(&:empty?).uniq
 end
 
 TOTAL = 6
@@ -288,11 +325,29 @@ raw_dm = JSON.parse(File.read(File.join(WORK, 'dm-raw.json')))
 named_cols = 0
 (raw_dm['pages'] || []).each do |pg|
   (pg['elements'] || []).each do |el|
-    next unless el.dig('source', 'path') # base warehouse-table elements only
+    # Bug E: SQL elements synthesized from a DAX CALENDAR/VALUES calc-table
+    # (DimDate, DimMonth, SalaryBands) ALSO need their columns named — their
+    # follow-on calc columns reference siblings by bare [ColAlias], which
+    # error-type if the referenced column has no display name. Previously only
+    # warehouse-table (source.path) elements were stamped.
+    is_warehouse = !el.dig('source', 'path').nil?
+    is_sql       = el.dig('source', 'kind') == 'sql'
+    next unless is_warehouse || is_sql
     (el['columns'] || []).each do |c|
       next if c['name'] && !c['name'].to_s.empty?
-      dn = c['formula'].to_s.gsub(/^\[|\]$/, '').split('/')[-1]
+      f  = c['formula'].to_s
+      dn = f.gsub(/^\[|\]$/, '').split('/')[-1]
       next if dn.to_s.empty?
+      # Bug E (SQL elements): a SQL-OUTPUT column has a bare self-referencing
+      # formula `[Date]` that maps to the SQL `AS "Date"` alias. Stamping
+      # name="Date" on it makes `[Date]` a CIRCULAR reference -> error-type. Only
+      # stamp a name when the formula is NOT a bare self-reference (i.e. a
+      # follow-on calc column like `Year([Date])`), so its siblings can ref it,
+      # while leaving SQL-output columns nameless to bind to their alias.
+      if is_sql
+        bare_self = (f =~ /\A\[[^\]\/]+\]\z/) && (f.gsub(/^\[|\]$/, '') == dn)
+        next if bare_self
+      end
       c['name'] = dn
       named_cols += 1
     end
@@ -337,35 +392,312 @@ dm_elements = dm_rb['pages'].flat_map { |p| p['elements'] || [] }
 # Display-name helper: a column formula "[Tbl/Order Id]" -> "Order Id".
 disp = lambda { |formula| formula.to_s.gsub(/^\[|\]$/, '').split('/')[-1] }
 
+# Bug A: For a JOIN/View element, columns carry the FULL cross-element ref path
+# in their formula — e.g. "[ORDER_FACT/Customer Key]" (own column) AND
+# "[ORDER_FACT/CUSTOMER_DIM/Customer Key]" (related column). Both leaf-resolve to
+# "Customer Key", so keying the master-column id/name on the leaf produces a
+# COLLISION (duplicate ids + duplicate names) and the workbook POST fails.
+# These helpers reproduce Sigma's own disambiguation:
+#   - the Sigma DISPLAY NAME of a related col is "Customer Key (CUSTOMER_DIM)"
+#     (leaf + " (relName)") — matches the converter's viewColDisplay().
+#   - the master-column ID keys on the FULL path so it is unique per column.
+sigma_view_disp = lambda do |formula|
+  parts = formula.to_s.gsub(/^\[|\]$/, '').split('/')
+  parts.length <= 2 ? parts[-1] : "#{parts[-1]} (#{parts[-2]})"
+end
+# The path INSIDE the element (drop the element-name prefix), used as the master
+# column's resolving formula, e.g. "[mid/CUSTOMER_DIM/Customer Key]".
+inner_path = lambda do |formula|
+  parts = formula.to_s.gsub(/^\[|\]$/, '').split('/')
+  parts.length <= 1 ? parts[0].to_s : parts[1..].join('/')
+end
+
 # Build one master per converter element. master id is "master-<elementId-tail>".
 masters = {}
 field_map = {}
 conv_elements.each do |cel|
   cname = cel['name']
-  # match the posted DM element by name (PUT keeps names; ids may change).
-  dmel = dm_elements.find { |e| e['name'] == cname } || dm_elements.first
+  # match the posted DM element: by NAME first (PUT keeps names; ids may change),
+  # then by ID. A Custom SQL element is NAMELESS in the spec (rule 3) and Sigma
+  # auto-names it "Custom SQL" on readback — recover that name by id-match so the
+  # master keys + column prefixes resolve (Bug E: nameless SQL element).
+  dmel = (cname && dm_elements.find { |e| e['name'] == cname }) ||
+         dm_elements.find { |e| e['id'] == cel['id'] } || dm_elements.first
+  cname ||= (dmel && dmel['name']) || 'Custom SQL'
   mkey = cname
   mid  = "master-#{Digest::SHA1.hexdigest(cname)[0, 8]}"
+  # Bug A: key the master-column id on the FULL cross-element path (not the leaf)
+  # and use Sigma's disambiguated display name. For a JOIN/View element, base and
+  # related columns can share a leaf ("Customer Key"), so leaf-keying collides on
+  # both id AND name -> duplicate columns -> workbook POST fails. The master table
+  # element sources from the DM element (named `cname`); the DM element exposes a
+  # related column under its disambiguated display name "Leaf (RelName)", so the
+  # master column's formula references THAT display name on `cname`. Dedupe by the
+  # full path so each underlying column yields exactly one master column.
+  seen_paths = {}
   cols = (cel['columns'] || []).map do |c|
-    dn = disp.call(c['formula'])
-    { 'id' => "mc-#{Digest::SHA1.hexdigest("#{cname}/#{dn}")[0, 10]}", 'name' => dn,
-      'formula' => "[#{cname}/#{dn}]" }
+    # If the converter already stamped a display `name` (calc/derived/time-intel
+    # columns), trust it — the column's formula is an expression, NOT a bare
+    # [El/Col] ref, so formula-parsing would mangle the name (Bug C side effect).
+    # Bug A formula-path keying applies ONLY to bare [El/.../Col] reference cols.
+    bare_ref = c['formula'].to_s =~ /\A\[[^\]]+\]\z/
+    if c['name'] && !c['name'].to_s.empty? && !bare_ref
+      dn  = c['name'].to_s
+      key = "#{cname}/calc/#{dn}"
+      next nil if seen_paths[key]
+      seen_paths[key] = true
+      next({ 'id' => "mc-#{Digest::SHA1.hexdigest(key)[0, 10]}", 'name' => dn,
+             'formula' => "[#{cname}/#{dn}]", '_leaf' => dn })
+    end
+    full = c['formula'].to_s.gsub(/^\[|\]$/, '')         # e.g. ORDER_FACT/CUSTOMER_DIM/Customer Key
+    next nil if full.empty? || seen_paths[full]
+    seen_paths[full] = true
+    dn   = sigma_view_disp.call(c['formula'])            # "Customer Key (CUSTOMER_DIM)"
+    { 'id' => "mc-#{Digest::SHA1.hexdigest("#{cname}/#{full}")[0, 10]}", 'name' => dn,
+      'formula' => "[#{cname}/#{dn}]", '_leaf' => disp.call(c['formula']) }
+  end.compact
+  # column field refs: queryRef "Entity.Col" -> {master, ref:[mid/Name], agg:null}.
+  # Map both the disambiguated name AND the bare leaf (PBIR queryRefs use the leaf
+  # when the dim column is unambiguous in the original model) so bindings resolve.
+  cols.each do |c|
+    ref = { 'master' => mkey, 'ref' => "[#{mid}/#{c['name']}]", 'agg' => nil }
+    field_map["#{cname}.#{c['name']}"] = ref
+    field_map["#{cname}.#{c['_leaf']}"] ||= ref
   end
+  cols.each { |c| c.delete('_leaf') } # internal-only; keep master columns clean
   masters[mkey] = { 'id' => mid, 'element_id' => dmel['id'], 'data_model' => dm_id,
                     'columns' => cols }
-  # column field refs: queryRef "Entity.Col" -> {master, ref:[master/Col], agg:null}
-  cols.each do |c|
-    field_map["#{cname}.#{c['name']}"] = { 'master' => mkey, 'ref' => "[#{mid}/#{c['name']}]", 'agg' => nil }
-  end
   # measure field refs: a translated metric "Sum([Sales])" -> rewrite bare col refs
   # to the master, set agg=null and pass the FULL formula as `ref` (build script
   # uses ref verbatim when agg is nil — handles ratios like DIVIDE too).
+  #
+  # Bug D: a metric formula may reference ANOTHER metric by name, e.g.
+  #   Sales per Order = [Total Sales] / [Orders]
+  # where Total Sales = Sum([Sales]) and Orders = CountDistinct([Order Id]).
+  # Naively rewriting [Total Sales] -> [mid/Total Sales] points at a NON-EXISTENT
+  # master column (metrics are formulas, not stored columns), and Sigma rejects
+  # the dependency. Fix: substitute the referenced metric's FULL formula INLINE.
+  # Stored master-column names ARE valid [mid/Name] refs; only metric-name refs
+  # are inlined. Resolve recursively (with a guard) so chained metrics collapse.
+  master_col_names = cols.map { |c| c['name'] }.to_set
+  metric_by_name   = {}
+  (cel['metrics'] || []).each { |mm| metric_by_name[mm['name'].to_s] = mm['formula'].to_s }
+  resolve_metric = lambda do |formula, depth|
+    formula.to_s.gsub(/\[([^\/\]]+)\]/) do
+      ref = Regexp.last_match(1)
+      if master_col_names.include?(ref)
+        "[#{mid}/#{ref}]"                                   # real stored column
+      elsif metric_by_name.key?(ref) && depth < 16
+        "(#{resolve_metric.call(metric_by_name[ref], depth + 1)})" # inline the metric
+      else
+        "[#{mid}/#{ref}]"                                   # bare column ref (e.g. Sum([Sales]))
+      end
+    end
+  end
   (cel['metrics'] || []).each do |m|
-    formula = m['formula'].to_s
-    # rewrite every "[Col]" (bare, no slash) -> "[master/Col]"
-    rewritten = formula.gsub(/\[([^\/\]]+)\]/) { "[#{mid}/#{Regexp.last_match(1)}]" }
+    rewritten = resolve_metric.call(m['formula'].to_s, 0)
     field_map["#{cname}.#{m['name']}"] = { 'master' => mkey, 'ref' => rewritten, 'agg' => nil,
                                            'format' => (m.dig('format', 'formatString')) }
+  end
+end
+
+# Bug E (queryRef routing): a DAX calc-table (DimDate / SalaryBands / DimMonth)
+# becomes a NAMELESS Custom SQL element (master keyed "Custom SQL"), but the PBIR
+# chart still binds it under its ORIGINAL table name ("DimDate.Month"). Alias the
+# original calc-table name + each column onto the Custom SQL master so those
+# bindings resolve. The calc table is identified from the TMSL (partition source
+# type 'calculated'); its column display names match the Custom SQL master cols.
+calc_tables = tables.select do |t|
+  Array(t['partitions']).any? { |p| p.dig('source', 'type') == 'calculated' }
+end
+# A Custom SQL master is recognizable by its column formulas using the
+# `[Custom SQL/...]` prefix (the converter emits that for SQL-element columns).
+sql_masters = masters.select do |_n, m|
+  (m['columns'] || []).any? { |c| c['formula'].to_s.start_with?('[Custom SQL/') }
+end
+calc_tables.each do |t|
+  orig = t['name'].to_s
+  # pick the SQL master whose columns best cover this calc table's columns.
+  tcols = (t['columns'] || []).reject { |c| c['type'] == 'rowNumber' || c['isGenerated'] }
+                              .map { |c| (c['sourceColumn'] || c['name']).to_s.gsub(/^\[|\]$/, '') }
+  best = sql_masters.max_by do |_n, m|
+    names = (m['columns'] || []).map { |c| c['name'].to_s }
+    tcols.count { |tc| names.any? { |n| n.casecmp?(tc) || n.gsub(/\s+/, '').casecmp?(tc.gsub(/\s+/, '')) } }
+  end
+  next unless best
+  bmkey, bm = best
+  (bm['columns'] || []).each do |c|
+    ref = { 'master' => bmkey, 'ref' => "[#{bm['id']}/#{c['name']}]", 'agg' => nil }
+    field_map["#{orig}.#{c['name']}"] ||= ref
+  end
+end
+
+# Bug A (star schema): a cross-table visual binds a DIMENSION from a dim table
+# (e.g. PRODUCT_DIM.Category) AND a MEASURE from the fact (ORDER_FACT.Net Rev).
+# Those route to DIFFERENT per-table masters, but a Sigma chart element can only
+# reference columns from its OWN source master — a cross-master ref error-types.
+# The converter already builds a denormalized "<Fact> View" element that carries
+# the fact columns + every related dim column (disambiguated "Leaf (DIM)"). So
+# RE-ROUTE every field that the View also exposes onto the View master, leaving
+# the visual with a single coherent source. Match a per-table field's leaf name
+# to the View column whose Sigma display name is "Leaf" or "Leaf (anything)".
+conv_elements.each do |vcel|
+  vname = vcel['name'].to_s
+  next unless vname =~ /\sView$/                     # the denormalized join element
+  next unless masters[vname]
+  vmid  = masters[vname]['id']
+  vcols = masters[vname]['columns'] || []
+  # leaf -> View column name (prefer the bare-leaf col when present, else the
+  # first disambiguated "Leaf (DIM)" col).
+  leaf_to_view = {}
+  vcols.each do |c|
+    leaf = c['name'].to_s.sub(/\s+\([^)]*\)\s*$/, '') # strip " (DIM)" suffix
+    leaf_to_view[leaf] ||= c['name']
+    leaf_to_view[c['name']] ||= c['name']            # exact disambiguated form too
+  end
+  # the fact this View denormalizes (drop the trailing " View").
+  fact = vname.sub(/\s+View$/, '')
+  # masters whose columns the View subsumes: the fact + every dim reachable via
+  # a "(DIM)" suffix in the View's columns.
+  subsumed = [fact] + vcols.map { |c| c['name'][/\(([^)]*)\)\s*$/, 1] }.compact.uniq
+  field_map.each do |qr, fs|
+    next unless subsumed.include?(fs['master'])
+    old_mid = masters[fs['master']] ? masters[fs['master']]['id'] : nil
+    ref_str = fs['ref'].to_s
+    is_plain_col = ref_str =~ /\A\[[^\]]+\]\z/ # exactly one bracketed ref, no agg
+    if is_plain_col
+      # plain dimension/column ref: match its leaf to a View column.
+      leaf = qr.split('.', 2).last.to_s.sub(/\s+\([^)]*\)\s*$/, '')
+      vcol = leaf_to_view[leaf] || leaf_to_view[qr.split('.', 2).last.to_s]
+      next unless vcol
+      field_map[qr] = fs.merge('master' => vname, 'ref' => "[#{vmid}/#{vcol}]")
+    elsif old_mid
+      # measure/aggregation formula: every referenced fact column must exist on the
+      # View (it does — the View carries all fact columns). Swap the old master id
+      # for the View master id and remap each inner column leaf to its View name.
+      remapped = ref_str.gsub(/\[#{Regexp.escape(old_mid)}\/([^\]]+)\]/) do
+        inner = Regexp.last_match(1)
+        mapped = leaf_to_view[inner] || leaf_to_view[inner.sub(/\s+\([^)]*\)\s*$/, '')] || inner
+        "[#{vmid}/#{mapped}]"
+      end
+      # only re-route if we actually rewrote a ref onto the View master.
+      field_map[qr] = fs.merge('master' => vname, 'ref' => remapped) if remapped.include?(vmid)
+    end
+  end
+end
+
+# Bug C: time-intel forwarding. The converter turns DAX SAMEPERIODLASTYEAR /
+# TOTALYTD measures into NEW DM elements (source.kind=='table' sourcing another
+# element, carrying DateLookback / CumulativeSum columns). Those elements get a
+# master built above, but the ORIGINAL PBI queryRef ("ORDER_FACT.Net Revenue PY"
+# / "ORDER_FACT.YoY %") still points at the fact table, where the measure no
+# longer exists -> the workbook chart resolves no master -> emits source:{} and
+# the POST fails with "Invalid value: undefined". Add synthetic field_map entries
+# routing "<OrigTable>.<MeasureName>" -> the new element's computed column.
+#   measure name -> original TMSL table (from Phase 1's all_measures).
+ti_orig_table = {}
+all_measures.each { |tbl, mname, _expr| ti_orig_table[mname] = tbl }
+# collect the emitted time-intel elements (element-sourced, DateLookback/CumulativeSum).
+ti_elements = []
+conv_elements.each do |cel|
+  src = cel['source'] || {}
+  next unless src['kind'] == 'table' && src['elementId'] # element sourced from another element
+  cols = cel['columns'] || []
+  is_time_intel = cols.any? { |c| c['formula'].to_s =~ /\b(DateLookback|CumulativeSum)\s*\(/ }
+  next unless is_time_intel
+  mname = cel['name'].to_s            # converter names the element after the measure
+  mkey  = mname
+  next unless masters[mkey]           # its master was built in the loop above
+  mid   = masters[mkey]['id']
+  ti_elements << { 'name' => mname, 'mid' => mid, 'cols' => cols }
+  # pick the headline computed column: prior-year / YTD / YoY %, falling back to
+  # the last column (the converter appends the derived measure last).
+  pick = cols.find { |c| c['formula'].to_s =~ /\bDateLookback\s*\(/ } ||
+         cols.find { |c| c['formula'].to_s =~ /\bCumulativeSum\s*\(/ } ||
+         cols.find { |c| c['name'].to_s =~ /YoY/i } || cols.last
+  next unless pick
+  ref = { 'master' => mkey, 'ref' => "[#{mid}/#{pick['name']}]", 'agg' => nil }
+  orig = ti_orig_table[mname]
+  # route both the original-table queryRef and a self-named queryRef so whichever
+  # form the PBIR binding used resolves to this element.
+  field_map["#{orig}.#{mname}"] = ref if orig
+  field_map["#{mname}.#{mname}"] ||= ref
+  # also map any YoY % / Prior Year / YTD sibling column by its own name on the orig table.
+  cols.each do |c|
+    next unless c['name'].to_s =~ /YoY|Prior Year|YTD/i
+    sub = { 'master' => mkey, 'ref' => "[#{mid}/#{c['name']}]", 'agg' => nil }
+    field_map["#{orig}.#{c['name']}"] ||= sub if orig
+  end
+  # A chart that puts a PY/YoY column next to the BASE value and the period
+  # dimension (e.g. Year × Net Revenue × Net Revenue PY) must source from THIS
+  # grouped element — the View lacks the PY column. Register ALTS so those
+  # sibling fields can ALSO resolve here: the grouped value is already aggregated,
+  # so it is referenced as a PLAIN column (no extra Sum). visual_master then
+  # majority-picks this element and field_spec swaps in the alt ref.
+  base_val  = cols.find { |c| c['formula'].to_s =~ /\b(Sum|Avg|Count|CountDistinct|Min|Max)\s*\(/ }
+  period_cols = cols.select { |c| c['name'].to_s =~ /\b(Year|Month|Quarter|Day|Date|Week)\b/i }
+  reg_alt = lambda do |qr, colname|
+    next unless field_map[qr] && colname
+    (field_map[qr]['alts'] ||= []) << { 'master' => mkey, 'ref' => "[#{mid}/#{colname}]", 'agg' => nil }
+  end
+  if base_val
+    # the base value measure under the orig table (any measure whose formula is an
+    # aggregation of the same value column the PY/YTD element sums). Compare with
+    # whitespace stripped from BOTH sides so "Net Revenue" matches "[Net Revenue]".
+    valleaf  = base_val['name']
+    valnorm  = valleaf.gsub(/\s+/, '').downcase
+    all_measures.each do |t2, m2, e2|
+      next unless t2 == orig
+      enorm = e2.to_s.gsub(/\s+/, '').downcase
+      agg_of_val = enorm =~ /(sum|average|avg|min|max|count|distinctcount)\([^)]*#{Regexp.escape(valnorm)}/
+      reg_alt.call("#{orig}.#{m2}", valleaf) if agg_of_val || m2 == valleaf
+    end
+  end
+  # The grouped element carries period dimension column(s) (Year and/or Month).
+  # A chart that plots the time-intel measure BY one of those periods must source
+  # from this element, so register each period column as an alt under the common
+  # date-dim queryRef forms (the calc-table date dim is the usual binding source).
+  period_cols.each do |pc|
+    %w[DATE_DIM DimDate DimMonth Date].each { |dt| reg_alt.call("#{dt}.#{pc['name']}", pc['name']) }
+    reg_alt.call("#{orig}.#{pc['name']}", pc['name'])
+  end
+end
+
+# Bug C (continued): OTHER time-intel measures (e.g. a standalone "YoY %" using a
+# hand-rolled MAX/ALL prior-year pattern) may NOT get their own element — the
+# converter folds the YoY computation into the prior-year element's "... YoY %"
+# column. Any such measure still has a live PBI queryRef ("ORDER_FACT.YoY %")
+# the chart binds, but no field_map entry -> source:{} -> POST fails. Route every
+# remaining time-intel-shaped measure to the best-matching time-intel column.
+if ti_elements.any?
+  ti_re = /\b(SAMEPERIODLASTYEAR|TOTALYTD|TOTALQTD|TOTALMTD|DATESYTD|DATEADD|PARALLELPERIOD|PREVIOUSYEAR|PREVIOUSMONTH|PREVIOUSQUARTER)\b/i
+  all_measures.each do |tbl, mname, expr|
+    next if field_map.key?("#{tbl}.#{mname}")
+    e = expr.to_s
+    # time-intel-shaped: a DAX time-intel function, OR a YoY/growth name, OR a
+    # hand-rolled MAX(...)/ALL(...) prior-year ratio.
+    shape =
+      if e =~ ti_re then :generic
+      elsif mname =~ /YoY|Y\/Y|growth/i || e =~ /ALL\s*\([^)]*\[Year\]/i then :yoy
+      elsif mname =~ /\bYTD\b/i then :ytd
+      elsif mname =~ /\b(PY|Prior Year|Last Year|LY)\b/i then :prior
+      end
+    next unless shape
+    # choose a target column across the emitted time-intel elements.
+    target = nil; tmid = nil; tname = nil
+    ti_elements.each do |te|
+      cand =
+        case shape
+        when :yoy   then te['cols'].find { |c| c['name'].to_s =~ /YoY/i }
+        when :ytd   then te['cols'].find { |c| c['formula'].to_s =~ /\bCumulativeSum\s*\(/ }
+        when :prior then te['cols'].find { |c| c['formula'].to_s =~ /\bDateLookback\s*\(/ }
+        else te['cols'].find { |c| c['formula'].to_s =~ /\b(DateLookback|CumulativeSum)\s*\(/ }
+        end
+      if cand then target = cand; tmid = te['mid']; tname = te['name']; break end
+    end
+    next unless target
+    field_map["#{tbl}.#{mname}"] = { 'master' => tname, 'ref' => "[#{tmid}/#{target['name']}]",
+                                     'agg' => nil }
   end
 end
 
@@ -384,10 +716,38 @@ build = ['ruby', File.join(HERE, 'build-workbook-from-pbir.rb'),
 # DM's folderId (harvested from the ref-dm at Phase 3) so both land together.
 wb_folder = opts[:folder] || (JSON.parse(File.read(dm_spec))['folderId'] rescue nil)
 build += ['--folder-id', wb_folder] if wb_folder
-run!(build)
-wb_readback = File.join(WORK, 'wb-readback.json')
-run!(['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'workbook',
-      '--spec', wb_spec, '--out', wb_readback, '--workdir', WORK], env: ENV.to_h)
+
+# GRACEFUL AGENT-PATH FALLBACK. The DM is already posted + valid (dm_id above), so
+# if the MECHANICAL workbook layer (build / validate-spec / POST) hits a field it
+# cannot translate (Sigma rejects the spec / unresolved "Dependency not found" /
+# unmapped derived-dim or measure / source:{}), we must NOT bare-crash. Catch it
+# and exit with a clear, FRIENDLY non-zero handoff: the agent path rebuilds the
+# workbook against this DM (see SKILL.md). Never worse than the proven agent path.
+begin
+  build_log = run_wb!(build)
+  wb_readback = File.join(WORK, 'wb-readback.json')
+  rb_log = run_wb!(['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'workbook',
+                    '--spec', wb_spec, '--out', wb_readback, '--workdir', WORK], env: ENV.to_h)
+rescue WorkbookBuildError => e
+  failed = cull_failed_fields(e.captured_output, (defined?(build_log) ? build_log : ''))
+  # Also surface the converter (c)-tail measures as the likely culprits when the
+  # log itself doesn't name a field.
+  if failed.empty?
+    failed = conv_warnings.map { |w| w.to_s.gsub(/\s+/, ' ').strip }
+                          .select { |w| w.start_with?('⛔') }
+                          .map { |w| w[/[“"]([^”"]+)[”"]/, 1] || w.sub(/^⛔\s*/, '')[0, 60] }
+                          .compact.uniq
+  end
+  names = failed.empty? ? 'one or more fields' : failed.join(', ')
+  n = failed.empty? ? 'some' : failed.size.to_s
+  puts
+  puts "── Mechanical path: data model built OK (dataModelId=#{dm_id}). The WORKBOOK " \
+       "layer hit #{n} field(s) the mechanical path can't translate (#{names}). " \
+       "Falling back to the agent path: rebuild the workbook via the skill's " \
+       "agent-authored flow (see SKILL.md) against this DM. The data model is " \
+       "posted and ready to attach."
+  exit 4
+end
 wb_rb = JSON.parse(File.read(wb_readback))
 wb_id = wb_rb['workbookId']
 puts "   workbookId = #{wb_id}"
