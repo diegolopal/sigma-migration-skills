@@ -211,7 +211,7 @@ if has_shortlist
 
     %(<tr>
       <td>#{name_cell}</td>
-      <td class="al-right">#{bar_cell(r['accesses'], max_acc)}</td>
+      <td>#{bar_cell(r['accesses'], max_acc)}</td>
       <td class="al-right num">#{r['actors']}</td>
       <td><span class="risk-chip #{risk_cls}"><span class="risk-dot"></span>#{h(risk_txt)}</span></td>
       <td class="al-right num">#{format('%.1f', r['score'])}</td>
@@ -223,7 +223,7 @@ if has_shortlist
       <thead>
         <tr>
           <th>Workbook</th>
-          <th class="al-right">Usage</th>
+          <th>Usage</th>
           <th class="al-right">Viewers</th>
           <th>Conversion risk</th>
           <th class="al-right">Score</th>
@@ -306,7 +306,7 @@ if !usage_source.empty?
       <td class="rank">#{i + 1}</td>
       <td>#{name_cell}</td>
       <td class="muted">#{h((info['owner'] || '—').sub(/@.*/, ''))}</td>
-      <td class="al-right">#{bar_cell(w['accesses'], max_acc)}</td>
+      <td>#{bar_cell(w['accesses'], max_acc)}</td>
       <td>#{top_users_cell}</td>
       <td>#{top_view_cell}</td>
     </tr>)
@@ -318,7 +318,7 @@ if !usage_source.empty?
           <th class="al-right">#</th>
           <th>Workbook</th>
           <th>Owner</th>
-          <th class="al-right">Accesses</th>
+          <th>Accesses</th>
           <th>Top users</th>
           <th>Most-used view</th>
         </tr>
@@ -336,7 +336,7 @@ if inventory['content_ownership']
   rows = rows_data.map do |o|
     %(<tr>
       <td>#{h(o['owner'])}</td>
-      <td class="al-right">#{bar_cell(o['workbooks'], max_wb)}</td>
+      <td>#{bar_cell(o['workbooks'], max_wb)}</td>
       <td class="al-right num muted">#{num(o['datasources'])}</td>
       <td class="al-right num muted">#{num(o['views'])}</td>
       <td class="al-right num muted">#{num(o['flows'])}</td>
@@ -347,7 +347,7 @@ if inventory['content_ownership']
       <thead>
         <tr>
           <th>Owner</th>
-          <th class="al-right">Workbooks</th>
+          <th>Workbooks</th>
           <th class="al-right">Data sources</th>
           <th class="al-right">Views</th>
           <th class="al-right">Flows</th>
@@ -372,7 +372,7 @@ if inventory['datasource_types']
     %(<tr>
       <td><span class="ds-bucket #{badge_cls}">#{h(bucket)}</span></td>
       <td><code>#{h(db)}</code></td>
-      <td class="al-right">#{bar_cell(n, max_n)}</td>
+      <td>#{bar_cell(n, max_n)}</td>
     </tr>)
   end.join
   ds_html = <<~HTML
@@ -381,7 +381,7 @@ if inventory['datasource_types']
         <tr>
           <th>Type</th>
           <th>Connection class</th>
-          <th class="al-right">Count</th>
+          <th>Count</th>
         </tr>
       </thead>
       <tbody>#{rows}</tbody>
@@ -426,22 +426,33 @@ html = <<~HTML
 <meta charset="utf-8">
 <title>Tableau Environment Report — #{h(site_name)}</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=DM+Mono:wght@400;500&display=swap');
   :root {
-    --bg:#fafafa; --card:#ffffff; --ink:#0a0a0a; --ink-2:#525252;
+    /* Sigma brand palette — Shadow/Nimbus/White neutrals, Insight (CTA only), brand accents */
+    --bg:#fafafa; --card:#ffffff; --ink:#292929; --ink-2:#3d3d3d;
     --line:#e5e5e5; --line-soft:#f5f5f5;
-    --accent:#0f766e; --accent-soft:#f0fdfa;
-    --go:#15803d; --go-soft:#dcfce7;
-    --warn:#c2410c; --warn-soft:#fff7ed;
-    --blue:#1d4ed8; --blue-soft:#dbeafe;
-    --mute:#737373; --mute-soft:#f5f5f5;
+    --accent:#292929; --accent-soft:#f0f0f0;
+    --insight:#f0ff45;
+    --go:#1f9d57; --go-soft:#e6fbef;
+    --warn:#c2562a; --warn-soft:#fff1ea;
+    --blue:#2b8ca6; --blue-soft:#eaf8fc;
+    --mute:#6e7877; --mute-soft:#f0f0f0;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
   body {
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, Roboto, sans-serif;
+    font-family: "DM Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     font-size: 14px; line-height: 1.55; -webkit-font-smoothing: antialiased;
   }
   main { max-width: 1120px; margin: 0 auto; padding: 48px 48px 80px; }
+
+  /* Brand masthead */
+  .brand-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+  .brand-mark { font-weight: 700; font-size: 21px; letter-spacing: -0.02em; color: var(--ink); }
+  .brand-dot  { width: 9px; height: 9px; border-radius: 2px; background: var(--blue);
+                -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .brand-tag  { font-size: 12px; color: var(--mute); font-weight: 500;
+                text-transform: uppercase; letter-spacing: 0.08em; }
 
   /* Header */
   .doc-header { margin-bottom: 40px; }
@@ -455,8 +466,8 @@ html = <<~HTML
 
   /* Hero finding banner */
   .hero {
-    background: var(--accent-soft); border: 1px solid #99f6e4;
-    border-left: 4px solid var(--accent);
+    background: var(--accent-soft); border: 1px solid var(--line);
+    border-left: 4px solid var(--blue);
     border-radius: 8px;
     padding: 18px 22px; margin-bottom: 40px;
     display: flex; align-items: center; gap: 16px;
@@ -465,8 +476,8 @@ html = <<~HTML
   .hero-label { font-size: 11px; font-weight: 700; color: var(--accent);
                 text-transform: uppercase; letter-spacing: 0.08em;
                 white-space: nowrap; padding-right: 16px;
-                border-right: 1px solid #99f6e4; }
-  .hero-text { font-size: 15px; color: #134e4a; font-weight: 500; line-height: 1.4; }
+                border-right: 1px solid var(--line); }
+  .hero-text { font-size: 15px; color: var(--ink); font-weight: 500; line-height: 1.4; }
 
   /* Section */
   section { margin-bottom: 56px; }
@@ -527,6 +538,11 @@ html = <<~HTML
   table.data tbody tr:hover td { background: #fafafa; }
   .al-right { text-align: right; }
   .al-left  { text-align: left; }
+  /* Pin numeric + bar columns to content width so the text column absorbs the
+     slack — keeps a short value tight against its header instead of stranding it
+     across an over-wide column. */
+  table.data td.al-right, table.data th.al-right,
+  table.data td:has(.bar-cell) { width: 1%; white-space: nowrap; }
   .num { font-variant-numeric: tabular-nums; }
   .muted { color: var(--mute); }
   .warn { color: var(--warn); }
@@ -550,11 +566,11 @@ html = <<~HTML
 
   /* Bar cells (in tables) */
   .bar-cell { display: flex; align-items: center; gap: 10px;
-              justify-content: flex-end; min-width: 120px; }
-  .bar-track { flex: 1; height: 6px; background: #f5f5f5; border-radius: 4px;
-               overflow: hidden; max-width: 80px; }
+              justify-content: flex-start; }
+  .bar-track { flex: none; width: 84px; height: 6px; background: #f5f5f5; border-radius: 4px;
+               overflow: hidden; }
   .bar-fill { height: 100%; border-radius: 4px; }
-  .bar-blue { background: linear-gradient(90deg, #14b8a6, #0d9488); }
+  .bar-blue { background: linear-gradient(90deg, #4cec8c, #2fb874); }
   .bar-num { font-variant-numeric: tabular-nums; font-weight: 600;
              min-width: 36px; text-align: right; }
 
@@ -623,7 +639,7 @@ html = <<~HTML
   .callout code { background: rgba(0,0,0,0.06); padding: 1px 5px; border-radius: 3px;
                   font-size: 12px; }
 
-  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
+  code { font-family: "DM Mono", ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px;
          background: var(--line-soft); padding: 1px 6px; border-radius: 4px; }
 
   /* Next steps */
@@ -707,6 +723,11 @@ html = <<~HTML
 <body>
 <main>
 
+<div class="brand-bar">
+  <span class="brand-dot"></span>
+  <span class="brand-mark">sigma</span>
+  <span class="brand-tag">Migration Assessment</span>
+</div>
 <div class="doc-header">
   <div class="doc-eyebrow">Tableau Environment Report</div>
   <h1 class="doc-title">#{h(site_name)}</h1>
