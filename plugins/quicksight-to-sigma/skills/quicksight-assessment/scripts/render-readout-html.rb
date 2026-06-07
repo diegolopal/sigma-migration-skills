@@ -881,8 +881,7 @@ if has_shortlist
 end
 
 priv_num = has_shortlist ? '07' : '06'
-hand_num = has_shortlist ? '08' : '07'
-next_num = has_shortlist ? '09' : '08'
+next_num = has_shortlist ? '08' : '07'
 
 html += <<~HTML
 <section class="section-tight">
@@ -912,23 +911,6 @@ html += <<~HTML
     </div>
   </div>
   <p class="note">If your calc-field expressions encode business-sensitive logic, that text crossed the Anthropic API. See <code>PRIVACY.md</code> for the full disclosure to review with your privacy / legal team.</p>
-</section>
-
-<section class="section-tight">
-  <div class="section-head">
-    <span class="section-num">#{hand_num}</span>
-    <h2 class="section-title">Hand-off package</h2>
-  </div>
-  <p class="section-lede">This folder is the complete, self-contained deliverable. Nothing is uploaded anywhere — to share it with a Sigma rep, zip the directory and send it deliberately.</p>
-  <ul class="priv-col local" style="list-style:none;padding:0;">
-    <li><code>readout.html</code> — this report</li>
-    <li><code>readout.md</code> — the same report as markdown</li>
-    <li><code>inventory.json</code> — environment + per-analysis + per-dataset metadata</li>
-    <li><code>complexity.json</code> — per-analysis convertibility scoring</li>
-    <li><code>shortlist.json</code> — value/cost-ranked migration shortlist</li>
-    <li><code>migration-plan.json</code> — per-analysis recommended path + DM clusters (by shared dataset), consumable by <code>quicksight-to-sigma</code></li>
-    <li><code>raw-defs/</code>, <code>raw-datasets/</code> — decoded analysis + dataset definitions (delete after review if you'd rather not retain calc-field text)</li>
-  </ul>
 </section>
 
 <section class="section-tight">
