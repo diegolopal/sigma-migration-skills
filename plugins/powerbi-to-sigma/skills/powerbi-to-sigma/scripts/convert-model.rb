@@ -76,8 +76,11 @@ end
 # ---- MODE B: apply the 3 fixups -------------------------------------------
 abort('mode B needs --converter-out and --out') unless opts[:cvt] && opts[:out]
 raw = JSON.parse(File.read(opts[:cvt]))
-# The MCP may wrap the spec as {sigmaDataModel: {...}} or return it bare.
-dm = raw['sigmaDataModel'] || raw
+# The converter may wrap the spec as {sigmaDataModel: {...}} (MCP), {model: {...}}
+# (convertPowerBIToSigma returns {model, warnings, stats}), or return it bare —
+# handle all three (and a sigmaDataModel that itself nests model).
+dm = raw['sigmaDataModel'] || raw['model'] || raw
+dm = dm['model'] if dm.is_a?(Hash) && dm['model']
 
 # Harvest folderId/ownerId from a reference DM unless both supplied.
 folder, owner = opts[:folder], opts[:owner]
