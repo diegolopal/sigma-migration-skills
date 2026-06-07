@@ -45,9 +45,15 @@ Liveboard that reads the model (or just the `--liveboard` ones).
    suffix, fact columns don't). No hardcoded registry → works for any model.
 4. **Build workbooks** — per Liveboard, map each visualization
    (`answer.search_query` + `chart.type`) to a Sigma element off the master table.
-   Chart map: KPI→kpi-chart, COLUMN/BAR→bar-chart, LINE→line-chart, PIE/DONUT→
+   Chart map: KPI→kpi-chart, COLUMN/BAR/STACKED→bar-chart, LINE→line-chart, PIE/DONUT→
    **donut-chart** (ThoughtSpot renders pies as donuts), PIVOT_TABLE→pivot-table,
-   TABLE→grouped table. Search-query filters (`[Col]='v'`) → element list-filters.
+   TABLE→grouped table, AREA→area-chart, SCATTER/BUBBLE→scatter-chart (x/y measures
+   + optional category color), LINE_COLUMN→combo-chart (first measure bars, rest
+   line), GEO_AREA/GEO_BUBBLE→**region-map** (regionType inferred from the geo field
+   name; Sigma auto-colors from the measure). No native Sigma kind for funnel /
+   waterfall / treemap / heat-map / sankey → those fall back to bar-chart (flagged
+   in the assessment). All chart kinds verified live (POST→readback) 2026-06-07.
+   Search-query filters (`[Col]='v'`) → element list-filters.
    Aggregate formulas (`sum(x)/sum(y)`, `sqrt(sum())`) become DM **metrics**; column
    formats come from the TML `format_pattern`/`currency_type`. KPI value uses
    `{"columnId": c}`; donut `value`/`color` use `{"id": c}`; grouped tables need

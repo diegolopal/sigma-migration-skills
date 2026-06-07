@@ -128,7 +128,23 @@ def parse_filters(search_query):
 
 _NUM = lambda fs: {"kind": "number", "formatString": fs}
 KIND = {"KPI": "kpi-chart", "COLUMN": "bar-chart", "BAR": "bar-chart", "LINE": "line-chart",
-        "PIE": "bar-chart", "STACKED_COLUMN": "bar-chart", "ADVANCED_COLUMN": "table", "TABLE": "table"}
+        "STACKED_COLUMN": "bar-chart", "STACKED_BAR": "bar-chart",
+        "AREA": "area-chart", "STACKED_AREA": "area-chart",
+        "ADVANCED_COLUMN": "table", "TABLE": "table"}
+
+def _region_type(name):
+    # Infer a Sigma region-map regionType from the geo dimension's name. Sigma's
+    # regionType enum (OpenAPI): country, us-state, us-county, us-zipcode, us-cbsa,
+    # us-postal-place, ca-province. Default to us-postal-place (the most permissive
+    # name-based bucket) for free city/place names.
+    n = (name or "").lower()
+    if re.search(r"country|nation", n):            return "country"
+    if re.search(r"\bstate\b|province_state", n):  return "us-state"
+    if re.search(r"county", n):                    return "us-county"
+    if re.search(r"zip|postal_?code|postcode", n): return "us-zipcode"
+    if re.search(r"cbsa|metro", n):                return "us-cbsa"
+    if re.search(r"province", n):                  return "ca-province"
+    return "us-postal-place"
 
 def _fmt(entry):
     # Honor the column's actual ThoughtSpot format_pattern when present; otherwise
@@ -186,6 +202,34 @@ def _element_core(spec, resolver, master="OFV"):
             mid = nid("m"); cols.append({"id": mid, "formula": mref(m), "name": m, "format": _fmt(_resolve(resolver, m))}); mids.append(mid)
         return {"id": nid(), "kind": "table", "name": name, "source": src, "columns": cols,
                 "groupings": [{"id": nid(), "groupBy": [did], "calculations": mids}]}
+    # Scatter / bubble — plot two measures (x vs y) with an optional category color.
+    # Falls through to the default axis chart when there aren't two measures.
+    if chart in ("SCATTER", "BUBBLE") and len(meas) >= 2:
+        xc = nid("c"); yc = nid("c")
+        cols = [{"id": xc, "formula": mref(meas[0]), "name": meas[0], "format": _fmt(_resolve(resolver, meas[0]))},
+                {"id": yc, "formula": mref(meas[1]), "name": meas[1], "format": _fmt(_resolve(resolver, meas[1]))}]
+        el = {"id": nid(), "kind": "scatter-chart", "name": name, "source": src, "columns": cols,
+              "xAxis": {"columnId": xc}, "yAxis": {"columnIds": [yc]}}
+        if dims:
+            dc = nid("c"); cols.append({"id": dc, "formula": dref(dims[0]), "name": dims[0]})
+            el["color"] = {"by": "category", "column": dc}
+        return el
+    # Combo (column + line) — first measure as bars, remaining measures as line series.
+    if chart in ("LINE_COLUMN", "LINE_STACKED_COLUMN") and dims and len(meas) >= 2:
+        xc = nid("c"); cols = [{"id": xc, "formula": dref(dims[0]), "name": dims[0]}]; ycids = []
+        for i, m in enumerate(meas):
+            y = nid("c"); cols.append({"id": y, "formula": mref(m), "name": m, "format": _fmt(_resolve(resolver, m))})
+            ycids.append(y if i == 0 else {"columnId": y, "type": "line"})
+        return {"id": nid(), "kind": "combo-chart", "name": name, "source": src, "columns": cols,
+                "xAxis": {"columnId": xc}, "yAxis": {"columnIds": ycids}}
+    # Geographic region NAME (state/country/zip) -> region-map choropleth. Sigma
+    # auto-colors from the measure column, so no separate color well is required.
+    if chart in ("GEO_AREA", "GEO_BUBBLE") and dims and meas:
+        gid = nid("c"); vid = nid("c")
+        cols = [{"id": gid, "formula": dref(dims[0]), "name": dims[0]},
+                {"id": vid, "formula": mref(meas[0]), "name": meas[0], "format": _fmt(_resolve(resolver, meas[0]))}]
+        return {"id": nid(), "kind": "region-map", "name": name, "source": src, "columns": cols,
+                "region": {"id": gid, "regionType": _region_type(dims[0])}}
     x = nid("x"); cols = [{"id": x, "formula": dref(dims[0]), "name": dims[0]}]; ymids = []
     for m in meas:
         y = nid("y"); cols.append({"id": y, "formula": mref(m), "name": m, "format": _fmt(_resolve(resolver, m))}); ymids.append(y)
