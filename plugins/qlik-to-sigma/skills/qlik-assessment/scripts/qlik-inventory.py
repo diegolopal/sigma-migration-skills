@@ -68,29 +68,105 @@ def main():
     rows=[]
     for it in apps:
         ra=it.get("resourceAttributes",{})
+        ow=it.get("owner")
+        owner=it.get("ownerName") or (ow.get("name") if isinstance(ow,dict) else ow) or it.get("ownerId") or "(unknown)"
         row={"id":it.get("resourceId"),"name":it.get("name"),"space":it.get("spaceId"),
+             "owner":owner,
              "views":(it.get("itemViews") or {}).get("trendCurrent",0) if isinstance(it.get("itemViews"),dict) else (it.get("itemViews") or 0),
              "reloadStatus":it.get("resourceReloadStatus"),"lastReload":ra.get("lastReloadTime"),
+             "reloadDurationS":(ra.get("lastReloadDuration") or it.get("reloadDuration")),
              "sectionAccess":bool(ra.get("hasSectionAccess")),"directQuery":bool(ra.get("isDirectQueryMode")),
+             "sheets":0,"measures":0,
              "n_auto":0,"n_hint":0,"n_manual":0,"n_unhandled":0,"measure_buckets":{},"viz_types":{}}
         if a.deep and row["id"]:
             exprs=enum_measures(row["id"],ctx)
             mb={"auto":0,"manual":0,"unhandled":0}
             for e in exprs: mb[bucket_expr(e)]+=1
             objs=q("app","object","ls","-a",row["id"],"--json",*ctx) or []
-            charts=0
+            charts=0; sheets=0
             for o in objs:
+                if (o.get("qType") or "").lower()=="sheet": sheets+=1
                 b=bucket_viz(o.get("qType"))
                 if b is None: continue
                 charts+=1; row["viz_types"][o.get("qType")]=row["viz_types"].get(o.get("qType"),0)+1
                 row[{"auto":"n_auto","manual":"n_manual","unhandled":"n_unhandled"}[b]]+=1
             row["n_auto"]+=mb["auto"]; row["n_manual"]+=mb["manual"]+(1 if row["sectionAccess"] else 0)+(1 if row["directQuery"] else 0); row["n_unhandled"]+=mb["unhandled"]
             row["measure_buckets"]=mb; row["_charts"]=charts; row["_measures"]=len(exprs)
+            row["sheets"]=sheets; row["measures"]=len(exprs)
         c,sc=score(row["views"],row["n_auto"],row["n_hint"],row["n_manual"],row["n_unhandled"],row.get("_charts",0),row.get("_measures",0))
         row["cost"],row["score"]=c,sc; row["tag"]=tag(row["views"],sc,row["n_manual"],row["n_unhandled"])
         rows.append(row)
     rows.sort(key=lambda r:r["score"],reverse=True)
-    inv={"tenant":os.environ.get("QLIK_TENANT","(active context)"),"apps":len(apps),"spaces":len(spaces),"shortlist":rows}
+
+    # ---- data connections (read-only enumeration) ----
+    conns=q("connection","ls","--limit","200","--json",*ctx) or q("item","ls","--resourceType","dataset","--limit","200","--json",*ctx) or []
+    conn_types={}
+    file_based=0
+    FILE_HINT=re.compile(r'(qvd|csv|xlsx?|txt|file|folder|datafiles)',re.I)
+    for c in conns:
+        t=(c.get("connectionType") or c.get("type") or c.get("datasourceKind") or "unknown")
+        conn_types[t]=conn_types.get(t,0)+1
+        if FILE_HINT.search(str(t)): file_based+=1
+    n_data_connections=len(conns)
+
+    # ---- environment rollups ----
+    total_sheets=sum(r.get("sheets",0) for r in rows)
+    total_measures=sum(r.get("measures",0) for r in rows)
+    n_section_access=sum(1 for r in rows if r["sectionAccess"])
+    n_directquery=sum(1 for r in rows if r["directQuery"])
+    n_inmemory=len(rows)-n_directquery
+
+    # ---- ownership concentration (apps/views by owner) ----
+    own={}
+    for r in rows:
+        o=r.get("owner") or "(unknown)"
+        d=own.setdefault(o,{"owner":o,"apps":0,"views":0,"measures":0})
+        d["apps"]+=1; d["views"]+=int(r.get("views") or 0); d["measures"]+=int(r.get("measures") or 0)
+    ownership=sorted(own.values(),key=lambda d:-d["apps"])
+
+    # ---- reload activity rollup ----
+    rl_by_status={}
+    rl_durations=[]
+    for r in rows:
+        st=(r.get("reloadStatus") or "unknown")
+        rl_by_status[st]=rl_by_status.get(st,0)+1
+        dur=r.get("reloadDurationS")
+        try:
+            if dur is not None: rl_durations.append(float(dur))
+        except (TypeError,ValueError): pass
+    reload_activity={
+        "by_status":[{"status":k,"n":v} for k,v in sorted(rl_by_status.items(),key=lambda kv:-kv[1])],
+        "avg_duration_s":round(sum(rl_durations)/len(rl_durations),1) if rl_durations else None,
+        "max_duration_s":round(max(rl_durations),1) if rl_durations else None,
+        "n_with_duration":len(rl_durations),
+    }
+
+    import datetime
+    inv={
+        "tenant":{
+            "name":os.environ.get("QLIK_TENANT","(active context)"),
+            "url":os.environ.get("QLIK_TENANT_URL",""),
+            "generated_at":datetime.date.today().isoformat(),
+            "mode":"qlik-cli + deep" if a.deep else "qlik-cli inventory-only",
+        },
+        "environment_overview":{
+            "apps":len(apps),"sheets":total_sheets,"master_measures":total_measures,
+            "spaces":len(spaces),"data_connections":n_data_connections,
+        },
+        "data_sources":{
+            "n_connections":n_data_connections,
+            "n_directquery_apps":n_directquery,
+            "n_inmemory_apps":n_inmemory,
+            "n_section_access_apps":n_section_access,
+            "n_file_based_connections":file_based,
+            "connection_types":[{"type":k,"n":v} for k,v in sorted(conn_types.items(),key=lambda kv:-kv[1])],
+        },
+        "reload_activity":reload_activity,
+        "ownership":ownership,
+        "shortlist":rows,
+        # back-compat top-level counts
+        "apps":len(apps),"spaces":len(spaces),
+    }
     json.dump(inv,open(os.path.join(a.out,"inventory.json"),"w"),indent=2)
 
     md=[f"# Qlik → Sigma assessment\n",f"- **Apps:** {len(apps)}  · **Spaces:** {len(spaces)}\n","\n## Migration shortlist\n",

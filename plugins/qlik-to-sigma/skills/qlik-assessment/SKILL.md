@@ -20,6 +20,8 @@ user-invocable: true
 - `refs/complexity-scoring.md` — the Qlik convertibility rubric (expression + viz buckets)
 - `../qlik-to-sigma/refs/connection.md` — qlik-cli auth + the two M2M gotchas
 - `PRIVACY.md` — read-only posture
+- `refs/output-shapes.md` — exact `inventory.json` shape the renderers consume
+- `refs/readout-template.md` — `readout.html` section ordering + Sigma-branded theme
 
 ## The key idea
 The same `convert_qlik_to_sigma` translation rules that drive the converter also
@@ -32,13 +34,16 @@ unhandled) and each chart's viz type against Sigma's coverage. Set Analysis →
 1–2. **Inventory** — apps (+ `itemViews`, `resourceReloadStatus`, `lastReloadTime`, `hasSectionAccess`, `isDirectQueryMode`, `resourceSize`), spaces, users. `scripts/qlik-inventory.py`.
 3. **Per-app complexity** — master measures (Engine `MeasureList`) bucketed by expression; chart objects bucketed by viz type; Section Access & DirectQuery flags; data-model table count from the load script.
 4. **Shortlist** — `cost = 10·unhandled + 3·manual + 1·hint`; `value = itemViews × √(distinct, when available)` else size/complexity proxy; `score = value/(1+cost)`; tag.
-5. **Readout** — markdown summary (env, per-app complexity, shortlist, caveats).
+5. **Readout** — `qlik-inventory.py` writes `inventory.json` + `readout.md`; then
+   `scripts/render-readout-html.rb --out <dir>` renders the customer-facing,
+   Sigma-branded `readout.html` (same theme as `tableau-assessment`).
 6. **Hand off** — to `qlik-to-sigma` (ask the user which apps first).
 
 ## Scripts
 | Script | Phase | Purpose |
 |---|---|---|
 | `scripts/qlik-inventory.py` | 0–4 | Enumerate apps/spaces/users, per-app expression+viz complexity, score + tag → `inventory.json` + `readout.md` |
+| `scripts/render-readout-html.rb` | 5 | Render the Sigma-branded `readout.html` from `inventory.json` (`ruby scripts/render-readout-html.rb --out <dir>`) |
 
 `qlik-inventory.py --out assessment-<tenant>` (uses the active qlik-cli context).
 Per-app deep complexity reuses the `MeasureList` enumeration from
