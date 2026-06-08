@@ -314,6 +314,8 @@ def build_element(rec, fields, masters)
     # "normalized" = scaled to 100%). extract-pbir already maps PBI 100%-stacked
     # -> "normalized", so pass it through verbatim (bead pi8v).
     el['stacking'] = rec['stacking'] if kind == 'bar-chart' && rec['stacking']
+    # value labels on bars (Sigma defaults them OFF); line/area left clean
+    el['dataLabel'] = { 'labels' => 'shown' } if kind == 'bar-chart'
     # c07: default to single series. Only split by color when PBI bound a
     # Series/Legend role. Never auto-color a line by a dimension that PBI did
     # not legend (see refs/measure-patterns.md §1 + §4).
@@ -385,6 +387,7 @@ def build_element(rec, fields, masters)
     cols << cv
     el['color'] = { 'id' => dcid }
     el['value'] = { 'id' => vcid }
+    el['dataLabel'] = { 'labels' => 'shown' }   # value labels on pie/donut slices
   when 'table'
     # A plain table with measure columns renders FLAT/ungrouped unless it has a
     # grouping whose `calculations` lists the measure col ids (bead 14w(f)).

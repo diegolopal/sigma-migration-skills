@@ -25,8 +25,11 @@ def chart(kind,name,dimf,dimn,measures):
     x=nid()+"-x"; cols=[{"id":x,"formula":dimf,"name":dimn}]; ymids=[]
     for mf,mn,fmt in measures:
         y=nid()+"-y"; cols.append({"id":y,"formula":mf,"name":mn,"format":NUM(fmt)}); ymids.append(y)
-    return {"id":nid(),"kind":kind,"name":name,"source":{"elementId":"m-ofv","kind":"table"},
+    el={"id":nid(),"kind":kind,"name":name,"source":{"elementId":"m-ofv","kind":"table"},
         "columns":cols,"xAxis":{"columnId":x},"yAxis":{"columnIds":ymids}}
+    # value labels on bar/pie/donut (Sigma defaults them OFF); lines stay clean
+    if kind in ("bar-chart","pie-chart","donut-chart"): el["dataLabel"]={"labels":"shown"}
+    return el
 def table(name,dims,measures):
     cols=[]; 
     for f,n in dims: cols.append({"id":nid(),"formula":f,"name":n})

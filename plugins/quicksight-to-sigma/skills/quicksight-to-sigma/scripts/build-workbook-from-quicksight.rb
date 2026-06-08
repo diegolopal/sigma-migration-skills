@@ -481,6 +481,8 @@ defn['Sheets'].each_with_index do |sh, sheet_idx|
     w = fw.values.find { |x| x.is_a?(Hash) } || fw
     rol = ->(key) { (w[key] || []).map { |f| field_role(f) }.compact }
     base = { 'id' => eid, 'kind' => kind, 'name' => title, 'source' => { 'elementId' => 'master', 'kind' => 'table' } }
+    # value labels on bar/pie/donut (Sigma defaults them OFF); lines stay clean
+    base['dataLabel'] = { 'labels' => 'shown' } if %w[bar-chart pie-chart donut-chart].include?(kind)
     el = nil
 
     case kind

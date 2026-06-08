@@ -158,6 +158,9 @@ def sigma_element(spec, resolver, master="OFV"):
     """Build the element, then apply any ThoughtSpot search-query filters as
     Sigma element list-filters (adds the filter column if not already present)."""
     el = _element_core(spec, resolver, master)
+    # Show value labels on bar/pie/donut (Sigma defaults them OFF). Lines stay clean.
+    if el.get("kind") in ("bar-chart", "pie-chart", "donut-chart"):
+        el["dataLabel"] = {"labels": "shown"}
     for f in spec.get("filters", []):
         e = _resolve(resolver, f["col"])
         existing = next((c for c in el["columns"] if c.get("name") == f["col"]), None)
