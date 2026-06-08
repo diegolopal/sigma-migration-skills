@@ -1,10 +1,10 @@
 # Sigma migration skills
 
 A **plugin marketplace** of skills for migrating BI tools to
-[Sigma](https://www.sigmacomputing.com/). Each plugin is a pair of skills —
-a **converter** (rebuild the content in Sigma) and an **assessment** (inventory + complexity
-+ a value/cost shortlist) — validated end-to-end with **parity checked against the source
-warehouse**, not just a best-effort port.
+[Sigma](https://www.sigmacomputing.com/). Each plugin is a pair of skills — a
+**converter** (rebuild the content in Sigma) and an **assessment** (inventory,
+complexity, and a value/cost shortlist) — validated end-to-end with **parity
+checked against the source warehouse**, not just a best-effort port.
 
 **Works with any coding agent.** Install it as a [Claude Code](https://claude.com/claude-code)
 plugin, or use it from Cursor, Cortex Code, and others via [`AGENTS.md`](AGENTS.md) — the
