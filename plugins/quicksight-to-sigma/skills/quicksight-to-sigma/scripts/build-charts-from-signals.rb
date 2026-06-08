@@ -110,6 +110,35 @@ DATE_TRUNC = {
   'Hour-Trunc'   => 'hour'
 }.freeze
 
+# Tableau "this year/quarter/month" (relative-date first=0,last=0) → explicit
+# [startDate, endDate] bounds for the CURRENT period. Returns [nil, nil] for
+# periods we don't bound (caller falls back to a pass-through relative filter).
+#
+# Why bounds and not Sigma `mode: relative`/`current`: a relative/current date
+# filter only applies at UI render time — it does NOT filter the chart-data SQL
+# (Phase 6 parity showed every relative-date chart returning unfiltered data).
+# Hardcoded bounds apply at query time AND on the UI. Trade-off: the filter
+# "freezes" — it must be refreshed when the period rolls over.
+def current_period_bounds(period, now = Time.now)
+  case period.to_s.downcase
+  when 'year'
+    ["#{now.year}-01-01T00:00:00Z", "#{now.year}-12-31T23:59:59Z"]
+  when 'quarter'
+    q       = ((now.month - 1) / 3) + 1
+    start_m = (q - 1) * 3 + 1
+    end_m   = start_m + 2
+    end_day = Date.new(now.year, end_m, -1).day
+    ["#{now.year}-#{start_m.to_s.rjust(2, '0')}-01T00:00:00Z",
+     "#{now.year}-#{end_m.to_s.rjust(2, '0')}-#{end_day.to_s.rjust(2, '0')}T23:59:59Z"]
+  when 'month'
+    last = Date.new(now.year, now.month, -1).day
+    [now.strftime('%Y-%m-01T00:00:00Z'),
+     now.strftime("%Y-%m-#{last.to_s.rjust(2, '0')}T23:59:59Z")]
+  else
+    [nil, nil]
+  end
+end
+
 def render_agg(agg, master_col_ref)
   return master_col_ref if agg.nil?
   if agg.include?('%s')
@@ -964,7 +993,8 @@ layout.each do |dash|
       element['refMarks']   = ref_emit   unless ref_emit.empty?
       element['trendlines'] = trend_emit unless trend_emit.empty?
       if !ref_skip.empty?
-        skip_kinds = ref_skip.map { |r| r['kind'] }.tally.map { |k, n| "#{n}× #{k}" }.join(', ')
+        skip_counts = ref_skip.each_with_object(Hash.new(0)) { |r, h| h[r['kind']] += 1 }
+        skip_kinds = skip_counts.map { |k, n| "#{n}× #{k}" }.join(', ')
         warnings << "'#{cap}' has #{ref_skip.size} Tableau reference mark(s) not auto-emitted (#{skip_kinds}) — bands/distributions need manual review (beads-sigma-7ak)"
       end
       if !ref_emit.empty?
@@ -1085,23 +1115,41 @@ layout.each do |dash|
         el_filters << {
           'columnId' => m['id'],
           'kind' => 'list', 'mode' => 'include', 'selectionMode' => 'multiple',
-          'values' => (f['members'] || []), 'includeNulls' => false
+          'values' => (f['members'] || []), 'includeNulls' => 'never'
         }
       when 'relative-date'
         # Tableau first-period=0, last-period=0 + period-type=year means
-        # "this year". Translate to Sigma relative date-range.
-        el_filters << {
-          'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'relative',
-          'unit' => f['period_type'] || 'year', 'count' => 1,
-          'includeNulls' => f['include_null'].to_s == 'true'
-        }
+        # "this <period>". Emit explicit current-period bounds — `mode: relative`
+        # does NOT filter the chart-data SQL (same lesson the shared-filter path
+        # learned; see current_period_bounds). Falls back to pass-through
+        # relative for periods we don't bound (week/day).
+        period = (f['period_type'] || 'year').downcase
+        start_d, end_d = current_period_bounds(period)
+        if start_d
+          el_filters << {
+            'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'between',
+            'startDate' => start_d, 'endDate' => end_d,
+            'includeNulls' => (f['include_null'].to_s == 'true' ? 'always' : 'never')
+          }
+          warnings << "'#{cap}' relative-date '#{period}' → element filter mode:between current-#{period} (#{start_d[0..9]}..#{end_d[0..9]}); re-run next #{period} to refresh"
+        else
+          el_filters << {
+            'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'relative',
+            'unit' => period, 'count' => 1,
+            'includeNulls' => (f['include_null'].to_s == 'true' ? 'always' : 'never')
+          }
+          warnings << "'#{cap}' relative-date '#{period}' kept as mode:relative (no current-period bounds for '#{period}') — verify it filters the SQL"
+        end
       when 'number-range'
         el_filters << {
           'columnId' => m['id'], 'kind' => 'number-range', 'mode' => 'between',
-          'min' => f['min'], 'max' => f['max']
+          'min' => f['min'], 'max' => f['max'], 'includeNulls' => 'never'
         }
       end
     end
+    # Every element filter needs a unique `id` (the live /v2/workbooks/.../spec
+    # readback shows `id: flt-<element>-<n>`); the API rejects filters without it.
+    el_filters.each_with_index { |nf, i| nf['id'] = "flt-#{el_id}-#{i}" }
     element['filters'] = el_filters unless el_filters.empty?
 
     # Surface Tableau-side calculated fields the worksheet uses, and auto-
@@ -1303,22 +1351,8 @@ if opts[:auto_controls]
       spec['controlType'] = 'date-range'
       spec['mode']        = 'between'
       period = (f['period_type'] || 'year').downcase
-      now = Time.now
-      if period == 'year'
-        start_d = "#{now.year}-01-01T00:00:00Z"
-        end_d   = "#{now.year}-12-31T23:59:59Z"
-      elsif period == 'quarter'
-        q       = ((now.month - 1) / 3) + 1
-        start_m = (q - 1) * 3 + 1
-        start_d = "#{now.year}-#{start_m.to_s.rjust(2, '0')}-01T00:00:00Z"
-        end_m   = start_m + 2
-        end_day = Date.new(now.year, end_m, -1).day
-        end_d   = "#{now.year}-#{end_m.to_s.rjust(2, '0')}-#{end_day.to_s.rjust(2,'0')}T23:59:59Z"
-      elsif period == 'month'
-        start_d = now.strftime('%Y-%m-01T00:00:00Z')
-        last    = Date.new(now.year, now.month, -1).day
-        end_d   = now.strftime("%Y-%m-#{last.to_s.rjust(2,'0')}T23:59:59Z")
-      else
+      start_d, end_d = current_period_bounds(period)
+      unless start_d
         # Fallback: pass-through current+unit; agent updates manually
         spec['mode'] = 'current'
         spec['unit'] = period
