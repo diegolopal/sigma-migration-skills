@@ -64,25 +64,27 @@ needs-gap-scout / retire` tags as the Tableau and Qlik migration skills.
 ## Installation & setup
 Duration: 5
 
-1. **Clone the skills** (sparse checkout):
-   ```bash
-   git clone --filter=blob:none --sparse https://github.com/sigmacomputing/quickstarts-public
-   cd quickstarts-public && git sparse-checkout set powerbi-migration-skills
-   ```
-2. **Make the skills available to your agent:**
-   - **Claude Code** — symlink them in:
-     ```bash
-     ln -s "$PWD/powerbi-migration-skills/powerbi-to-sigma"   ~/.claude/skills/powerbi-to-sigma
-     ln -s "$PWD/powerbi-migration-skills/powerbi-assessment" ~/.claude/skills/powerbi-assessment
+1. **Install the skills.** They ship as a Claude Code **plugin marketplace** (two skills per plugin: the converter + the assessment).
+   - **Claude Code** — add the marketplace and install the plugin:
+     ```text
+     /plugin marketplace add twells89/sigma-migration-skills
+     /plugin install powerbi-to-sigma@sigma-migration-skills
      ```
-   - **Other agents (Cursor, Cortex Code, …)** — no install step; open the repo and point your agent at the skill folder. `AGENTS.md` at the repo root indexes every skill.
-3. **Sigma credentials** — export `SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET` (or run `ruby scripts/setup.rb` in the tableau-to-sigma skill, which writes a neutral `~/.sigma-migration/env` the scripts auto-source under any agent). `scripts/get-token.sh` exchanges them for a `SIGMA_API_TOKEN`.
-4. **Power BI auth** — run the device-code flow:
+     Installed skills are namespaced — e.g. `/powerbi-to-sigma:powerbi-assessment`.
+   - **Other agents (Cursor, Cortex Code, …)** — clone the repo and point your agent at the skill folder; `AGENTS.md` at the repo root maps each task to its skill:
+     ```bash
+     git clone https://github.com/twells89/sigma-migration-skills
+     # e.g. Cortex Code:
+     cortex skill add sigma-migration-skills/plugins/powerbi-to-sigma/skills/powerbi-to-sigma
+     ```
+   The two skills live at `plugins/powerbi-to-sigma/skills/{powerbi-to-sigma,powerbi-assessment}/`. Run each skill's scripts **from its own skill directory** — script paths are relative (e.g. `scripts/fabric-auth-check.py`).
+2. **Sigma credentials** — run `ruby scripts/setup.rb` (in the tableau-to-sigma skill) once. It writes both `~/.claude/settings.json` and a neutral, sourceable `~/.sigma-migration/env` (mode 0600), which every script auto-loads under any agent. (Or just `export SIGMA_BASE_URL` / `SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET` yourself.) `scripts/get-token.sh` exchanges them for a ~1h `SIGMA_API_TOKEN`.
+3. **Power BI auth** — from the `powerbi-to-sigma` skill dir, run the device-code flow:
    ```bash
-   python3 powerbi-to-sigma/scripts/fabric-auth-check.py   # opens device-code login, caches token
+   python3 scripts/fabric-auth-check.py   # opens device-code login, caches token at /tmp/pbiauth/cache.bin
    ```
    Sign in with an account that can see the target workspace.
-5. **Verify:** `python3 powerbi-to-sigma/scripts/fabric-inventory.py` lists your workspaces + items.
+4. **Verify:** from the `powerbi-assessment` skill dir, `python3 scripts/fabric-inventory.py` lists your workspaces + items (reuses the cached token — no second login).
 
 ## Prepare demo data (optional)
 Duration: 3
@@ -96,7 +98,29 @@ points at the same schema.
 ## Run the conversion
 Duration: 10
 
-Point the `powerbi-to-sigma` skill at a report/dataset. Phases:
+Just tell your agent *"migrate this Power BI report to Sigma"* and point it at a
+report/dataset — the skill drives the phases below. There are two ways to run them:
+
+**One-shot (recommended).** `scripts/migrate-powerbi.rb` runs the entire pipeline
+in a single Ruby process — fewer agent turns, lower token cost — without becoming a
+black box: every phase prints a header + concise result, and genuine human decision
+points (e.g. a DAX measure the converter can't translate) surface as a structured
+**OPEN QUESTIONS** block (exit code `10`) instead of being silently auto-resolved.
+Each phase is checkpointed, so you can answer the questions and resume.
+
+```bash
+eval "$(scripts/get-token.sh)"   # Sigma token in env first (or rely on ~/.sigma-migration/env)
+ruby scripts/migrate-powerbi.rb \
+  --tmsl   /path/to/Model.tmsl \
+  --pbir   /path/to/Report.json \
+  --connection <SIGMA_CONN_UUID> --database <DB> --schema <SCHEMA> \
+  --ref-dm <referenceDataModelId> \
+  [--name "Sales Overview (from Power BI)"] [--folder <id>] [--yes]
+# exit 0 = done (parity pass) · 10 = decisions needed · 3 = parity fail
+```
+
+**Phase-by-phase** (`scripts/run.sh`, or drive the scripts directly) when you want to
+inspect or hand-tune each stage. The phases:
 
 1. **Extract** (`fabric-extract.py`) — device-code → Fabric `getDefinition` →
    **TMSL** (tables, measures, calc columns, RLS, M sources) + **PBIR** (pages, visuals,
@@ -112,13 +136,18 @@ Point the `powerbi-to-sigma` skill at a report/dataset. Phases:
    `executeQueries` (DAX) and compares to Sigma `query`.
 
 positive
-: For many reports, the assessment's migration plan clusters reports by shared semantic model so you reuse one Sigma data model across a batch.
+: **Reuse a data model instead of adding sprawl.** Before posting a new DM, the skill derives a signature of the report's warehouse tables/columns/measures (`pbi-dm-signature.py`) and checks for an existing Sigma DM that already covers them (`find-or-pick-dm.rb`). For a batch, the assessment's migration plan clusters reports by shared semantic model so one Sigma data model serves the whole family.
 
 ## Understanding the output
 Duration: 3
 
 - **Assessment readout** (`powerbi-assessment`) — per-report DAX buckets (a/b/c), visual
-  histogram, RLS/DirectQuery flags, warehouse sources, and a ranked shortlist.
+  histogram, RLS/DirectQuery flags, warehouse sources, and a ranked shortlist. Rendered
+  as `readout.md` (`render-readout.rb`) **and** a customer-facing, share-friendly
+  **Sigma-branded `readout.html`** (`render-readout-html.rb`).
+- **Estimated migration effort (tokens / $)** — the HTML readout includes a cost estimate
+  (Opus and Sonnet) for converting the shortlist, derived from a measured per-report
+  token model (`refs/token-model.json`) × report count + items flagged for review.
 - **DAX buckets:** **a** = mechanical direct rewrite (~70%); **b** = restructure (grouped
   element / parallel join / pre-aggregation — e.g. `RANKX`, `ALLEXCEPT`, `SUMMARIZE`);
   **c** = no Sigma equivalent (rare — `PATH` hierarchies, dynamic context).
@@ -131,6 +160,8 @@ Duration: 3
 - **PBIR vs classic report.json** — newer reports are exploded PBIR; older ones are a single `report.json` with `sections[]` — detect and branch.
 - **Spec fixups** — three required edits before POST (`schemaVersion: 1`, real `folderId`, element `name`).
 - **Time-intelligence DAX** is translatable (not part of the (c) tail) via `DateLookback`/`CumulativeSum` on a date-grouped workbook element.
+- **Hard DAX → gap-scout sub-agent** — measures the converter buckets `b`/`c` (`RANKX`, `ALLEXCEPT`, `SUMMARIZE`, `USERELATIONSHIP`, …) are handed to a gap-scout (`scripts/gap-scout.md`): it proposes a Sigma translation, **validates it against the live Sigma API** (`scout-validate.py`), and persists the rule to `~/.powerbi-to-sigma/learned-rules.yaml` so future runs auto-apply it. When the scout hits a genuine converter gap it can **(opt-in) file a GitHub issue** so the gap gets fixed upstream — it always confirms before filing.
+- **Bookmarks → per-state workbooks** (optional Phase 7) — PBI show/hide & spotlight bookmarks become one Sigma workbook per visible subset (`extract-bookmarks.py` + the shared `build-bookmark-workbooks.py`); filter-state bookmarks bake their values as a page-level `list` filter.
 - **Writing layout back to Power BI** (reverse path) uses Fabric `updateDefinition` with an allow-listed parts set.
 
 ## The techniques worth carrying forward
