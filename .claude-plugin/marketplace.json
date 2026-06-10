@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace-manifest.json",
   "name": "sigma-migration-skills",
-  "description": "Skills for migrating BI tools (Tableau, Power BI, Qlik, ThoughtSpot, QuickSight) to Sigma — converters + assessments, validated end-to-end with warehouse parity.",
+  "description": "Skills for migrating BI tools (Tableau, Power BI, Qlik, ThoughtSpot, QuickSight, Looker) to Sigma — converters + assessments, validated end-to-end with warehouse parity.",
   "version": "1.0.0",
   "owner": { "name": "Thomas Wells" },
   "metadata": { "pluginRoot": "./plugins" },
@@ -40,6 +40,13 @@
       "description": "Amazon QuickSight analyses/dashboards → Sigma data model + workbook (KPI/bar/line/pie/donut/combo/scatter/table/pivot), with parity verification. Bundles quicksight-to-sigma + quicksight-assessment.",
       "category": "migration",
       "keywords": ["quicksight", "amazon", "aws", "migration", "bi"]
+    },
+    {
+      "name": "looker-to-sigma",
+      "source": "./looker-to-sigma",
+      "description": "Looker (LookML semantic model + LookML/user-defined dashboards) → Sigma data model + workbook (KPI/bar/line/area/pie/donut/scatter/table/pivot, table calcs), with 3-way warehouse parity. Bundles looker-to-sigma + looker-assessment.",
+      "category": "migration",
+      "keywords": ["looker", "lookml", "migration", "bi"]
     }
   ]
 }
