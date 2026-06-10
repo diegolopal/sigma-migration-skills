@@ -121,13 +121,37 @@ def _fetch_pbir(ws, report, out_dir):
 
 
 def _role_bindings(query_state):
-    """{Role: [queryRef, ...]} from visual.query.queryState."""
+    """{Role: [queryRef, ...]} from visual.query.queryState.
+
+    bead hjke(c): a date-hierarchy role carries one projection PER LEVEL
+    (Year/Quarter/Month/Day); the drilled-to level is flagged `active`. When any
+    projection in a role carries an active flag, keep only the active one(s) so a
+    day-drilled line binds Day instead of collapsing to the first level (Year).
+    """
     out = {}
     for role, blk in (query_state or {}).items():
-        refs = [p.get("queryRef") or p.get("nativeQueryRef")
-                for p in blk.get("projections", []) if isinstance(p, dict)]
+        projs = [p for p in blk.get("projections", []) if isinstance(p, dict)]
+        active = [p for p in projs if p.get("active") is True]
+        if active and len(active) < len(projs):
+            print(f"[extract-pbir] drill: role {role} has {len(projs)} hierarchy level(s); "
+                  f"using active level only", file=sys.stderr)
+            projs = active
+        refs = [p.get("queryRef") or p.get("nativeQueryRef") for p in projs]
         out[role] = [r for r in refs if r]
     return out
+
+
+def _obj_flag(visual, key):
+    """objects.<key>[0].properties.show.expr.Literal.Value -> True/False/None.
+
+    bead n9u9 (labels) / ry0n (legend): PBI stores per-visual toggles as string
+    literals 'true'/'false'; absent means tool default -> None (callers keep
+    their back-compat behavior on None)."""
+    for item in visual.get("objects", {}).get(key, []):
+        v = item.get("properties", {}).get("show", {}).get("expr", {}).get("Literal", {}).get("Value")
+        if v is not None:
+            return str(v).strip("'").lower() == "true"
+    return None
 
 
 def _textbox_body(visual):
@@ -204,6 +228,10 @@ def extract(pbir_dir):
                 "parent_group": v.get("parentGroupName"),
                 "bindings": _role_bindings(qs),
                 "formats": formats,
+                # bead n9u9: PBI data-label toggle (objects.labels show) — true/false/None
+                "data_labels": _obj_flag(visual, "labels"),
+                # bead ry0n: PBI legend toggle (objects.legend show) — true/false/None
+                "legend": _obj_flag(visual, "legend"),
             }
             if rec["sigma_kind"] == "text":
                 rec["text"] = _textbox_body(visual)

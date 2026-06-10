@@ -54,6 +54,16 @@ OptionParser.new do |p|
   p.on('--restructure-from-bim PATH','model.bim to scan for (b)-bucket DAX measures to auto-emit as elements') { |v| opts[:rbim] = v }
 end.parse!
 
+# bead hjke(a): a truncated/partial --connection id posts a DM whose sources
+# silently fail downstream ("Source not found" only at POST, or worse). Abort
+# early with a clear message unless it is a full UUID.
+UUID_RE = /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
+if opts[:conn] && opts[:conn] !~ UUID_RE
+  abort "FATAL: --connection must be a FULL Sigma connection UUID " \
+        "(8-4-4-4-12 hex, e.g. bc0319f8-1234-5678-9abc-def012345678); got #{opts[:conn].inspect}. " \
+        "List connections with GET /v2/connections."
+end
+
 # ---- MODE A: emit the MCP conversion instruction --------------------------
 if opts[:bim]
   abort('--bim not found: ' + opts[:bim]) unless File.exist?(opts[:bim])

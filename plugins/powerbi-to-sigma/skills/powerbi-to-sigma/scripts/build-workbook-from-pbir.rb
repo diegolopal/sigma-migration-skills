@@ -96,9 +96,27 @@ def field_spec(queryref, fields, chosen_master = nil)
   fs ||= { 'master' => nil, 'ref' => "[#{queryref}]", 'agg' => nil }
   if chosen_master && fs['master'] != chosen_master && fs['alts'].is_a?(Array)
     alt = fs['alts'].find { |a| a['master'] == chosen_master }
-    return fs.merge(alt) if alt
+    if alt
+      merged = fs.merge(alt)
+      # A verbatim `formula` on the PRIMARY resolution references the primary
+      # master's columns — it is invalid on the alt's master (bead 525l). Drop it
+      # unless the alt carries its own.
+      merged.delete('formula') unless alt.key?('formula')
+      return merged
+    end
   end
   fs
+end
+
+# bead hjke(b): display-name leaf from a queryRef. Classic-report queryRefs can
+# carry the AGGREGATED form "Sum(TABLE.COL)" — a naive split('.').last leaves a
+# trailing paren ("COL)"). Unwrap any Func( ... ) wrapper(s) first, then take
+# the dotted leaf.
+def qr_leaf(qr, fallback = 'Value')
+  s = qr.to_s.strip
+  s = Regexp.last_match(1).strip while s =~ /\A[A-Za-z_][A-Za-z0-9_ ]*\(\s*(.*)\s*\)\z/
+  leaf = s.split('.').last.to_s
+  leaf.empty? ? fallback : leaf
 end
 
 # PBI numeric format string (from signals 'formats' or master-map field 'format')
@@ -194,8 +212,11 @@ def visual_master(rec, fields)
   best && best[0]
 end
 
-# Build chart element from a normalized visual record.
-def build_element(rec, fields, masters)
+# Build chart element from a normalized visual record. `extra_data` is an
+# accumulator array: branches that need a HIDDEN helper element on the Data page
+# (bead ry0n: the scatter grouped-source table) push it there; the page assembly
+# appends extra_data to the Data page's elements.
+def build_element(rec, fields, masters, extra_data = [])
   kind = SIGMA_KIND[rec['sigma_kind']] || 'bar-chart'
   vid  = rec['visual_id']
   eid  = "el-#{short(vid)}"
@@ -239,7 +260,7 @@ def build_element(rec, fields, masters)
     # filters[]. The control defines NO columns of its own — it references the
     # master's existing column id, so it both populates from and filters that col.
     qr = (b['Values'] || b['Category'] || b['Fields'] || []).first
-    colname = (qr || 'Filter').split('.').last
+    colname = qr_leaf(qr, 'Filter')
     mcols = (master && masters[master] ? (masters[master]['columns'] || []) : [])
     mcol = mcols.find { |c| c['name'] == colname } || mcols.first
     tgt = mcol ? mcol['id'] : nil
@@ -265,9 +286,9 @@ def build_element(rec, fields, masters)
       return vals.each_with_index.map do |qr, i|
         fs = field_spec(qr, fields, master)
         kid = "#{eid}-k#{i}"
-        col = { 'id' => "#{kid}-v", 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
+        col = { 'id' => "#{kid}-v", 'formula' => measure_formula(fs), 'name' => qr_leaf(qr) }
         apply_fmt(col, qr, fields, vfmts)
-        e = { 'id' => kid, 'kind' => 'kpi-chart', 'name' => qr.split('.').last,
+        e = { 'id' => kid, 'kind' => 'kpi-chart', 'name' => qr_leaf(qr),
               'columns' => [col], 'value' => { 'columnId' => "#{kid}-v" } }
         e['source'] = { 'elementId' => master_id, 'kind' => 'table' } if master_id
         e
@@ -276,7 +297,7 @@ def build_element(rec, fields, masters)
     qr = vals.first
     fs = field_spec(qr, fields, master)
     cid = "#{eid}-v"
-    col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => (qr || 'Value').split('.').last }
+    col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr_leaf(qr, 'Value') }
     apply_fmt(col, qr, fields, vfmts)
     cols << col
     # KPI value binds by `columnId` (the API rejects `{id}` -> "value.columnId:
@@ -286,17 +307,28 @@ def build_element(rec, fields, masters)
   when 'bar-chart', 'line-chart', 'area-chart'
     # b['Group'] is the treemap/funnel category role (1zh9) — alias it to the dim
     # so a treemap-as-bar fallback keeps its category instead of emitting '[]'.
-    dim = (b['Category'] || b['Axis'] || b['X'] || b['Group'] || []).first
+    dim_role = (b['Category'] || b['Axis'] || b['X'] || b['Group'] || [])
+    dim = dim_role.first
+    # bead hjke(c): a PBI date-hierarchy role carries one queryRef PER LEVEL
+    # (Year/Quarter/Month/Day). The extractors keep only the ACTIVE drill level
+    # when the report records one (activeProjections / active flag); if multiple
+    # levels still arrive here we can only bind the first — warn that the drill
+    # depth was reduced so the agent can re-point the dim at the intended level.
+    if dim_role.length > 1 &&
+       dim_role.all? { |q| q.to_s =~ /hierarchy/i || q.to_s =~ /\.(Year|Quarter|Month|Week|Day|Date)\s*\z/i }
+      warn "[build-workbook] WARN visual '#{name}': date hierarchy with #{dim_role.length} levels " \
+           "reduced to '#{dim}' — deeper drill levels (#{dim_role[1..].join(', ')}) dropped."
+    end
     meas = (b['Y'] || b['Values'] || [])
     series = (b['Series'] || b['Legend'] || []).first
     dfs = field_spec(dim, fields, master)
     dcid = "#{eid}-x"
-    cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => (dim || 'Dim').split('.').last }
+    cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => qr_leaf(dim, 'Dim') }
     ycids = []
     meas.each_with_index do |qr, i|
       fs = field_spec(qr, fields, master)
       cid = "#{eid}-y#{i}"
-      col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
+      col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr_leaf(qr) }
       apply_fmt(col, qr, fields, vfmts)
       cols << col
       ycids << cid
@@ -314,15 +346,19 @@ def build_element(rec, fields, masters)
     # "normalized" = scaled to 100%). extract-pbir already maps PBI 100%-stacked
     # -> "normalized", so pass it through verbatim (bead pi8v).
     el['stacking'] = rec['stacking'] if kind == 'bar-chart' && rec['stacking']
-    # value labels on bars (Sigma defaults them OFF); line/area left clean
-    el['dataLabel'] = { 'labels' => 'shown' } if kind == 'bar-chart'
+    # bead n9u9: honor the PBI per-visual data-label signal (objects.labels show)
+    # when the extractor provided one: true -> shown, false -> omit (Sigma default
+    # is off). Verified `dataLabel:{labels:"shown"}` persists + renders for bar AND
+    # line. Back-compat when the signal is nil/absent: bar shown, line/area clean.
+    dl = rec['data_labels']
+    el['dataLabel'] = { 'labels' => 'shown' } if dl == true || (dl.nil? && kind == 'bar-chart')
     # c07: default to single series. Only split by color when PBI bound a
     # Series/Legend role. Never auto-color a line by a dimension that PBI did
     # not legend (see refs/measure-patterns.md §1 + §4).
     if series
       sfs = field_spec(series, fields, master)
       scid = "#{eid}-c"
-      cols << { 'id' => scid, 'formula' => sfs['ref'], 'name' => series.split('.').last }
+      cols << { 'id' => scid, 'formula' => sfs['ref'], 'name' => qr_leaf(series, 'Series') }
       el['color'] = { 'by' => 'category', 'column' => scid }
     end
   when 'combo-chart'
@@ -336,12 +372,12 @@ def build_element(rec, fields, masters)
     line_meas = (b['Y2'] || [])
     dfs = field_spec(dim, fields, master)
     dcid = "#{eid}-x"
-    cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => (dim || 'Dim').split('.').last }
+    cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => qr_leaf(dim, 'Dim') }
     ycids = []
     col_meas.each_with_index do |qr, i|
       fs = field_spec(qr, fields, master)
       cid = "#{eid}-y#{i}"
-      col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
+      col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr_leaf(qr) }
       apply_fmt(col, qr, fields, vfmts)
       cols << col
       ycids << cid                                   # bare string -> primary (left) bars
@@ -349,7 +385,7 @@ def build_element(rec, fields, masters)
     line_meas.each_with_index do |qr, i|
       fs = field_spec(qr, fields, master)
       cid = "#{eid}-l#{i}"
-      col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
+      col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr_leaf(qr) }
       apply_fmt(col, qr, fields, vfmts)
       cols << col
       ycids << { 'columnId' => cid, 'type' => 'line' } # object -> secondary (right) line
@@ -361,33 +397,97 @@ def build_element(rec, fields, masters)
     # color/detail. PBI scatter binds X + Y (both measures) and a Category/Details.
     xqr = (b['X'] || b['Values'] || []).first
     yqr = (b['Y'] || []).first
-    detail = (b['Category'] || b['Details'] || b['Legend'] || []).first
+    detail = (b['Category'] || b['Details'] || b['Series'] || b['Legend'] || []).first
+    sizeqr = (b['Size'] || []).first
     xfs = field_spec(xqr, fields, master); yfs = field_spec(yqr, fields, master)
-    xcid = "#{eid}-x"; ycid = "#{eid}-y"
-    cx = { 'id' => xcid, 'formula' => measure_formula(xfs), 'name' => (xqr || 'X').split('.').last }
-    cy = { 'id' => ycid, 'formula' => measure_formula(yfs), 'name' => (yqr || 'Y').split('.').last }
-    apply_fmt(cx, xqr, fields, vfmts); apply_fmt(cy, yqr, fields, vfmts)
-    cols << cx << cy
-    el['xAxis'] = { 'columnId' => xcid }
-    el['yAxis'] = { 'columnIds' => [ycid] }
-    if detail
-      dfs = field_spec(detail, fields, master)
-      dcid = "#{eid}-d"
-      cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => detail.split('.').last }
-      el['color'] = { 'by' => 'category', 'column' => dcid }
+    is_meas = ->(fs) { !(fs['agg'].to_s.empty? && fs['formula'].to_s.empty?) }
+    if is_meas.call(xfs) && detail && master_id
+      # bead ry0n: Sigma's scatter xAxis is a GROUPING axis — binding an AGGREGATE
+      # to it makes the aggregate evaluate per-row (Count -> 1) and every point
+      # collapses to x=1. Verified fix: pre-aggregate in a HIDDEN grouped source
+      # table on the Data page (dim + x/y[/size] aggregates, grouped by the dim),
+      # then point the scatter at it with ALL-RAW column refs. The detail dim MUST
+      # stay on color:{by:category} — points sharing an x merge to a null y
+      # without it.
+      dfs   = field_spec(detail, fields, master)
+      dname = qr_leaf(detail, 'Detail'); xname = qr_leaf(xqr, 'X'); yname = qr_leaf(yqr, 'Y')
+      src_id   = "#{eid}-src"
+      src_name = "Scatter Source #{short(vid)}"   # unique name: raw refs resolve [Name/Col]
+      gd = "#{src_id}-d"; gx = "#{src_id}-x"; gy = "#{src_id}-y"
+      gcols = [
+        { 'id' => gd, 'formula' => dfs['ref'], 'name' => dname },
+        apply_fmt({ 'id' => gx, 'formula' => measure_formula(xfs), 'name' => xname }, xqr, fields, vfmts),
+        apply_fmt({ 'id' => gy, 'formula' => measure_formula(yfs), 'name' => yname }, yqr, fields, vfmts)
+      ]
+      calc_ids = [gx, gy]
+      szname = nil
+      if sizeqr
+        szfs = field_spec(sizeqr, fields, master)
+        if is_meas.call(szfs)
+          szname = qr_leaf(sizeqr, 'Size')
+          # avoid a display-name collision with x/y (e.g. Size bound to the same measure)
+          szname = "#{szname} (Size)" if [dname, xname, yname].include?(szname)
+          gsz = "#{src_id}-s"
+          gcols << apply_fmt({ 'id' => gsz, 'formula' => measure_formula(szfs), 'name' => szname }, sizeqr, fields, vfmts)
+          calc_ids << gsz
+        else
+          warn "[build-workbook] WARN scatter '#{name}': Size role '#{sizeqr}' is not a measure — size DROPPED."
+        end
+      end
+      extra_data << { 'id' => src_id, 'kind' => 'table', 'name' => src_name,
+                      'source' => { 'elementId' => master_id, 'kind' => 'table' },
+                      'columns' => gcols,
+                      'groupings' => [{ 'id' => "#{src_id}-g", 'groupBy' => [gd], 'calculations' => calc_ids }],
+                      'visibleAsSource' => false }
+      el['source'] = { 'elementId' => src_id, 'kind' => 'table' }
+      dcid = "#{eid}-d"; xcid = "#{eid}-x"; ycid = "#{eid}-y"
+      cols << { 'id' => dcid, 'formula' => "[#{src_name}/#{dname}]", 'name' => dname }
+      cols << apply_fmt({ 'id' => xcid, 'formula' => "[#{src_name}/#{xname}]", 'name' => xname }, xqr, fields, vfmts)
+      cols << apply_fmt({ 'id' => ycid, 'formula' => "[#{src_name}/#{yname}]", 'name' => yname }, yqr, fields, vfmts)
+      el['xAxis'] = { 'columnId' => xcid }
+      el['yAxis'] = { 'columnIds' => [ycid] }
+      el['color'] = { 'by' => 'category', 'column' => dcid }   # REQUIRED (see above)
+      if szname
+        szcid = "#{eid}-s"
+        cols << apply_fmt({ 'id' => szcid, 'formula' => "[#{src_name}/#{szname}]", 'name' => szname }, sizeqr, fields, vfmts)
+        el['size'] = { 'id' => szcid }
+      end
+    else
+      warn "[build-workbook] WARN scatter '#{name}': measure X with no Details/Category dim — " \
+           'points will collapse to one x value.' if is_meas.call(xfs) && !detail
+      xcid = "#{eid}-x"; ycid = "#{eid}-y"
+      cx = { 'id' => xcid, 'formula' => measure_formula(xfs), 'name' => qr_leaf(xqr, 'X') }
+      cy = { 'id' => ycid, 'formula' => measure_formula(yfs), 'name' => qr_leaf(yqr, 'Y') }
+      apply_fmt(cx, xqr, fields, vfmts); apply_fmt(cy, yqr, fields, vfmts)
+      cols << cx << cy
+      el['xAxis'] = { 'columnId' => xcid }
+      el['yAxis'] = { 'columnIds' => [ycid] }
+      if detail
+        dfs = field_spec(detail, fields, master)
+        dcid = "#{eid}-d"
+        cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => qr_leaf(detail, 'Detail') }
+        el['color'] = { 'by' => 'category', 'column' => dcid }
+      end
+      warn "[build-workbook] WARN scatter '#{name}': Size role '#{(b['Size'] || []).first}' DROPPED " \
+           '(ungrouped scatter path).' if (b['Size'] || []).first
     end
+    # PBI legend.show=false -> hide the Sigma legend (the detail-on-color split
+    # otherwise surfaces a legend PBI did not show).
+    el['legend'] = { 'visibility' => 'hidden' } if rec['legend'] == false
   when 'pie-chart', 'donut-chart'
     dim = (b['Category'] || b['Legend'] || []).first
     val = (b['Values'] || b['Y'] || []).first
     dfs = field_spec(dim, fields, master); vfs = field_spec(val, fields, master)
     dcid = "#{eid}-c"; vcid = "#{eid}-v"
-    cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => (dim || 'Dim').split('.').last }
-    cv = { 'id' => vcid, 'formula' => measure_formula(vfs), 'name' => (val || 'Value').split('.').last }
+    cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => qr_leaf(dim, 'Dim') }
+    cv = { 'id' => vcid, 'formula' => measure_formula(vfs), 'name' => qr_leaf(val, 'Value') }
     apply_fmt(cv, val, fields, vfmts)
     cols << cv
     el['color'] = { 'id' => dcid }
     el['value'] = { 'id' => vcid }
-    el['dataLabel'] = { 'labels' => 'shown' }   # value labels on pie/donut slices
+    # value labels on pie/donut slices — honor an explicit PBI labels-off signal
+    # (bead n9u9); default (nil/absent) keeps the labels shown as before.
+    el['dataLabel'] = { 'labels' => 'shown' } unless rec['data_labels'] == false
   when 'table'
     # A plain table with measure columns renders FLAT/ungrouped unless it has a
     # grouping whose `calculations` lists the measure col ids (bead 14w(f)).
@@ -402,7 +502,7 @@ def build_element(rec, fields, masters)
       cid = "#{eid}-c#{i}"
       is_dim = fs['agg'].to_s.empty? && fs['formula'].to_s.empty?
       col = { 'id' => cid, 'formula' => is_dim ? fs['ref'] : measure_formula(fs),
-              'name' => qr.split('.').last }
+              'name' => qr_leaf(qr) }
       apply_fmt(col, qr, fields, vfmts) unless is_dim
       cols << col
       if is_dim
@@ -421,19 +521,19 @@ def build_element(rec, fields, masters)
     rowids = []
     rows.each_with_index do |qr, i|
       fs = field_spec(qr, fields, master); cid = "#{eid}-r#{i}"
-      cols << { 'id' => cid, 'formula' => fs['ref'], 'name' => qr.split('.').last }
+      cols << { 'id' => cid, 'formula' => fs['ref'], 'name' => qr_leaf(qr) }
       rowids << cid
     end
     colids = []
     colsby.each_with_index do |qr, i|
       fs = field_spec(qr, fields, master); cid = "#{eid}-col#{i}"
-      cols << { 'id' => cid, 'formula' => fs['ref'], 'name' => qr.split('.').last }
+      cols << { 'id' => cid, 'formula' => fs['ref'], 'name' => qr_leaf(qr) }
       colids << cid
     end
     valids = []
     vals.each_with_index do |qr, i|
       fs = field_spec(qr, fields, master); cid = "#{eid}-v#{i}"
-      col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr.split('.').last }
+      col = { 'id' => cid, 'formula' => measure_formula(fs), 'name' => qr_leaf(qr) }
       apply_fmt(col, qr, fields, vfmts)
       cols << col
       valids << cid
@@ -462,14 +562,18 @@ data_elements = masters.map do |_name, m|
   }
 end
 
+# bead ry0n: hidden helper elements (scatter grouped sources) accumulate here
+# and are appended to the Data page below.
+extra_data_elements = []
 content_pages = signals['pages'].map do |pg|
   # build_element may return one element or an array (multiRowCard -> N KPIs).
   els = pg['visuals'].flat_map do |v|
-    r = build_element(v, fields, masters)
+    r = build_element(v, fields, masters, extra_data_elements)
     r.is_a?(Array) ? r : [r]   # NB: not Array(r) — that explodes a Hash into pairs
   end
   { 'id' => "page-#{pg['page_id']}", 'name' => pg['page_title'], 'elements' => els }
 end
+data_elements += extra_data_elements
 
 # ---- 24-col grid layout (research/powerbi-visual-layout.md §4) -------------
 # Built BEFORE the spec is assembled so the layout XML can be EMBEDDED into the

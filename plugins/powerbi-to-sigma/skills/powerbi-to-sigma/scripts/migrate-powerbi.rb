@@ -69,6 +69,12 @@ abort 'missing --tmsl' unless opts[:tmsl]
 abort "--tmsl not found: #{opts[:tmsl]}" unless opts[:tmsl] && File.exist?(opts[:tmsl])
 abort 'missing --pbir' unless opts[:pbir]
 abort "--pbir not found: #{opts[:pbir]}" unless File.exist?(opts[:pbir])
+# bead hjke(a): abort early on a truncated/partial connection id — it survives
+# all the way to the DM POST and fails there opaquely ("Source not found").
+if opts[:conn] && opts[:conn] !~ /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
+  abort "FATAL: --connection must be a FULL Sigma connection UUID (8-4-4-4-12 hex); " \
+        "got #{opts[:conn].inspect}. List connections with GET /v2/connections."
+end
 
 # Local converter build (the convert_powerbi_to_sigma MCP tool, imported directly).
 MCP_DIR = ENV['PBI_MCP_DIR'] || %w[
@@ -609,14 +615,34 @@ conv_elements.each do |cel|
   mkey  = mname
   next unless masters[mkey]           # its master was built in the loop above
   mid   = masters[mkey]['id']
-  ti_elements << { 'name' => mname, 'mid' => mid, 'cols' => cols }
   # pick the headline computed column: prior-year / YTD / YoY %, falling back to
   # the last column (the converter appends the derived measure last).
   pick = cols.find { |c| c['formula'].to_s =~ /\bDateLookback\s*\(/ } ||
          cols.find { |c| c['formula'].to_s =~ /\bCumulativeSum\s*\(/ } ||
          cols.find { |c| c['name'].to_s =~ /YoY/i } || cols.last
   next unless pick
+  # bead 525l: a SINGLE-VALUE KPI bound to this measure must NOT receive a bare
+  # row-level ref (agg:nil) into the GROUPED element — Sigma evaluates an
+  # unaggregated ref over a multi-row (one-per-period) element nondeterministically
+  # (null / arbitrary row). Emit an explicit deterministic "latest period" headline
+  # formula via the builder's verbatim-formula hook (measure_formula):
+  #   Sum(If([mid/<dateCol>] = Max([mid/<dateCol>]), [mid/<col>], Null))
+  # In a chart grouped BY that date column the same formula still evaluates to the
+  # per-period value (within each group Max(date)=date), so it is safe for both
+  # the KPI and the date-grouped chart paths. The date col = the element's groupBy.
+  group_ids = (cel['groupings'] || []).flat_map { |g| g['groupBy'] || [] }
+  date_col  = cols.find { |c| group_ids.include?(c['id']) } ||
+              cols.find { |c| c['formula'].to_s =~ /\bDateTrunc\s*\(/ } ||
+              cols.find { |c| c['name'].to_s =~ /\A(Year|Quarter|Month|Week|Date|Day)\z/i }
+  headline = lambda do |colname|
+    next nil unless date_col
+    "Sum(If([#{mid}/#{date_col['name']}] = Max([#{mid}/#{date_col['name']}]), [#{mid}/#{colname}], Null))"
+  end
+  ti_elements << { 'name' => mname, 'mid' => mid, 'cols' => cols,
+                   'date' => (date_col && date_col['name']) }
   ref = { 'master' => mkey, 'ref' => "[#{mid}/#{pick['name']}]", 'agg' => nil }
+  hf = headline.call(pick['name'])
+  ref['formula'] = hf if hf
   orig = ti_orig_table[mname]
   # route both the original-table queryRef and a self-named queryRef so whichever
   # form the PBIR binding used resolves to this element.
@@ -626,6 +652,8 @@ conv_elements.each do |cel|
   cols.each do |c|
     next unless c['name'].to_s =~ /YoY|Prior Year|YTD/i
     sub = { 'master' => mkey, 'ref' => "[#{mid}/#{c['name']}]", 'agg' => nil }
+    shf = headline.call(c['name'])
+    sub['formula'] = shf if shf
     field_map["#{orig}.#{c['name']}"] ||= sub if orig
   end
   # A chart that puts a PY/YoY column next to the BASE value and the period
@@ -684,7 +712,7 @@ if ti_elements.any?
       end
     next unless shape
     # choose a target column across the emitted time-intel elements.
-    target = nil; tmid = nil; tname = nil
+    target = nil; tmid = nil; tname = nil; tdate = nil
     ti_elements.each do |te|
       cand =
         case shape
@@ -693,11 +721,17 @@ if ti_elements.any?
         when :prior then te['cols'].find { |c| c['formula'].to_s =~ /\bDateLookback\s*\(/ }
         else te['cols'].find { |c| c['formula'].to_s =~ /\b(DateLookback|CumulativeSum)\s*\(/ }
         end
-      if cand then target = cand; tmid = te['mid']; tname = te['name']; break end
+      if cand then target = cand; tmid = te['mid']; tname = te['name']; tdate = te['date']; break end
     end
     next unless target
-    field_map["#{tbl}.#{mname}"] = { 'master' => tname, 'ref' => "[#{tmid}/#{target['name']}]",
-                                     'agg' => nil }
+    entry = { 'master' => tname, 'ref' => "[#{tmid}/#{target['name']}]", 'agg' => nil }
+    # bead 525l: same headline-KPI determinism as above — a bare row-level ref on
+    # the grouped element is nondeterministic when consumed by a single-value KPI.
+    if tdate
+      entry['formula'] = "Sum(If([#{tmid}/#{tdate}] = Max([#{tmid}/#{tdate}]), " \
+                         "[#{tmid}/#{target['name']}], Null))"
+    end
+    field_map["#{tbl}.#{mname}"] = entry
   end
 end
 

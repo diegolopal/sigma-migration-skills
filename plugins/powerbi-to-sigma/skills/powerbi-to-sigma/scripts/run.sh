@@ -64,10 +64,29 @@ START=$(stage_idx "$FROM")
 
 if [[ $START -le 1 ]]; then
   echo "== [1/7] EXTRACT PBIR =="
+  # bead anlb: a fetched definition may be the CLASSIC single report.json
+  # (top-level sections[], no definition/ dir) instead of exploded PBIR.
+  # extract-pbir.py exits non-zero on that shape — auto-branch to
+  # extract-report-classic.py instead of dying.
+  EXTRACT_OK=0
   if [[ -n "$WS" && -n "$REPORT" ]]; then
-    "$PY" "$HERE/extract-pbir.py" --workspace "$WS" --report "$REPORT" --pbir-dir "$WORK" --out "$WORK/signals.json"
-  else
-    "$PY" "$HERE/extract-pbir.py" --pbir-dir "$WORK" --out "$WORK/signals.json"
+    # the fetch half still runs (parts land in $WORK) even when the extract half fails
+    "$PY" "$HERE/extract-pbir.py" --workspace "$WS" --report "$REPORT" --pbir-dir "$WORK" --out "$WORK/signals.json" && EXTRACT_OK=1 || true
+  elif [[ -d "$WORK/definition" ]]; then
+    "$PY" "$HERE/extract-pbir.py" --pbir-dir "$WORK" --out "$WORK/signals.json" && EXTRACT_OK=1 || true
+  fi
+  if [[ $EXTRACT_OK -eq 0 ]]; then
+    RJ=""
+    for cand in "$WORK/report.json" "$WORK"/*/report.json; do
+      [[ -f "$cand" ]] && { RJ="$cand"; break; }
+    done
+    if [[ -n "$RJ" && ! -d "$WORK/definition" ]]; then
+      echo "  classic single report.json detected ($RJ) — branching to extract-report-classic.py"
+      "$PY" "$HERE/extract-report-classic.py" --report-json "$RJ" --out "$WORK/signals.json"
+    else
+      echo "  EXTRACT FAILED: no definition/ dir and no classic report.json under $WORK" >&2
+      exit 1
+    fi
   fi
 fi
 

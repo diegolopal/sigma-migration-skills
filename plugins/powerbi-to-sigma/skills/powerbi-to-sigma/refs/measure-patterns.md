@@ -323,6 +323,27 @@ YTD = the 2025 total). See `dax-to-sigma-coverage.md` #3.
 > element with DateLookback/CumulativeSum" instruction (bead filed). Until then,
 > the agent adds them as workbook calc columns per the recipe above.
 
+**Headline KPI from a grouped time-intel element (bead 525l).** A single-value
+PBI card bound to a time-intel measure (e.g. a "Net Revenue YoY %" headline)
+must consume the GROUPED element, which has one row per period — so a bare
+row-level ref (`[YR/Net Revenue YoY %]`, agg `nil`) is **nondeterministic**
+(null or an arbitrary period's row), and `Last(...)` depends on sort order.
+The verified deterministic form is "the latest period's value":
+
+```
+Sum(If([YR/Year] = Max([YR/Year]), [YR/Net Revenue YoY %], Null))
+```
+
+`Max([Year])` finds the latest period over the whole element, the `If` nulls
+every other row, and the `Sum` collapses to that single value. The same formula
+is also safe in a chart **grouped by** that date column (within each group
+`Max(date) = date`, so it degrades to the per-period value) — which is why
+`migrate-powerbi.rb` emits it as the field's verbatim `formula`
+(`build-workbook-from-pbir.rb`'s `measure_formula` hook) for every time-intel
+headline/YoY/PY/YTD field-map entry, covering both the KPI and date-grouped
+chart consumers. Validated live on the Retail-Trends migration (−13.58% = the
+2026 YoY, matching PBI's headline card).
+
 ## 10. Bar vs Column orientation (chart fidelity)
 
 PBI **`barChart`/`clusteredBarChart`/`stackedBarChart`** render **horizontal**;
