@@ -123,6 +123,13 @@ coords → `400 Invalid element position`. `put-layout.rb` GETs the spec (Accept
 application/json → JSON), deletes per-page layouts, sets `spec.layout`, strips
 read-only fields, PUTs back. Map the Qlik sheet's cell rectangle to grid lines.
 
+**Multi-page layout** = multiple `<Page>` nodes concatenated in the ONE top-level
+`spec.layout` string (after the single `<?xml …?>` declaration) — one `<Page id=…>`
+per workbook page, matched by page id. Verified live (6-page workbook, 2026-06-10).
+A Qlik sheet's cell grid (`columns`×`rows`, usually 24×N) maps 1:1 onto Sigma's
+24-col grid: `gridColumn = col+1 / col+colspan+1`, `gridRow = row*2+1 /
+(row+rowspan)*2+1` (row-scale ≥2; bump KPIs to ≥5 rows for the title).
+
 ## API quirks
 - `POST /v2/dataModels/spec` and `/v2/workbooks/spec` **return YAML, not JSON**
   (`success: true\nworkbookId: ...`). Don't `json.loads` the response; parse YAML or grep.

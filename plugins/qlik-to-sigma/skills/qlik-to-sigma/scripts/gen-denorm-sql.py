@@ -13,7 +13,18 @@ with `[Custom SQL/<RAW alias>]` formulas. Drops this into build-sigma-dm.py's el
 """
 import re, json, argparse, secrets, string, os
 
-def disp(c): return " ".join(w.capitalize() for w in c.split("_"))
+# Sigma's own display-name derivation keeps small particles lowercase unless
+# first word: DAYS_TO_SHIP → "Days to Ship" (NOT "Days To Ship"). Verified
+# empirically 2026-06-10 against a live DM readback (Sigma derived "Days to
+# Ship", "Revenue per Order", "Ship via Air", "Year and Month"). Matching the
+# rule here means workbook refs line up with Sigma-derived names with no
+# defensive describe round-trips.
+SIGMA_LOWERCASE = {"a","an","the","and","but","or","for","nor","so","yet",
+                   "at","by","in","of","on","to","up","as","into","via","per"}
+def disp(c):
+    words = [w for w in c.lower().split("_") if w]
+    return " ".join(w if (i and w in SIGMA_LOWERCASE) else w.capitalize()
+                    for i, w in enumerate(words))
 def nid(n=10): return "".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(n))
 
 def main():

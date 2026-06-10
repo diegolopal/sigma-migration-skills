@@ -103,21 +103,28 @@ connection points at the same schema.
 ## Run the conversion
 Duration: 10
 
-In Claude Code, point the `qlik-to-sigma` skill at an app. The skill runs these phases
-(`scripts/*`):
+In Claude Code, point the `qlik-to-sigma` skill at an app. The whole pipeline is ONE
+command (`ruby scripts/migrate-qlik.rb --app <id> --connection <sigma-conn> --yes`) —
+it chains these phases (each also independently runnable from `scripts/*`):
 
 1. **Discover** (`qlik-discover.py`) — pull the load script (data model), master
-   measures/dimensions (via an Engine `MeasureList`/`DimensionList`), and sheet/chart
-   defs into `converter-input.json`.
+   measures/dimensions (via an Engine `MeasureList`/`DimensionList`), sheet/chart
+   defs + per-sheet **cell grids** (layout), and the app's **freshness** metadata
+   (lastReloadTime + an engine snapshot of the KPI totals) into `converter-input.json`
+   and friends. The freshness preflight then tells you up front when the Qlik app is
+   stale and Sigma (live warehouse) will show more data.
 2. **Reconcile** (`reconcile-columns.py`) — auto-derive the Qlik-field → real-warehouse
    column map from the load script's `AS` aliases (`ORDER_STORE_KEY AS STORE_KEY`).
 3. **Translate** — `convert_qlik_to_sigma` turns master measures into Sigma metrics and
    builds relationships from shared keys. **Set Analysis** → Sigma `SumIf`/`CountIf`.
 4. **Build the data model** (`gen-denorm-sql.py` + `build-sigma-dm.py`) — a clean star
    plus a denormalized SQL element; POST to `/v2/dataModels/spec`.
-5. **Build the workbook** (`build-sigma-workbook.py`) — recreate the sheet's KPIs and
-   charts; `put-layout.rb` applies a 24-col grid.
-6. **Verify parity** — compare Sigma query results to the warehouse, metric-by-metric.
+5. **Build the workbook** (`build-sigma-workbook.py`) — one Sigma page per Qlik sheet,
+   KPIs/charts/tables translated from each object's hypercube; `put-layout.rb` applies
+   the Qlik cell grid mapped onto Sigma's 24-col grid.
+6. **Verify parity** — freshness banner first, then metric-by-metric values AND
+   per-chart bucket counts vs the Qlik engine (so suppressed-null-bucket mismatches
+   surface even when the shared cells match).
 
 positive
 : Before building a new data model (Phase 2.5), the skill runs a **DM-reuse check** (`qlik-dm-signature.py` + `scripts/vendor/find-or-pick-dm.rb`): it scores the org's existing Sigma data models against the app's tables/columns and on a strong match asks reuse-vs-new — avoiding DM sprawl and skipping the build entirely.

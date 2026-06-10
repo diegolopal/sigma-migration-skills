@@ -1,108 +1,184 @@
 #!/usr/bin/env python3
-import json, os, sys, urllib.request, secrets, string
+r"""build-sigma-dm — Phase 3 of qlik-to-sigma: author + POST the Sigma data model
+from the ACTUAL pipeline artifacts (no app-specific table maps or SQL baked in).
 
-BASE=os.environ["SIGMA_BASE_URL"]; TOK=os.environ["SIGMA_API_TOKEN"]
-CONN=os.environ.get("SIGMA_CONNECTION_ID","")  # set to YOUR Sigma warehouse connection id (Sigma UI -> Connections)
-if not CONN: sys.exit("set SIGMA_CONNECTION_ID to your Sigma warehouse connection id")
+    python3 build-sigma-dm.py \
+      --converter-out WORK/converter-out.json \   # convert_qlik_to_sigma output (star + metrics + relationships)
+      --reconcile     WORK/reconcile.json \       # reconcile-columns.py output (Qlik field -> real warehouse column)
+      --denorm        WORK/denorm.json \          # gen-denorm-sql.py output (the denormalized SQL element)
+      --name "Retail Orders (Qlik->Sigma)" \
+      [--measures WORK/measures.json]             # master measures (to keep original Qlik expr as description)
+      [--folder <folderId>]                       # else auto-resolve (prefers a TEST/MIGRATION folder)
+      [--dry-run] [--out WORK/dm-result.json] [--spec-out WORK/dm-spec.json]
+
+What it ships (the proven pattern from the validated migrations, generalized):
+  1. The converter's warehouse-table STAR elements, REPOINTED via reconcile.json:
+     element path tail Qlik-table -> real warehouse table, column formulas
+     [REAL_TABLE/<real col display>] with the Qlik field name kept as the column's
+     display name. Relationships reference column IDS, so they survive the repoint.
+  2. The DENORMALIZED custom-SQL element (gen-denorm-sql.py) — the bulletproof
+     master for workbook charts (reproduces the LOAD-script joins + renames).
+  3. The converter's translated METRICS, hosted on the denorm element (which
+     carries every field, so no cross-element errors). Metrics whose refs don't
+     resolve on the denorm columns are dropped + reported.
+  The converter's auto "Dim View" derived elements are NOT shipped — the denorm
+  SQL element supersedes them (see beads-sigma-hsua: multi-fact View bloat).
+
+Prints a JSON result: {dataModelId, denormElementId, folderId, folderName,
+metricsKept, metricsDropped, columnsDropped}. With --dry-run nothing is POSTed
+(dataModelId=null) and the spec lands in --spec-out.
+
+Env (live mode): SIGMA_BASE_URL + SIGMA_API_TOKEN (eval "$(scripts/vendor/get-token.sh)").
+"""
+import json, os, re, sys, argparse, urllib.request
+
+# Sigma's display-name rule (verified live 2026-06-10): lowercase particles
+# unless first word — DAYS_TO_SHIP -> "Days to Ship".
+SIGMA_LOWERCASE = {"a","an","the","and","but","or","for","nor","so","yet",
+                   "at","by","in","of","on","to","up","as","into","via","per"}
+def disp(c):
+    words = [w for w in c.lower().split("_") if w]
+    return " ".join(w if (i and w in SIGMA_LOWERCASE) else w.capitalize()
+                    for i, w in enumerate(words))
+
 def api(method, path, body=None):
-    data=json.dumps(body).encode() if body is not None else None
-    req=urllib.request.Request(BASE+path, data=data, method=method,
-        headers={"Authorization":"Bearer "+TOK,"Content-Type":"application/json"})
+    BASE = os.environ["SIGMA_BASE_URL"]; TOK = os.environ["SIGMA_API_TOKEN"]
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(BASE + path, data=data, method=method,
+        headers={"Authorization": "Bearer " + TOK, "Content-Type": "application/json",
+                 "Accept": "application/json"})
     try:
-        with urllib.request.urlopen(req) as r: return json.loads(r.read() or "{}")
+        with urllib.request.urlopen(req) as r:
+            raw = r.read().decode()
     except urllib.error.HTTPError as e:
-        print("HTTP",e.code,"on",method,path,"->",e.read().decode()[:800], file=sys.stderr); raise
+        print("HTTP", e.code, "on", method, path, "->", e.read().decode()[:800], file=sys.stderr); raise
+    try:
+        return json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return raw  # spec POSTs can return YAML
 
-def disp(c): return " ".join(w.capitalize() for w in c.split("_"))
-def nid(n=10): return "".join(secrets.choice(string.ascii_letters+string.digits) for _ in range(n))
+def pick_folder(explicit):
+    """Resolve the target folder. Prefers an editable TEST/MIGRATION folder, then
+    any editable folder. (The old version's `... or True` made the permission
+    check a no-op — fixed: only edit/contribute folders are candidates.)"""
+    if explicit:
+        return explicit, None
+    files = api("GET", "/v2/files?typeFilters=folder&limit=200")
+    entries = [f for f in files.get("entries", files.get("data", []))
+               if f.get("type") == "folder"
+               and (f.get("permission") in ("edit", "contribute") or f.get("permission") is None)]
+    pick = next((f for f in entries
+                 if "TEST" in f.get("name", "").upper() or "MIGRATION" in f.get("name", "").upper()),
+                entries[0] if entries else None)
+    if not pick:
+        sys.exit("no editable folder found — pass --folder <id>")
+    return pick["id"], pick.get("name")
 
-# real warehouse columns (curated)
-T={
- "ORDER_FACT":["ORDER_ID","ORDER_LINE","CUSTOMER_KEY","PRODUCT_KEY","PROMO_KEY","ORDER_STORE_KEY","ORDER_DATE_KEY","ORDER_CHANNEL","ORDER_STATUS","SHIP_METHOD","QUANTITY_ORDERED","QUANTITY_RETURNED","UNIT_PRICE","UNIT_COST","DISCOUNT_AMOUNT","SHIPPING_AMOUNT","TAX_AMOUNT","GROSS_REVENUE","NET_REVENUE","GROSS_PROFIT","NET_PROFIT","DAYS_TO_SHIP"],
- "CUSTOMER_DIM":["CUSTOMER_KEY","CUSTOMER_ID","FIRST_NAME","LAST_NAME","REGION","CUSTOMER_SEGMENT","LOYALTY_TIER","ACQUISITION_CHANNEL"],
- "PRODUCT_DIM":["PRODUCT_KEY","PRODUCT_ID","PRODUCT_NAME","CATEGORY","SUBCATEGORY","BRAND"],
- "STORE_DIM":["STORE_KEY","STORE_ID","STORE_NAME","STORE_TYPE","REGION","DISTRICT","MANAGER_NAME"],
- "DATE_DIM":["DATE_KEY","FULL_DATE","MONTH_NUMBER","MONTH_NAME","QUARTER","YEAR","IS_HOLIDAY"],
- "PROMO_DIM":["PROMO_KEY","PROMO_NAME","PROMO_TYPE","CHANNEL","TARGET_SEGMENT"],
-}
-elemId={}; colId={}   # colId[(table,col)] = id
-elements=[]
-for tbl,cols in T.items():
-    eid=nid(); elemId[tbl]=eid
-    ecols=[]; order=[]
-    for c in cols:
-        cid=nid(); colId[(tbl,c)]=cid
-        ecols.append({"id":cid,"formula":"[%s/%s]"%(tbl,disp(c))}); order.append(cid)
-    elements.append({"id":eid,"kind":"table",
-        "source":{"connectionId":CONN,"kind":"warehouse-table","path":["CSA","TJ",tbl]},
-        "columns":ecols,"order":order})
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--converter-out", required=True)
+    ap.add_argument("--reconcile", required=True)
+    ap.add_argument("--denorm", required=True)
+    ap.add_argument("--name", required=True)
+    ap.add_argument("--measures")
+    ap.add_argument("--folder")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--out", default="dm-result.json")
+    ap.add_argument("--spec-out", default="dm-spec.json")
+    a = ap.parse_args()
 
-# metrics on ORDER_FACT (Sigma-correct formulas; bracketed display names)
-metrics=[
- ("Net Revenue","Sum([Net Revenue])","$,.2f"),("Gross Revenue","Sum([Gross Revenue])","$,.2f"),
- ("Net Profit","Sum([Net Profit])","$,.2f"),("Gross Profit","Sum([Gross Profit])","$,.2f"),
- ("Units Sold","Sum([Quantity Ordered])",None),("Units Returned","Sum([Quantity Returned])",None),
- ("Order Count","CountDistinct([Order Id])",",.0f"),
- ("Avg Order Value","Sum([Net Revenue])/CountDistinct([Order Id])","$,.2f"),
- ("Net Margin %","Sum([Net Profit])/Sum([Net Revenue])",",.1%"),
- ("Return Rate %","Sum([Quantity Returned])/Sum([Quantity Ordered])",",.1%"),
- ("Avg Days to Ship","Avg([Days to Ship])",",.1f"),("Discount Amount","Sum([Discount Amount])","$,.2f"),
-]
-of=[e for e in elements if e["id"]==elemId["ORDER_FACT"]][0]
-of["metrics"]=[]
-for name,f,fmt in metrics:
-    m={"id":nid(),"formula":f,"name":name}
-    if fmt: m["format"]={"kind":"number","formatString":fmt}
-    of["metrics"].append(m)
+    conv = json.load(open(a.converter_out))
+    cmodel = conv.get("model") or conv.get("sigmaDataModel") or conv
+    reconcile = json.load(open(a.reconcile))
+    denorm = json.load(open(a.denorm))["element"]
+    measures = json.load(open(a.measures)) if a.measures and os.path.exists(a.measures) else []
 
-# relationships: each dim -> ORDER_FACT
-REL=[("CUSTOMER_DIM","CUSTOMER_KEY","CUSTOMER_KEY"),("PRODUCT_DIM","PRODUCT_KEY","PRODUCT_KEY"),
-     ("PROMO_DIM","PROMO_KEY","PROMO_KEY"),("STORE_DIM","STORE_KEY","ORDER_STORE_KEY"),
-     ("DATE_DIM","DATE_KEY","ORDER_DATE_KEY")]
-for dim,dk,fk in REL:
-    el=[e for e in elements if e["id"]==elemId[dim]][0]
-    el.setdefault("relationships",[]).append({"id":nid(),"targetElementId":elemId["ORDER_FACT"],
-        "keys":[{"sourceColumnId":colId[(dim,dk)],"targetColumnId":colId[("ORDER_FACT",fk)]}],
-        "name":"ORDER_FACT"})
+    # --- 1. repoint the converter's warehouse-table star via reconcile ---------
+    # reconcile: [{qlikTable, sourceTable, fields:[{qlikField, realColumn, isExpression}]}]
+    rec_by_upper = {t["qlikTable"].upper(): t for t in reconcile}
+    def real_table(t):  # ORDER_FACT.csv -> ORDER_FACT; db.schema.T -> T
+        return re.sub(r"\.csv$", "", t["sourceTable"], flags=re.I).split(".")[-1].strip('"')
 
-# denormalized reporting element (SQL join) — bulletproof master for workbook charts
-DENORM_SQL = """SELECT
- f.ORDER_ID, f.NET_REVENUE, f.GROSS_REVENUE, f.NET_PROFIT, f.GROSS_PROFIT,
- f.QUANTITY_ORDERED, f.QUANTITY_RETURNED, f.DISCOUNT_AMOUNT, f.DAYS_TO_SHIP,
- f.ORDER_CHANNEL, f.ORDER_STATUS,
- p.CATEGORY, p.SUBCATEGORY, p.BRAND,
- c.REGION AS CUSTOMER_REGION, c.CUSTOMER_SEGMENT, c.LOYALTY_TIER,
- s.STORE_NAME, s.REGION AS STORE_REGION, s.DISTRICT,
- d.MONTH_NUMBER, d.MONTH_NAME, d.QUARTER, d.YEAR, d.IS_HOLIDAY,
- pr.PROMO_TYPE
-FROM CSA.TJ.ORDER_FACT f
-LEFT JOIN CSA.TJ.PRODUCT_DIM  p  ON f.PRODUCT_KEY = p.PRODUCT_KEY
-LEFT JOIN CSA.TJ.CUSTOMER_DIM c  ON f.CUSTOMER_KEY = c.CUSTOMER_KEY
-LEFT JOIN CSA.TJ.STORE_DIM    s  ON f.ORDER_STORE_KEY = s.STORE_KEY
-LEFT JOIN CSA.TJ.DATE_DIM     d  ON f.ORDER_DATE_KEY = d.DATE_KEY
-LEFT JOIN CSA.TJ.PROMO_DIM    pr ON f.PROMO_KEY = pr.PROMO_KEY"""
-DENORM_COLS=["ORDER_ID","NET_REVENUE","GROSS_REVENUE","NET_PROFIT","GROSS_PROFIT","QUANTITY_ORDERED","QUANTITY_RETURNED","DISCOUNT_AMOUNT","DAYS_TO_SHIP","ORDER_CHANNEL","ORDER_STATUS","CATEGORY","SUBCATEGORY","BRAND","CUSTOMER_REGION","CUSTOMER_SEGMENT","LOYALTY_TIER","STORE_NAME","STORE_REGION","DISTRICT","MONTH_NUMBER","MONTH_NAME","QUARTER","YEAR","IS_HOLIDAY","PROMO_TYPE"]
-denorm_id=nid()
-dcols=[]; dorder=[]
-for c in DENORM_COLS:
-    cid=nid(); dcols.append({"id":cid,"name":disp(c),"formula":"[Custom SQL/%s]"%c}); dorder.append(cid)
-elements.append({"id":denorm_id,"kind":"table",
-    "source":{"connectionId":CONN,"kind":"sql","statement":DENORM_SQL},
-    "columns":dcols,"order":dorder})
+    # collect the converter's metrics BEFORE stripping them off the elements
+    all_metrics = [m for el in cmodel.get("pages", [{}])[0].get("elements", [])
+                   for m in (el.get("metrics") or [])]
 
-spec={"name":"Retail Orders (Qlik→Sigma)","schemaVersion":1,
-      "pages":[{"id":nid(),"name":"Page 1","elements":elements}]}
+    elements, columns_dropped = [], []
+    for el in cmodel.get("pages", [{}])[0].get("elements", []):
+        src = el.get("source", {})
+        if src.get("kind") != "warehouse-table":
+            continue  # skip the converter's derived "View" elements (denorm supersedes them)
+        path = list(src.get("path") or [])
+        rec = rec_by_upper.get((path[-1] if path else "").upper())
+        if rec and not rec["sourceTable"].upper().startswith(("RESIDENT", "INLINE", "AUTOGENERATE", "?")):
+            rt = real_table(rec)
+            field_by_disp = {disp(f["qlikField"]).lower(): f for f in rec["fields"]}
+            new_cols, order = [], []
+            for c in el.get("columns", []):
+                m = re.match(r"\[([^/\]]+)/([^\]]+)\]$", c.get("formula", ""))
+                f = field_by_disp.get(m.group(2).lower()) if m else None
+                if f is None:
+                    new_cols.append(c); order.append(c["id"]); continue
+                if f.get("isExpression") or f["realColumn"] == "*":
+                    columns_dropped.append(f"{rec['qlikTable']}.{f['qlikField']} (LOAD expression)")
+                    continue
+                new_cols.append({"id": c["id"], "name": disp(f["qlikField"]),
+                                 "formula": f"[{rt}/{disp(f['realColumn'])}]"})
+                order.append(c["id"])
+            el["columns"] = new_cols
+            el["order"] = order
+            el["source"]["path"] = path[:-1] + [rt]
+            el["name"] = rec["qlikTable"]
+        el.pop("metrics", None)  # metrics are hosted on the denorm element below
+        elements.append(el)
 
-# resolve a folder to drop it in (prefer a writable workspace folder)
-folder=None
-files=api("GET","/v2/files?typeFilters=folder&limit=200")
-for f in files.get("entries",files.get("data",[])):
-    if f.get("type")=="folder" and (f.get("permission") in ("edit","explore",None) or True):
-        folder=f["id"]
-        if "TEST" in (f.get("name","").upper()) or "MIGRATION" in (f.get("name","").upper()): break
-print("folder:",folder, file=sys.stderr)
-body=dict(spec);
-if folder: body["folderId"]=folder
-res=api("POST","/v2/dataModels/spec",body)
-print(json.dumps({"dataModelId":res.get("dataModelId") or res.get("id"),"name":res.get("name"),
-    "elemId":elemId,"keys":{k[0]+"."+k[1]:v for k,v in colId.items() if k[1].endswith("KEY")}}, indent=2))
+    # --- 2. metrics -> denorm element (keep only those whose refs resolve) -----
+    denorm_disp = {c["name"].lower() for c in denorm["columns"]}
+    src_expr = {m.get("title"): m.get("expr") or m.get("qDef") for m in measures}
+    kept, dropped = [], []
+    seen_metric = set()
+    for m in all_metrics:
+        if m.get("name") in seen_metric: continue
+        seen_metric.add(m.get("name"))
+        refs = [r.split("/")[-1] for r in re.findall(r"\[([^\]]+)\]", m.get("formula", ""))]
+        if refs and all(r.lower() in denorm_disp for r in refs):
+            if src_expr.get(m.get("name")):
+                m.setdefault("description", f"Qlik: {src_expr[m['name']]}")
+            kept.append(m)
+        else:
+            dropped.append(m.get("name"))
+    if kept:
+        denorm["metrics"] = kept
+    elements.append(denorm)
+
+    spec = {"name": a.name, "schemaVersion": 1,
+            "pages": [{"id": "pg-dm", "name": "Page 1", "elements": elements}]}
+    json.dump(spec, open(a.spec_out, "w"), indent=2)
+
+    result = {"dataModelId": None, "denormElementId": denorm["id"], "folderId": a.folder,
+              "folderName": None, "metricsKept": len(kept), "metricsDropped": dropped,
+              "columnsDropped": columns_dropped, "starElements": len(elements) - 1}
+    if a.dry_run:
+        print(f"DRY RUN: spec -> {a.spec_out} ({len(elements)} elements, {len(kept)} metrics on denorm)",
+              file=sys.stderr)
+    else:
+        folder_id, folder_name = pick_folder(a.folder)
+        body = dict(spec); body["folderId"] = folder_id
+        res = api("POST", "/v2/dataModels/spec", body)
+        dm_id = res.get("dataModelId") or res.get("id") if isinstance(res, dict) else \
+            (re.search(r"dataModelId:\s*(\S+)", str(res)) or [None, None])[1]
+        if not dm_id:
+            sys.exit(f"FATAL: DM POST returned no id: {str(res)[:300]}")
+        # Sigma reassigns element ids on POST — read back the persisted denorm
+        # element id (the custom-SQL element auto-names to "Custom SQL").
+        els = api("GET", f"/v2/dataModels/{dm_id}/elements")
+        persisted = next((e for e in els.get("entries", [])
+                          if e.get("name") == "Custom SQL"), None) or \
+                    next(iter(els.get("entries", [])), {})
+        result.update(dataModelId=dm_id, folderId=folder_id, folderName=folder_name,
+                      denormElementId=persisted.get("elementId") or persisted.get("id") or denorm["id"])
+    json.dump(result, open(a.out, "w"), indent=2)
+    print(json.dumps(result))
+
+if __name__ == "__main__":
+    main()
