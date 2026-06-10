@@ -1,0 +1,57 @@
+# Corpus regression check + repo-wide script syntax CI (bead x30b).
+#
+# Both jobs are CREDS-FREE by design: run-corpus.sh --check is pure
+# stdlib-python3 + bash (PyYAML optional — corpus_check.py has a structural
+# fallback), and the syntax job only parses files. No secrets are used or
+# needed anywhere in this workflow — keep it that way.
+#
+# Runner deps (verified): ubuntu-24.04 ships python3 (3.12), ruby (3.x) and
+# bash preinstalled — no setup-* actions required. Pinned to ubuntu-24.04
+# (not -latest) so a runner-image rollover can't silently change the
+# interpreters. Whole workflow budget: < 2 minutes (locally ~1 s + ~5 s).
+name: corpus-check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  corpus:
+    name: corpus --check (creds-free goldens)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate every corpus case against its golden
+        run: ./corpus/run-corpus.sh --check
+
+  script-syntax:
+    name: syntax-check every script (ruby -c / py_compile / bash -n)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse every tracked .rb / .py / .sh file
+        # Cheap repo-wide syntax CI: a script that doesn't even parse must
+        # never reach main. Shebang-aware for .sh files because a few scripts
+        # carry a .sh name with a ruby shebang (e.g. setup-tableau.sh).
+        run: |
+          set -uo pipefail
+          fail=0
+          while IFS= read -r f; do
+            ruby -c "$f" >/dev/null || { echo "::error file=$f::ruby syntax error"; fail=1; }
+          done < <(git ls-files '*.rb')
+          while IFS= read -r f; do
+            python3 -m py_compile "$f" || { echo "::error file=$f::python syntax error"; fail=1; }
+          done < <(git ls-files '*.py')
+          while IFS= read -r f; do
+            shebang=$(head -1 "$f")
+            case "$shebang" in
+              *ruby*)   ruby -c "$f" >/dev/null || { echo "::error file=$f::ruby syntax error"; fail=1; } ;;
+              *python*) python3 -m py_compile "$f" || { echo "::error file=$f::python syntax error"; fail=1; } ;;
+              *)        bash -n "$f" || { echo "::error file=$f::bash syntax error"; fail=1; } ;;
+            esac
+          done < <(git ls-files '*.sh')
+          echo "checked: $(git ls-files '*.rb' | wc -l) rb, $(git ls-files '*.py' | wc -l) py, $(git ls-files '*.sh' | wc -l) sh"
+          exit $fail

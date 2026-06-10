@@ -78,6 +78,13 @@ OptionParser.new do |o|
   o.on('--mcp-dir DIR')        { |v| opts[:mcp_dir] = File.expand_path(v) }
   o.on('--converter-out PATH') { |v| opts[:cvt_out] = File.expand_path(v) }
   o.on('--python PATH')        { |v| opts[:python]  = File.expand_path(v) }
+  # bead fmte — SOURCE-FRESHNESS PREFLIGHT. --workspace/--dataset identify the
+  # LIVE semantic model (workspace id or "me" for My workspace) so Phase 1.5 can
+  # pull its refresh history + a cheap executeQueries snapshot. Optional: without
+  # them the preflight is skipped (offline TMSL+PBIR-only runs still work).
+  o.on('--workspace ID')       { |v| opts[:ws] = v }
+  o.on('--dataset ID')         { |v| opts[:dataset] = v }
+  o.on('--skip-freshness')     {     opts[:skip_fresh] = true }
 end.parse!
 
 abort 'missing --tmsl' unless opts[:tmsl]
@@ -201,6 +208,30 @@ vsumm = vkinds.map { |k, c| c > 1 ? "#{k}×#{c}" : k }.join(', ')
 puts "   model '#{name_slug}': #{tables.size} table(s), #{tables.sum { |t| (t['columns'] || []).size }} column(s), " \
      "#{all_measures.size} measure(s), mode=#{mode_summ}"
 puts "   report: #{signals['pages'].size} page(s), #{all_visuals.size} visual(s) (#{vsumm})"
+
+# --- Phase 1.5 — SOURCE-FRESHNESS PREFLIGHT (bead fmte) ---------------------
+# An import-mode PBI model is a frozen snapshot; Sigma reads the LIVE warehouse.
+# Pull the dataset's refresh history (incl. FAILED refreshes — expired warehouse
+# creds are the classic cause) + a cheap executeQueries row-count/max-date
+# snapshot NOW, so Phase 6 can lead with "source is N days stale; Sigma will
+# show more data: X vs Y" instead of explaining drift after the numbers looked
+# wrong. Best-effort: a preflight failure warns and continues.
+fresh_path = File.join(WORK, 'freshness.json')
+if opts[:ws] && opts[:dataset] && !opts[:skip_fresh] && modes.include?('import')
+  puts
+  f_out, f_st = Open3.capture2e(PY, File.join(HERE, 'pbi-freshness.py'),
+                                '--workspace', opts[:ws], '--dataset', opts[:dataset],
+                                '--tmsl', opts[:tmsl], '--out', fresh_path)
+  if f_st.success?
+    f_out.each_line { |l| puts "   #{l.rstrip}" }
+  else
+    puts "   ⚠ freshness preflight failed (continuing without it): #{f_out.lines.last.to_s.strip}"
+  end
+elsif opts[:ws] && opts[:dataset] && !opts[:skip_fresh]
+  puts "   (freshness preflight skipped — model is #{mode_summ}, not import-mode: Sigma and PBI both read live)"
+end
+freshness = File.exist?(fresh_path) ? (JSON.parse(File.read(fresh_path)) rescue {}) : {}
+stale_days = freshness['staleDays']
 
 # ---------------------------------------------------------------------------
 # Phase 2 — Convert (run convertPowerBIToSigma via a node shim)
@@ -840,19 +871,138 @@ run!(['ruby', File.join(HERE, 'put-layout.rb'), '--workbook', wb_id, '--layout',
 puts "   layout applied to workbook #{wb_id}"
 
 # ---------------------------------------------------------------------------
-# Phase 6 — Parity (formula-resolution guard + per-element row probe)
+# Phase 6 — Parity (freshness banner FIRST, then formula guard + warehouse compare)
 # ---------------------------------------------------------------------------
 hdr(6, TOTAL, 'Parity')
 require 'sigma_rest'
+require 'date'
+
+# bead fmte — the SOURCE-FRESHNESS banner LEADS the parity output (read this
+# before any side-by-side): a stale import snapshot / failed refresh explains
+# "Sigma shows more data" deltas up front instead of after they look wrong.
+fresh_ok   = freshness['lastSuccessfulRefresh']
+fresh_fail = (freshness['failures'] || []).first
+if fresh_ok || fresh_fail
+  puts '   ── SOURCE FRESHNESS (read this before any side-by-side) ──'
+  if fresh_ok
+    puts "   PBI dataset last refreshed #{fresh_ok['endTime']} (#{stale_days} days ago)"
+  end
+  if fresh_fail
+    tag = freshness['credsSuspect'] ? ' — dataset credentials look EXPIRED' : ''
+    puts "   ⚠ most recent refresh FAILURE #{fresh_fail['endTime']} (#{fresh_fail['errorCode']})#{tag}"
+  end
+  if stale_days && stale_days >= 1
+    puts "   ⚠ source is ~#{stale_days.ceil} day(s) stale — Sigma reads the LIVE warehouse and is"
+    puts '     EXPECTED to show more data. Deltas below are classified accordingly.'
+  end
+end
+
+# (1) formula-resolution guard: no column resolved to type "error".
 cols = (Sigma.request(:get, "/v2/workbooks/#{wb_id}/columns") rescue { 'entries' => [] })
 err_cols = (cols['entries'] || []).select { |c| c.dig('type', 'type') == 'error' }
 total_cols = (cols['entries'] || []).size
 chart_pages = wb_rb['pages'].reject { |p| p['id'] == 'page-data' }
 chart_els = chart_pages.flat_map { |p| (p['elements'] || []) }
-parity_ok = err_cols.empty?
-if parity_ok
-  puts "   PARITY: PASS — #{total_cols} workbook column(s) resolve (0 error-typed); " \
+
+# (2) warehouse-vs-snapshot compare (bead fmte). For every table the preflight
+# snapshotted, export the matching Data-page master element (Sigma = LIVE
+# warehouse rows) via the REST export API and classify the delta:
+#   MATCH            same row count (and max dates, when known)
+#   STALE-EXPLAINED  Sigma has MORE/newer rows — the stale/failed-refresh
+#                    snapshot explains it; NOT a conversion error
+#   DIVERGENT        Sigma has FEWER/older rows — a real problem; blocks
+norm = ->(s) { s.to_s.downcase.gsub(/[^a-z0-9]/, '') }
+export_rows = lambda do |element_id|
+  res = Sigma.request(:post, "/v2/workbooks/#{wb_id}/export",
+                      body: { 'elementId' => element_id, 'format' => { 'type' => 'json' } }.to_json)
+  qid = res.is_a?(Hash) ? res['queryId'] : nil
+  raise 'export returned no queryId' unless qid
+  deadline = Time.now + 90
+  while Time.now < deadline
+    body = (Sigma.request(:get, "/v2/query/#{qid}/download", binary: true) rescue nil)
+    if body && !body.strip.empty?
+      parsed = (JSON.parse(body) rescue nil)
+      return parsed if parsed.is_a?(Array)
+      return parsed['rows'] if parsed.is_a?(Hash) && parsed['rows'].is_a?(Array)
+      lines = body.each_line.map { |l| (JSON.parse(l) rescue nil) }.compact
+      return lines if lines.size > 1
+    end
+    sleep 2
+  end
+  raise 'export download timed out'
+end
+
+fresh_classes = []
+data_page = wb_rb['pages'].find { |p| p['id'] == 'page-data' } ||
+            wb_rb['pages'].find { |p| p['name'].to_s =~ /data/i }
+data_els = data_page ? (data_page['elements'] || []) : []
+(freshness['snapshot'] || {}).each do |table, snap|
+  pbi_rows = snap['rows']
+  next if pbi_rows.nil?
+  # match via the master-map (master key == converter element name == warehouse
+  # table for base tables; the page-data element keeps the master's id), falling
+  # back to a name match. Skip the derived "<Fact> View" join masters.
+  _mk, master = masters.find { |k, _| norm.call(k) == norm.call(table) }
+  el = (master && data_els.find { |e| e['id'] == master['id'] }) ||
+       data_els.find { |e| norm.call(e['name']) == norm.call(table) }
+  unless el
+    fresh_classes << ['SKIPPED', table, 'no matching Data-page master element']
+    next
+  end
+  if pbi_rows > 100_000
+    fresh_classes << ['SKIPPED', table, "#{pbi_rows} rows — too large for an export row-count probe"]
+    next
+  end
+  begin
+    rows = export_rows.call(el['id'])
+  rescue StandardError => e
+    fresh_classes << ['SKIPPED', table, "export failed: #{e.message[0, 80]}"]
+    next
+  end
+  wh_rows = rows.size
+  # max-date compare: match each snapshot date col to an export key by name.
+  date_note = nil
+  newer_dates = false
+  (snap['maxDates'] || {}).each do |dcol, pbi_max|
+    next if pbi_max.nil?
+    key = (rows.first || {}).keys.find { |k| norm.call(k) == norm.call(dcol) }
+    next unless key
+    wh_max = rows.map { |r| r[key] }.compact.max
+    pd = (Date.parse(pbi_max.to_s) rescue nil)
+    wd = (Date.parse(wh_max.to_s) rescue nil)
+    next unless pd && wd
+    if wd > pd
+      newer_dates = true
+      date_note = "max(#{dcol}) warehouse=#{wd} vs PBI=#{pd}"
+    end
+  end
+  stale_or_failed = (stale_days && stale_days >= 1) || freshness['credsSuspect'] ||
+                    (freshness['failures'] || []).any?
+  if wh_rows == pbi_rows && !newer_dates
+    fresh_classes << ['MATCH', table, "rows=#{wh_rows} (warehouse == PBI snapshot)"]
+  elsif wh_rows >= pbi_rows
+    why = stale_or_failed ? 'stale/failed-refresh snapshot explains it' : 'warehouse moved since the refresh'
+    delta = wh_rows - pbi_rows
+    msg = "Sigma will show more data: warehouse rows=#{wh_rows} vs PBI snapshot=#{pbi_rows}" \
+          "#{delta.positive? ? " (+#{delta})" : ''}#{date_note ? "; #{date_note}" : ''} — #{why}"
+    fresh_classes << ['STALE-EXPLAINED', table, msg]
+  else
+    fresh_classes << ['DIVERGENT', table,
+                      "warehouse rows=#{wh_rows} < PBI snapshot=#{pbi_rows} — Sigma shows LESS data " \
+                      'than the source snapshot; check the table/path mapping']
+  end
+end
+if fresh_classes.any?
+  puts '   freshness deltas (table-level, Sigma live vs PBI snapshot):'
+  fresh_classes.each { |cls, table, msg| puts format('   %-15s %s: %s', cls, table, msg) }
+end
+divergent = fresh_classes.count { |c| c[0] == 'DIVERGENT' }
+
+parity_ok = err_cols.empty? && divergent.zero?
+if err_cols.empty?
+  puts "   PARITY: #{parity_ok ? 'PASS' : 'FAIL'} — #{total_cols} workbook column(s) resolve (0 error-typed); " \
        "#{chart_els.size} chart element(s) built across #{chart_pages.size} page(s)"
+  puts "   PARITY: FAIL — #{divergent} DIVERGENT freshness delta(s) above" unless divergent.zero?
 else
   puts "   PARITY: FAIL — #{err_cols.size}/#{total_cols} column(s) resolved to type 'error':"
   err_cols.first(8).each { |c| puts "     [#{c['elementId']}] #{c['label']}: #{c['formula']}" }
@@ -865,6 +1015,11 @@ puts
 puts '================ RESULT ================'
 puts "dataModelId : #{dm_id}"
 puts "workbookId  : #{wb_id}"
-puts "PARITY      : #{parity_ok ? 'PASS' : 'FAIL'} (#{total_cols} cols resolve, #{err_cols.size} error)"
+puts "PARITY      : #{parity_ok ? 'PASS' : 'FAIL'} (#{total_cols} cols resolve, #{err_cols.size} error" \
+     "#{fresh_classes.any? ? format(', freshness: %d match / %d stale-explained / %d divergent', fresh_classes.count { |c| c[0] == 'MATCH' }, fresh_classes.count { |c| c[0] == 'STALE-EXPLAINED' }, divergent) : ''})"
+if fresh_ok
+  puts "freshness   : PBI last refresh #{fresh_ok['endTime']} (#{stale_days} days ago)" \
+       "#{freshness['credsSuspect'] ? ' — REFRESH FAILING (creds)' : ''}"
+end
 puts '======================================='
 exit(parity_ok ? 0 : 3)

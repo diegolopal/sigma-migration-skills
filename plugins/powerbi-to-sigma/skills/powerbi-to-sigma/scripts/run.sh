@@ -105,6 +105,18 @@ if [[ $START -le 1 ]]; then
       exit 1
     fi
   fi
+
+  # ---- stage 1.5: SOURCE-FRESHNESS PREFLIGHT (bead fmte) -------------------
+  # Import-mode models are frozen snapshots; Sigma reads the live warehouse.
+  # Capture the dataset's refresh history (incl. FAILED refreshes / expired
+  # creds) + a cheap executeQueries row-count/max-date snapshot NOW so the
+  # stage-7 parity is LED by the staleness banner. Best-effort: never fatal.
+  if [[ -n "$WS" && -n "$DATASET" ]]; then
+    echo "== [1.5/7] SOURCE-FRESHNESS PREFLIGHT =="
+    "$PY" "$HERE/pbi-freshness.py" --workspace "$WS" --dataset "$DATASET" \
+      ${BIM:+--tmsl "$BIM"} --out "$WORK/freshness.json" \
+      || echo "  (freshness preflight failed — continuing without it)"
+  fi
 fi
 
 if [[ $START -le 2 ]]; then
@@ -179,12 +191,17 @@ if [[ $START -le 7 ]]; then
   echo "== [7/7] PARITY (DAX vs Sigma — MCP gate) =="
   if [[ -n "$WS" && -n "$DATASET" && -f "$WORK/chart-dax.json" ]]; then
     WB_ID=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$WORK/wb-post.txt" | head -1 || true)
+    # bead fmte: the staleness banner LEADS the parity output, and finalize
+    # classifies deltas MATCH / STALE-EXPLAINED / DIVERGENT (only DIVERGENT blocks).
+    FRESH_ARG=""
+    [[ -f "$WORK/freshness.json" ]] && FRESH_ARG="--freshness $WORK/freshness.json"
     ruby "$HERE/phase6-parity-pbi.rb" --emit-dax --workspace "$WS" --dataset "$DATASET" \
-      --chart-dax "$WORK/chart-dax.json" --workbook-id "$WB_ID" --out "$WORK/parity-plan.json"
+      --chart-dax "$WORK/chart-dax.json" --workbook-id "$WB_ID" --out "$WORK/parity-plan.json" \
+      $FRESH_ARG
     echo "  >>> GATE: collect Sigma actuals via sigma-mcp-v2 query (per chart above),"
     echo "      save to $WORK/parity-actuals.json, then:"
     echo "      ruby $HERE/phase6-parity-pbi.rb --finalize --plan $WORK/parity-plan.json \\"
-    echo "        --actuals $WORK/parity-actuals.json --out-dir $WORK"
+    echo "        --actuals $WORK/parity-actuals.json --out-dir $WORK $FRESH_ARG"
   else
     echo "  (skipped — need --workspace, --dataset, and $WORK/chart-dax.json)"
   fi
