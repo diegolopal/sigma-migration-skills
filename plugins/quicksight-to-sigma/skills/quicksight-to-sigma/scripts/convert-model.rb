@@ -25,11 +25,11 @@
 #                          filter — a true row-filter genuinely cannot live on a
 #                          warehouse-table DM element. (beads-sigma-23xu)
 #                        - name the synthesized join element + its columns, force
-#                          schemaVersion = 1, optionally inject folderId.
+#                          schemaVersion = 1, inject folderId (REQUIRED by the API).
 #
 # Usage:
 #   ruby scripts/convert-model.rb --emit-mcp --discover-dir DIR --connection-id ID [--database DB --schema SCH]
-#   ruby scripts/convert-model.rb --fixup --in converter-out.json --discover-dir DIR [--folder-id ID] --out dm-spec.json
+#   ruby scripts/convert-model.rb --fixup --in converter-out.json --discover-dir DIR --folder-id ID --out dm-spec.json
 require 'json'
 require 'optparse'
 
@@ -297,7 +297,10 @@ if opts[:fixup]
     end
   end
 
-  model['folderId'] = opts[:folder] if opts[:folder]
+  # POST /v2/dataModels/spec REQUIRES folderId ("Expecting UUID at 0.folderId")
+  # — without it the post fails, so refuse to emit an unpostable spec.
+  abort('--folder-id is required with --fixup: POST /v2/dataModels/spec rejects specs without folderId') unless opts[:folder]
+  model['folderId'] = opts[:folder]
 
   if dir && !filter_exprs.empty?
     File.write(File.join(dir, 'dm-filters.json'), JSON.pretty_generate('filters' => filter_exprs.uniq))

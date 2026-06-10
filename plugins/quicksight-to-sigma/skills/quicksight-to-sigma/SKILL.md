@@ -113,8 +113,15 @@ Maps each QuickSight visual's grid cell → a 24-col Sigma layout. **QuickSight 
 ## Phase 7 — Parity (hard gate)
 
 ```bash
-ruby scripts/phase6-parity-quicksight.rb --finalize --workbook <WORKBOOK_ID> ...
-ruby scripts/assert-phase6-ran.rb        # hard gate — must pass before declaring GREEN
+# PASS 1 — plan + per-chart fetch instructions (reads the live workbook spec)
+ruby scripts/phase6-parity-quicksight.rb --workdir /tmp/<name> --workbook-id <WORKBOOK_ID>
+# ... run the printed mcp__sigma-mcp-v2__query calls (Sigma ACTUAL rows) and
+#     compute EXPECTED rows from the warehouse with the same dim+aggregation,
+#     writing parity-actuals.json + parity-expected.json into the workdir ...
+# PASS 2 — verify + write the parity-final.json sentinel
+ruby scripts/phase6-parity-quicksight.rb --workdir /tmp/<name> --finalize
+# hard gate — must exit 0 before declaring GREEN
+ruby scripts/assert-phase6-ran.rb --workdir /tmp/<name> --workbook-id <WORKBOOK_ID>
 ```
 
 **POST success ≠ working.** You MUST query-verify the built elements:

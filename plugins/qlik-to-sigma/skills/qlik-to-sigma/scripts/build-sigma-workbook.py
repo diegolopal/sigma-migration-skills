@@ -20,7 +20,7 @@ master={"id":"m-ofv","name":"OFV","kind":"table","source":{"dataModelId":DM,"ele
 
 def kpi(name,formula,fmt):
     c=nid()+"-v"; return {"id":nid(),"kind":"kpi-chart","name":name,"source":{"elementId":"m-ofv","kind":"table"},
-        "columns":[{"id":c,"formula":formula,"name":name,"format":NUM(fmt)}],"value":{"id":c}}
+        "columns":[{"id":c,"formula":formula,"name":name,"format":NUM(fmt)}],"value":{"columnId":c}}
 def chart(kind,name,dimf,dimn,measures):
     x=nid()+"-x"; cols=[{"id":x,"formula":dimf,"name":dimn}]; ymids=[]
     for mf,mn,fmt in measures:

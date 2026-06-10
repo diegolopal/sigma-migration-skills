@@ -49,6 +49,7 @@ require 'optparse'
 opts = { min_pass_rate: 1.0, allow_extract: false, min_layout_elements: 2 }
 OptionParser.new do |p|
   p.on('--tableau DIR')              { |v| opts[:tab] = v }
+  p.on('--workdir DIR', 'alias of --tableau for non-Tableau converters') { |v| opts[:tab] = v }
   p.on('--workbook-id ID')           { |v| opts[:wb] = v }
   p.on('--min-pass-rate F', Float)   { |v| opts[:min_pass_rate] = v }
   p.on('--allow-extract')            { opts[:allow_extract] = true }
@@ -57,7 +58,7 @@ OptionParser.new do |p|
   p.on('--skip-layout-check')        { opts[:skip_layout] = true }
   p.on('--min-layout-elements N', Integer) { |v| opts[:min_layout_elements] = v }
 end.parse!
-abort('--tableau required') unless opts[:tab]
+abort('--workdir (or --tableau) required') unless opts[:tab]
 
 summary_path = File.join(opts[:tab], 'parity-final.json')
 
