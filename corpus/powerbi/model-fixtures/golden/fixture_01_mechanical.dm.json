@@ -1,0 +1,561 @@
+{
+  "sigmaDataModel": {
+    "name": "Power BI Import",
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "id0001",
+        "name": "Page 1",
+        "elements": [
+          {
+            "id": "id0002",
+            "kind": "table",
+            "name": "EMPLOYEES",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "CSA",
+                "TJ",
+                "EMPLOYEES"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0003/EMPLOYEE_ID",
+                "formula": "[EMPLOYEES/Employee Id]"
+              },
+              {
+                "id": "inode-NORM0004/FIRST_NAME",
+                "formula": "[EMPLOYEES/First Name]"
+              },
+              {
+                "id": "inode-NORM0005/LAST_NAME",
+                "formula": "[EMPLOYEES/Last Name]"
+              },
+              {
+                "id": "inode-NORM0006/DEPARTMENT",
+                "formula": "[EMPLOYEES/Department]"
+              },
+              {
+                "id": "inode-NORM0007/ROLE",
+                "formula": "[EMPLOYEES/Role]"
+              },
+              {
+                "id": "inode-NORM0008/LOCATION",
+                "formula": "[EMPLOYEES/Location]"
+              },
+              {
+                "id": "inode-NORM0009/HIRE_DATE",
+                "formula": "[EMPLOYEES/Hire Date]"
+              },
+              {
+                "id": "inode-NORM0010/STATUS",
+                "formula": "[EMPLOYEES/Status]"
+              },
+              {
+                "id": "inode-NORM0011/ANNUAL_SALARY",
+                "formula": "[EMPLOYEES/Annual Salary]"
+              },
+              {
+                "id": "inode-NORM0012/EMPLOYMENT_TYPE",
+                "formula": "[EMPLOYEES/Employment Type]"
+              },
+              {
+                "id": "id0013",
+                "formula": "[First Name] & \" \" & [Last Name]",
+                "name": "Full Name"
+              },
+              {
+                "id": "id0014",
+                "formula": "If([Annual Salary] >= 120000, \"Senior\", If([Annual Salary] >= 70000, \"Mid\", \"Junior\"))",
+                "name": "Salary Band"
+              }
+            ],
+            "order": [
+              "inode-NORM0003/EMPLOYEE_ID",
+              "inode-NORM0004/FIRST_NAME",
+              "inode-NORM0005/LAST_NAME",
+              "inode-NORM0006/DEPARTMENT",
+              "inode-NORM0007/ROLE",
+              "inode-NORM0008/LOCATION",
+              "inode-NORM0009/HIRE_DATE",
+              "inode-NORM0010/STATUS",
+              "inode-NORM0011/ANNUAL_SALARY",
+              "inode-NORM0012/EMPLOYMENT_TYPE",
+              "id0013",
+              "id0014"
+            ],
+            "metrics": [
+              {
+                "id": "id0015",
+                "formula": "Sum([Annual Salary])",
+                "name": "Total Salary",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.0f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0016",
+                "formula": "Avg([Annual Salary])",
+                "name": "Avg Salary",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.0f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0017",
+                "formula": "Count()",
+                "name": "Headcount",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.0f"
+                }
+              },
+              {
+                "id": "id0018",
+                "formula": "CountDistinct([Department])",
+                "name": "Distinct Departments",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.0f"
+                }
+              },
+              {
+                "id": "id0019",
+                "formula": "CountIf([Status] = \"Active\")",
+                "name": "Active Headcount",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.0f"
+                }
+              },
+              {
+                "id": "id0020",
+                "formula": "Sum([Annual Salary] * 1.25)",
+                "name": "Total Comp Estimate",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.0f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0021",
+                "formula": "Avg(DateDiff(\"year\", [Hire Date], Today()))",
+                "name": "Avg Years To Today",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.1f"
+                }
+              },
+              {
+                "id": "id0022",
+                "formula": "([Active Headcount]) / ([Headcount])",
+                "name": "Pct Active",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.1%"
+                }
+              },
+              {
+                "id": "id0023",
+                "formula": "If([Pct Active] >= 0.9, \"Healthy\", If([Pct Active] >= 0.7, \"Watch\", \"At Risk\"))",
+                "name": "Status Label"
+              }
+            ]
+          },
+          {
+            "id": "id0024",
+            "kind": "table",
+            "name": "ABSENCE_RECORDS",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "CSA",
+                "TJ",
+                "ABSENCE_RECORDS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0025/ABSENCE_ID",
+                "formula": "[ABSENCE_RECORDS/Absence Id]"
+              },
+              {
+                "id": "inode-NORM0026/EMPLOYEE_ID",
+                "formula": "[ABSENCE_RECORDS/Employee Id]"
+              },
+              {
+                "id": "inode-NORM0027/DATE",
+                "formula": "[ABSENCE_RECORDS/Date]"
+              },
+              {
+                "id": "inode-NORM0028/ABSENCE_TYPE",
+                "formula": "[ABSENCE_RECORDS/Absence Type]"
+              },
+              {
+                "id": "inode-NORM0029/HOURS",
+                "formula": "[ABSENCE_RECORDS/Hours]"
+              },
+              {
+                "id": "inode-NORM0030/APPROVED",
+                "formula": "[ABSENCE_RECORDS/Approved]"
+              },
+              {
+                "id": "inode-NORM0031/DEPARTMENT",
+                "formula": "[ABSENCE_RECORDS/Department]"
+              },
+              {
+                "id": "id0032",
+                "formula": "[Department]",
+                "name": "Employee Department"
+              }
+            ],
+            "order": [
+              "inode-NORM0025/ABSENCE_ID",
+              "inode-NORM0026/EMPLOYEE_ID",
+              "inode-NORM0027/DATE",
+              "inode-NORM0028/ABSENCE_TYPE",
+              "inode-NORM0029/HOURS",
+              "inode-NORM0030/APPROVED",
+              "inode-NORM0031/DEPARTMENT",
+              "id0032"
+            ],
+            "metrics": [
+              {
+                "id": "id0033",
+                "formula": "Sum([Hours])",
+                "name": "Total Absence Hours",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.1f"
+                }
+              },
+              {
+                "id": "id0034",
+                "formula": "Count()",
+                "name": "Absence Records",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.0f"
+                }
+              },
+              {
+                "id": "id0035",
+                "formula": "SumIf([Hours], [Approved] = True)",
+                "name": "Approved Absence Hours",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.1f"
+                }
+              },
+              {
+                "id": "id0036",
+                "formula": "Avg([Hours])",
+                "name": "Avg Absence Hours",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.1f"
+                }
+              }
+            ],
+            "relationships": [
+              {
+                "id": "id0037",
+                "targetElementId": "id0002",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0026/EMPLOYEE_ID",
+                    "targetColumnId": "inode-NORM0003/EMPLOYEE_ID"
+                  }
+                ],
+                "name": "EMPLOYEES"
+              }
+            ]
+          },
+          {
+            "id": "id0038",
+            "kind": "table",
+            "name": "SAFETY_INCIDENTS",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "CSA",
+                "TJ",
+                "SAFETY_INCIDENTS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0039/INCIDENT_ID",
+                "formula": "[SAFETY_INCIDENTS/Incident Id]"
+              },
+              {
+                "id": "inode-NORM0040/EMPLOYEE_ID",
+                "formula": "[SAFETY_INCIDENTS/Employee Id]"
+              },
+              {
+                "id": "inode-NORM0041/DATE",
+                "formula": "[SAFETY_INCIDENTS/Date]"
+              },
+              {
+                "id": "inode-NORM0042/SEVERITY",
+                "formula": "[SAFETY_INCIDENTS/Severity]"
+              },
+              {
+                "id": "inode-NORM0043/INCIDENT_TYPE",
+                "formula": "[SAFETY_INCIDENTS/Incident Type]"
+              }
+            ],
+            "order": [
+              "inode-NORM0039/INCIDENT_ID",
+              "inode-NORM0040/EMPLOYEE_ID",
+              "inode-NORM0041/DATE",
+              "inode-NORM0042/SEVERITY",
+              "inode-NORM0043/INCIDENT_TYPE"
+            ],
+            "metrics": [
+              {
+                "id": "id0044",
+                "formula": "CountDistinct([Incident Id])",
+                "name": "Incident Count",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.0f"
+                }
+              },
+              {
+                "id": "id0045",
+                "formula": "Max(If([Severity] = \"High\", 1, 0))",
+                "name": "Max Severity Rows",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.0f"
+                }
+              }
+            ],
+            "relationships": [
+              {
+                "id": "id0046",
+                "targetElementId": "id0002",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0040/EMPLOYEE_ID",
+                    "targetColumnId": "inode-NORM0003/EMPLOYEE_ID"
+                  }
+                ],
+                "name": "EMPLOYEES"
+              }
+            ]
+          },
+          {
+            "id": "id0047",
+            "kind": "table",
+            "name": "ABSENCE_RECORDS View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0024"
+            },
+            "columns": [
+              {
+                "id": "id0048",
+                "formula": "[ABSENCE_RECORDS/Absence Id]"
+              },
+              {
+                "id": "id0049",
+                "formula": "[ABSENCE_RECORDS/Employee Id]"
+              },
+              {
+                "id": "id0050",
+                "formula": "[ABSENCE_RECORDS/Date]"
+              },
+              {
+                "id": "id0051",
+                "formula": "[ABSENCE_RECORDS/Absence Type]"
+              },
+              {
+                "id": "id0052",
+                "formula": "[ABSENCE_RECORDS/Hours]"
+              },
+              {
+                "id": "id0053",
+                "formula": "[ABSENCE_RECORDS/Approved]"
+              },
+              {
+                "id": "id0054",
+                "formula": "[ABSENCE_RECORDS/Department]"
+              },
+              {
+                "id": "id0055",
+                "formula": "[ABSENCE_RECORDS/EMPLOYEES/First Name]"
+              },
+              {
+                "id": "id0056",
+                "formula": "[ABSENCE_RECORDS/EMPLOYEES/Last Name]"
+              },
+              {
+                "id": "id0057",
+                "formula": "[ABSENCE_RECORDS/EMPLOYEES/Department]"
+              },
+              {
+                "id": "id0058",
+                "formula": "[ABSENCE_RECORDS/EMPLOYEES/Role]"
+              },
+              {
+                "id": "id0059",
+                "formula": "[ABSENCE_RECORDS/EMPLOYEES/Location]"
+              },
+              {
+                "id": "id0060",
+                "formula": "[ABSENCE_RECORDS/EMPLOYEES/Hire Date]"
+              },
+              {
+                "id": "id0061",
+                "formula": "[ABSENCE_RECORDS/EMPLOYEES/Status]"
+              },
+              {
+                "id": "id0062",
+                "formula": "[ABSENCE_RECORDS/EMPLOYEES/Annual Salary]"
+              },
+              {
+                "id": "id0063",
+                "formula": "[ABSENCE_RECORDS/EMPLOYEES/Employment Type]"
+              },
+              {
+                "id": "id0064",
+                "formula": "LOOKUPVALUE([ABSENCE_RECORDS/EMPLOYEES/Role], [ABSENCE_RECORDS/EMPLOYEES/Employee Id], [ABSENCE_RECORDS/EMPLOYEES/Employee Id])",
+                "name": "Manager Lookup"
+              }
+            ],
+            "order": [
+              "id0048",
+              "id0049",
+              "id0050",
+              "id0051",
+              "id0052",
+              "id0053",
+              "id0054",
+              "id0055",
+              "id0056",
+              "id0057",
+              "id0058",
+              "id0059",
+              "id0060",
+              "id0061",
+              "id0062",
+              "id0063",
+              "id0064"
+            ]
+          },
+          {
+            "id": "id0065",
+            "kind": "table",
+            "name": "SAFETY_INCIDENTS View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0038"
+            },
+            "columns": [
+              {
+                "id": "id0066",
+                "formula": "[SAFETY_INCIDENTS/Incident Id]"
+              },
+              {
+                "id": "id0067",
+                "formula": "[SAFETY_INCIDENTS/Employee Id]"
+              },
+              {
+                "id": "id0068",
+                "formula": "[SAFETY_INCIDENTS/Date]"
+              },
+              {
+                "id": "id0069",
+                "formula": "[SAFETY_INCIDENTS/Severity]"
+              },
+              {
+                "id": "id0070",
+                "formula": "[SAFETY_INCIDENTS/Incident Type]"
+              },
+              {
+                "id": "id0071",
+                "formula": "[SAFETY_INCIDENTS/EMPLOYEES/First Name]"
+              },
+              {
+                "id": "id0072",
+                "formula": "[SAFETY_INCIDENTS/EMPLOYEES/Last Name]"
+              },
+              {
+                "id": "id0073",
+                "formula": "[SAFETY_INCIDENTS/EMPLOYEES/Department]"
+              },
+              {
+                "id": "id0074",
+                "formula": "[SAFETY_INCIDENTS/EMPLOYEES/Role]"
+              },
+              {
+                "id": "id0075",
+                "formula": "[SAFETY_INCIDENTS/EMPLOYEES/Location]"
+              },
+              {
+                "id": "id0076",
+                "formula": "[SAFETY_INCIDENTS/EMPLOYEES/Hire Date]"
+              },
+              {
+                "id": "id0077",
+                "formula": "[SAFETY_INCIDENTS/EMPLOYEES/Status]"
+              },
+              {
+                "id": "id0078",
+                "formula": "[SAFETY_INCIDENTS/EMPLOYEES/Annual Salary]"
+              },
+              {
+                "id": "id0079",
+                "formula": "[SAFETY_INCIDENTS/EMPLOYEES/Employment Type]"
+              }
+            ],
+            "order": [
+              "id0066",
+              "id0067",
+              "id0068",
+              "id0069",
+              "id0070",
+              "id0071",
+              "id0072",
+              "id0073",
+              "id0074",
+              "id0075",
+              "id0076",
+              "id0077",
+              "id0078",
+              "id0079"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "stats": {
+    "tables": 3,
+    "elements": 5,
+    "columns": 56,
+    "metrics": 15,
+    "relationships": 2
+  },
+  "warnings": [
+    "⚠ Connection ID not set — update in JSON before saving to Sigma",
+    "ℹ \"Full Name\" → calculated column. Review: [First Name] & \" \" & [Last Name]",
+    "ℹ \"Salary Band\" → calculated column. Review: If([Annual Salary] >= 120000, \"Senior\", If([Annual Salary] >",
+    "ℹ Calculated column \"Employee Department\": uses RELATED() — column will be moved to a derived \"<Table> View\" element with cross-element refs rewritten to [SRC/REL/Col] form.",
+    "ℹ \"Employee Department\" → calculated column. Review: [Department]",
+    "⚠ Calculated column \"Manager Lookup\": references columns from multiple tables (EMPLOYEES, ABSENCE_RECORDS). Column context has been simplified — verify formula references the correct columns.",
+    "ℹ \"Manager Lookup\" → calculated column. Review: LOOKUPVALUE([Role], [Employee Id], [Employee Id])",
+    "ℹ 1 calc col(s) moved to derived \"ABSENCE_RECORDS View\" (cross-element refs)"
+  ]
+}

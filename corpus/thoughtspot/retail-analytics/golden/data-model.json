@@ -1,0 +1,956 @@
+{
+  "sigmaDataModel": {
+    "name": "Retail Analytics",
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "id0001",
+        "name": "Page 1",
+        "elements": [
+          {
+            "id": "id0002",
+            "kind": "table",
+            "name": "Order Fact",
+            "source": {
+              "kind": "warehouse-table",
+              "path": [
+                "ORDER_FACT"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0003/ORDER_ID",
+                "formula": "[ORDER_FACT/Order Id]"
+              },
+              {
+                "id": "inode-NORM0004/ORDER_CHANNEL",
+                "formula": "[ORDER_FACT/Order Channel]"
+              },
+              {
+                "id": "inode-NORM0005/ORDER_STATUS",
+                "formula": "[ORDER_FACT/Order Status]"
+              },
+              {
+                "id": "inode-NORM0006/SHIP_METHOD",
+                "formula": "[ORDER_FACT/Ship Method]"
+              },
+              {
+                "id": "inode-NORM0007/IS_FIRST_ORDER",
+                "formula": "[ORDER_FACT/Is First Order]"
+              },
+              {
+                "id": "inode-NORM0008/IS_RETURNED",
+                "formula": "[ORDER_FACT/Is Returned]"
+              },
+              {
+                "id": "inode-NORM0009/IS_CANCELLED",
+                "formula": "[ORDER_FACT/Is Cancelled]"
+              },
+              {
+                "id": "inode-NORM0010/CUSTOMER_KEY",
+                "formula": "[ORDER_FACT/Customer Key]"
+              },
+              {
+                "id": "inode-NORM0011/PRODUCT_KEY",
+                "formula": "[ORDER_FACT/Product Key]"
+              },
+              {
+                "id": "inode-NORM0012/ORDER_STORE_KEY",
+                "formula": "[ORDER_FACT/Order Store Key]"
+              },
+              {
+                "id": "inode-NORM0013/ORDER_DATE_KEY",
+                "formula": "[ORDER_FACT/Order Date Key]"
+              },
+              {
+                "id": "inode-NORM0014/PROMO_KEY",
+                "formula": "[ORDER_FACT/Promo Key]"
+              },
+              {
+                "id": "inode-NORM0015/GROSS_REVENUE",
+                "formula": "[ORDER_FACT/Gross Revenue]"
+              },
+              {
+                "id": "inode-NORM0016/NET_REVENUE",
+                "formula": "[ORDER_FACT/Net Revenue]"
+              },
+              {
+                "id": "inode-NORM0017/GROSS_PROFIT",
+                "formula": "[ORDER_FACT/Gross Profit]"
+              },
+              {
+                "id": "inode-NORM0018/DISCOUNT_AMOUNT",
+                "formula": "[ORDER_FACT/Discount Amount]"
+              },
+              {
+                "id": "inode-NORM0019/QUANTITY_ORDERED",
+                "formula": "[ORDER_FACT/Quantity Ordered]"
+              },
+              {
+                "id": "inode-NORM0020/QUANTITY_RETURNED",
+                "formula": "[ORDER_FACT/Quantity Returned]"
+              },
+              {
+                "id": "inode-NORM0021/DAYS_TO_SHIP",
+                "formula": "[ORDER_FACT/Days to Ship]"
+              },
+              {
+                "id": "id0022",
+                "name": "Gross Margin Pct",
+                "formula": "If( [Gross Revenue] > 0 , [Gross Profit] / [Gross Revenue], 0)",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.2f",
+                  "suffix": "%"
+                }
+              },
+              {
+                "id": "id0023",
+                "name": "Channel Group",
+                "formula": "If( In([Order Channel], \"EMAIL\", \"SMS\") , \"Digital Direct\", If( In([Order Channel], \"STORE\") , \"In-Store\", \"Other\"))"
+              },
+              {
+                "id": "id0024",
+                "name": "Avg Order Value",
+                "formula": "If(IsNull([Quantity Ordered]) or [Quantity Ordered] = 0, null, [Gross Revenue] / [Quantity Ordered])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0025",
+                "name": "Gross Revenue",
+                "formula": "Sum([Gross Revenue])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0026",
+                "name": "Net Revenue",
+                "formula": "Sum([Net Revenue])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0027",
+                "name": "Gross Profit",
+                "formula": "Sum([Gross Profit])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0028",
+                "name": "Discount Amount",
+                "formula": "Sum([Discount Amount])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0029",
+                "name": "Quantity Ordered",
+                "formula": "Sum([Quantity Ordered])"
+              },
+              {
+                "id": "id0030",
+                "name": "Quantity Returned",
+                "formula": "Sum([Quantity Returned])"
+              },
+              {
+                "id": "id0031",
+                "name": "Days To Ship",
+                "formula": "Avg([Days to Ship])"
+              },
+              {
+                "id": "id0032",
+                "name": "Order Count",
+                "formula": "Count([Order Id])",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.0f"
+                }
+              }
+            ],
+            "order": [
+              "inode-NORM0003/ORDER_ID",
+              "inode-NORM0004/ORDER_CHANNEL",
+              "inode-NORM0005/ORDER_STATUS",
+              "inode-NORM0006/SHIP_METHOD",
+              "inode-NORM0007/IS_FIRST_ORDER",
+              "inode-NORM0008/IS_RETURNED",
+              "inode-NORM0009/IS_CANCELLED",
+              "inode-NORM0010/CUSTOMER_KEY",
+              "inode-NORM0011/PRODUCT_KEY",
+              "inode-NORM0012/ORDER_STORE_KEY",
+              "inode-NORM0013/ORDER_DATE_KEY",
+              "inode-NORM0014/PROMO_KEY",
+              "inode-NORM0015/GROSS_REVENUE",
+              "inode-NORM0016/NET_REVENUE",
+              "inode-NORM0017/GROSS_PROFIT",
+              "inode-NORM0018/DISCOUNT_AMOUNT",
+              "inode-NORM0019/QUANTITY_ORDERED",
+              "inode-NORM0020/QUANTITY_RETURNED",
+              "inode-NORM0021/DAYS_TO_SHIP"
+            ],
+            "relationships": [
+              {
+                "id": "id0033",
+                "targetElementId": "id0034",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0010/CUSTOMER_KEY",
+                    "targetColumnId": "inode-NORM0035/CUSTOMER_KEY"
+                  }
+                ],
+                "name": "CUSTOMER_DIM",
+                "relationshipType": "N:1"
+              },
+              {
+                "id": "id0036",
+                "targetElementId": "id0037",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0013/ORDER_DATE_KEY",
+                    "targetColumnId": "inode-NORM0038/DATE_KEY"
+                  }
+                ],
+                "name": "DATE_DIM",
+                "relationshipType": "N:1"
+              },
+              {
+                "id": "id0039",
+                "targetElementId": "id0040",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0011/PRODUCT_KEY",
+                    "targetColumnId": "inode-NORM0041/PRODUCT_KEY"
+                  }
+                ],
+                "name": "PRODUCT_DIM",
+                "relationshipType": "N:1"
+              },
+              {
+                "id": "id0042",
+                "targetElementId": "id0043",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0014/PROMO_KEY",
+                    "targetColumnId": "inode-NORM0044/PROMO_KEY"
+                  }
+                ],
+                "name": "PROMO_DIM",
+                "relationshipType": "N:1"
+              },
+              {
+                "id": "id0045",
+                "targetElementId": "id0046",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0012/ORDER_STORE_KEY",
+                    "targetColumnId": "inode-NORM0047/STORE_KEY"
+                  }
+                ],
+                "name": "STORE_DIM",
+                "relationshipType": "N:1"
+              }
+            ]
+          },
+          {
+            "id": "id0034",
+            "kind": "table",
+            "name": "Customer Dim",
+            "source": {
+              "kind": "warehouse-table",
+              "path": [
+                "CUSTOMER_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0035/CUSTOMER_KEY",
+                "formula": "[CUSTOMER_DIM/Customer Key]"
+              },
+              {
+                "id": "inode-NORM0048/CUSTOMER_ID",
+                "formula": "[CUSTOMER_DIM/Customer Id]"
+              },
+              {
+                "id": "inode-NORM0049/FIRST_NAME",
+                "formula": "[CUSTOMER_DIM/First Name]"
+              },
+              {
+                "id": "inode-NORM0050/LAST_NAME",
+                "formula": "[CUSTOMER_DIM/Last Name]"
+              },
+              {
+                "id": "inode-NORM0051/CUSTOMER_SEGMENT",
+                "formula": "[CUSTOMER_DIM/Customer Segment]"
+              },
+              {
+                "id": "inode-NORM0052/LOYALTY_TIER",
+                "formula": "[CUSTOMER_DIM/Loyalty Tier]"
+              },
+              {
+                "id": "inode-NORM0053/REGION",
+                "formula": "[CUSTOMER_DIM/Region]"
+              },
+              {
+                "id": "inode-NORM0054/STATE",
+                "formula": "[CUSTOMER_DIM/State]"
+              },
+              {
+                "id": "inode-NORM0055/ACQUISITION_CHANNEL",
+                "formula": "[CUSTOMER_DIM/Acquisition Channel]"
+              },
+              {
+                "id": "inode-NORM0056/IS_ACTIVE",
+                "formula": "[CUSTOMER_DIM/Is Active]"
+              },
+              {
+                "id": "inode-NORM0057/LIFETIME_REVENUE",
+                "formula": "[CUSTOMER_DIM/Lifetime Revenue]"
+              },
+              {
+                "id": "inode-NORM0058/LIFETIME_ORDER_COUNT",
+                "formula": "[CUSTOMER_DIM/Lifetime Order Count]"
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0059",
+                "name": "Lifetime Revenue",
+                "formula": "Sum([Lifetime Revenue])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0060",
+                "name": "Lifetime Order Count",
+                "formula": "Sum([Lifetime Order Count])"
+              }
+            ],
+            "order": [
+              "inode-NORM0035/CUSTOMER_KEY",
+              "inode-NORM0048/CUSTOMER_ID",
+              "inode-NORM0049/FIRST_NAME",
+              "inode-NORM0050/LAST_NAME",
+              "inode-NORM0051/CUSTOMER_SEGMENT",
+              "inode-NORM0052/LOYALTY_TIER",
+              "inode-NORM0053/REGION",
+              "inode-NORM0054/STATE",
+              "inode-NORM0055/ACQUISITION_CHANNEL",
+              "inode-NORM0056/IS_ACTIVE",
+              "inode-NORM0057/LIFETIME_REVENUE",
+              "inode-NORM0058/LIFETIME_ORDER_COUNT"
+            ],
+            "relationships": []
+          },
+          {
+            "id": "id0040",
+            "kind": "table",
+            "name": "Product Dim",
+            "source": {
+              "kind": "warehouse-table",
+              "path": [
+                "PRODUCT_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0041/PRODUCT_KEY",
+                "formula": "[PRODUCT_DIM/Product Key]"
+              },
+              {
+                "id": "inode-NORM0061/PRODUCT_ID",
+                "formula": "[PRODUCT_DIM/Product Id]"
+              },
+              {
+                "id": "inode-NORM0062/PRODUCT_NAME",
+                "formula": "[PRODUCT_DIM/Product Name]"
+              },
+              {
+                "id": "inode-NORM0063/CATEGORY",
+                "formula": "[PRODUCT_DIM/Category]"
+              },
+              {
+                "id": "inode-NORM0064/SUBCATEGORY",
+                "formula": "[PRODUCT_DIM/Subcategory]"
+              },
+              {
+                "id": "inode-NORM0065/BRAND",
+                "formula": "[PRODUCT_DIM/Brand]"
+              },
+              {
+                "id": "inode-NORM0066/UNIT_COST",
+                "formula": "[PRODUCT_DIM/Unit Cost]"
+              },
+              {
+                "id": "inode-NORM0067/UNIT_PRICE",
+                "formula": "[PRODUCT_DIM/Unit Price]"
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0068",
+                "name": "Unit Cost",
+                "formula": "Avg([Unit Cost])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0069",
+                "name": "Unit Price",
+                "formula": "Avg([Unit Price])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              }
+            ],
+            "order": [
+              "inode-NORM0041/PRODUCT_KEY",
+              "inode-NORM0061/PRODUCT_ID",
+              "inode-NORM0062/PRODUCT_NAME",
+              "inode-NORM0063/CATEGORY",
+              "inode-NORM0064/SUBCATEGORY",
+              "inode-NORM0065/BRAND",
+              "inode-NORM0066/UNIT_COST",
+              "inode-NORM0067/UNIT_PRICE"
+            ],
+            "relationships": []
+          },
+          {
+            "id": "id0046",
+            "kind": "table",
+            "name": "Store Dim",
+            "source": {
+              "kind": "warehouse-table",
+              "path": [
+                "STORE_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0047/STORE_KEY",
+                "formula": "[STORE_DIM/Store Key]"
+              },
+              {
+                "id": "inode-NORM0070/STORE_ID",
+                "formula": "[STORE_DIM/Store Id]"
+              },
+              {
+                "id": "inode-NORM0071/STORE_NAME",
+                "formula": "[STORE_DIM/Store Name]"
+              },
+              {
+                "id": "inode-NORM0072/STORE_TYPE",
+                "formula": "[STORE_DIM/Store Type]"
+              },
+              {
+                "id": "inode-NORM0073/CITY",
+                "formula": "[STORE_DIM/City]"
+              },
+              {
+                "id": "inode-NORM0074/STATE",
+                "formula": "[STORE_DIM/State]"
+              },
+              {
+                "id": "inode-NORM0075/REGION",
+                "formula": "[STORE_DIM/Region]"
+              },
+              {
+                "id": "inode-NORM0076/DISTRICT",
+                "formula": "[STORE_DIM/District]"
+              },
+              {
+                "id": "inode-NORM0077/SQUARE_FOOTAGE",
+                "formula": "[STORE_DIM/Square Footage]"
+              },
+              {
+                "id": "inode-NORM0078/ANNUAL_LEASE_COST",
+                "formula": "[STORE_DIM/Annual Lease Cost]"
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0079",
+                "name": "Square Footage",
+                "formula": "Avg([Square Footage])"
+              },
+              {
+                "id": "id0080",
+                "name": "Annual Lease Cost",
+                "formula": "Sum([Annual Lease Cost])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              }
+            ],
+            "order": [
+              "inode-NORM0047/STORE_KEY",
+              "inode-NORM0070/STORE_ID",
+              "inode-NORM0071/STORE_NAME",
+              "inode-NORM0072/STORE_TYPE",
+              "inode-NORM0073/CITY",
+              "inode-NORM0074/STATE",
+              "inode-NORM0075/REGION",
+              "inode-NORM0076/DISTRICT",
+              "inode-NORM0077/SQUARE_FOOTAGE",
+              "inode-NORM0078/ANNUAL_LEASE_COST"
+            ],
+            "relationships": []
+          },
+          {
+            "id": "id0037",
+            "kind": "table",
+            "name": "Date Dim",
+            "source": {
+              "kind": "warehouse-table",
+              "path": [
+                "DATE_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0038/DATE_KEY",
+                "formula": "[DATE_DIM/Date Key]"
+              },
+              {
+                "id": "inode-NORM0081/FULL_DATE",
+                "formula": "[DATE_DIM/Full Date]"
+              },
+              {
+                "id": "inode-NORM0082/YEAR",
+                "formula": "[DATE_DIM/Year]"
+              },
+              {
+                "id": "inode-NORM0083/QUARTER",
+                "formula": "[DATE_DIM/Quarter]"
+              },
+              {
+                "id": "inode-NORM0084/MONTH_NUMBER",
+                "formula": "[DATE_DIM/Month Number]"
+              },
+              {
+                "id": "inode-NORM0085/MONTH_NAME",
+                "formula": "[DATE_DIM/Month Name]"
+              },
+              {
+                "id": "inode-NORM0086/DAY_OF_WEEK",
+                "formula": "[DATE_DIM/Day of Week]"
+              }
+            ],
+            "metrics": [],
+            "order": [
+              "inode-NORM0038/DATE_KEY",
+              "inode-NORM0081/FULL_DATE",
+              "inode-NORM0082/YEAR",
+              "inode-NORM0083/QUARTER",
+              "inode-NORM0084/MONTH_NUMBER",
+              "inode-NORM0085/MONTH_NAME",
+              "inode-NORM0086/DAY_OF_WEEK"
+            ],
+            "relationships": []
+          },
+          {
+            "id": "id0043",
+            "kind": "table",
+            "name": "Promo Dim",
+            "source": {
+              "kind": "warehouse-table",
+              "path": [
+                "PROMO_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0044/PROMO_KEY",
+                "formula": "[PROMO_DIM/Promo Key]"
+              },
+              {
+                "id": "inode-NORM0087/PROMO_ID",
+                "formula": "[PROMO_DIM/Promo Id]"
+              },
+              {
+                "id": "inode-NORM0088/PROMO_NAME",
+                "formula": "[PROMO_DIM/Promo Name]"
+              },
+              {
+                "id": "inode-NORM0089/PROMO_TYPE",
+                "formula": "[PROMO_DIM/Promo Type]"
+              },
+              {
+                "id": "inode-NORM0090/CHANNEL",
+                "formula": "[PROMO_DIM/Channel]"
+              },
+              {
+                "id": "inode-NORM0091/TARGET_SEGMENT",
+                "formula": "[PROMO_DIM/Target Segment]"
+              },
+              {
+                "id": "inode-NORM0092/DISCOUNT_PCT",
+                "formula": "[PROMO_DIM/Discount Pct]"
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0093",
+                "name": "Discount Pct",
+                "formula": "Avg([Discount Pct])",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.2f",
+                  "suffix": "%"
+                }
+              }
+            ],
+            "order": [
+              "inode-NORM0044/PROMO_KEY",
+              "inode-NORM0087/PROMO_ID",
+              "inode-NORM0088/PROMO_NAME",
+              "inode-NORM0089/PROMO_TYPE",
+              "inode-NORM0090/CHANNEL",
+              "inode-NORM0091/TARGET_SEGMENT",
+              "inode-NORM0092/DISCOUNT_PCT"
+            ],
+            "relationships": []
+          },
+          {
+            "id": "id0094",
+            "kind": "table",
+            "name": "Order Fact View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0002"
+            },
+            "columns": [
+              {
+                "id": "id0095",
+                "formula": "[Order Fact/Order Id]"
+              },
+              {
+                "id": "id0096",
+                "formula": "[Order Fact/Order Channel]"
+              },
+              {
+                "id": "id0097",
+                "formula": "[Order Fact/Order Status]"
+              },
+              {
+                "id": "id0098",
+                "formula": "[Order Fact/Ship Method]"
+              },
+              {
+                "id": "id0099",
+                "formula": "[Order Fact/Is First Order]"
+              },
+              {
+                "id": "id0100",
+                "formula": "[Order Fact/Is Returned]"
+              },
+              {
+                "id": "id0101",
+                "formula": "[Order Fact/Is Cancelled]"
+              },
+              {
+                "id": "id0102",
+                "formula": "[Order Fact/Customer Key]"
+              },
+              {
+                "id": "id0103",
+                "formula": "[Order Fact/Product Key]"
+              },
+              {
+                "id": "id0104",
+                "formula": "[Order Fact/Order Store Key]"
+              },
+              {
+                "id": "id0105",
+                "formula": "[Order Fact/Order Date Key]"
+              },
+              {
+                "id": "id0106",
+                "formula": "[Order Fact/Promo Key]"
+              },
+              {
+                "id": "id0107",
+                "formula": "[Order Fact/Gross Revenue]"
+              },
+              {
+                "id": "id0108",
+                "formula": "[Order Fact/Net Revenue]"
+              },
+              {
+                "id": "id0109",
+                "formula": "[Order Fact/Gross Profit]"
+              },
+              {
+                "id": "id0110",
+                "formula": "[Order Fact/Discount Amount]"
+              },
+              {
+                "id": "id0111",
+                "formula": "[Order Fact/Quantity Ordered]"
+              },
+              {
+                "id": "id0112",
+                "formula": "[Order Fact/Quantity Returned]"
+              },
+              {
+                "id": "id0113",
+                "formula": "[Order Fact/Days to Ship]"
+              },
+              {
+                "id": "id0114",
+                "formula": "[Order Fact/CUSTOMER_DIM/Customer Id]"
+              },
+              {
+                "id": "id0115",
+                "formula": "[Order Fact/CUSTOMER_DIM/First Name]"
+              },
+              {
+                "id": "id0116",
+                "formula": "[Order Fact/CUSTOMER_DIM/Last Name]"
+              },
+              {
+                "id": "id0117",
+                "formula": "[Order Fact/CUSTOMER_DIM/Customer Segment]"
+              },
+              {
+                "id": "id0118",
+                "formula": "[Order Fact/CUSTOMER_DIM/Loyalty Tier]"
+              },
+              {
+                "id": "id0119",
+                "formula": "[Order Fact/CUSTOMER_DIM/Region]"
+              },
+              {
+                "id": "id0120",
+                "formula": "[Order Fact/CUSTOMER_DIM/State]"
+              },
+              {
+                "id": "id0121",
+                "formula": "[Order Fact/CUSTOMER_DIM/Acquisition Channel]"
+              },
+              {
+                "id": "id0122",
+                "formula": "[Order Fact/CUSTOMER_DIM/Is Active]"
+              },
+              {
+                "id": "id0123",
+                "formula": "[Order Fact/CUSTOMER_DIM/Lifetime Revenue]"
+              },
+              {
+                "id": "id0124",
+                "formula": "[Order Fact/CUSTOMER_DIM/Lifetime Order Count]"
+              },
+              {
+                "id": "id0125",
+                "formula": "[Order Fact/DATE_DIM/Full Date]"
+              },
+              {
+                "id": "id0126",
+                "formula": "[Order Fact/DATE_DIM/Year]"
+              },
+              {
+                "id": "id0127",
+                "formula": "[Order Fact/DATE_DIM/Quarter]"
+              },
+              {
+                "id": "id0128",
+                "formula": "[Order Fact/DATE_DIM/Month Number]"
+              },
+              {
+                "id": "id0129",
+                "formula": "[Order Fact/DATE_DIM/Month Name]"
+              },
+              {
+                "id": "id0130",
+                "formula": "[Order Fact/DATE_DIM/Day of Week]"
+              },
+              {
+                "id": "id0131",
+                "formula": "[Order Fact/PRODUCT_DIM/Product Id]"
+              },
+              {
+                "id": "id0132",
+                "formula": "[Order Fact/PRODUCT_DIM/Product Name]"
+              },
+              {
+                "id": "id0133",
+                "formula": "[Order Fact/PRODUCT_DIM/Category]"
+              },
+              {
+                "id": "id0134",
+                "formula": "[Order Fact/PRODUCT_DIM/Subcategory]"
+              },
+              {
+                "id": "id0135",
+                "formula": "[Order Fact/PRODUCT_DIM/Brand]"
+              },
+              {
+                "id": "id0136",
+                "formula": "[Order Fact/PRODUCT_DIM/Unit Cost]"
+              },
+              {
+                "id": "id0137",
+                "formula": "[Order Fact/PRODUCT_DIM/Unit Price]"
+              },
+              {
+                "id": "id0138",
+                "formula": "[Order Fact/PROMO_DIM/Promo Id]"
+              },
+              {
+                "id": "id0139",
+                "formula": "[Order Fact/PROMO_DIM/Promo Name]"
+              },
+              {
+                "id": "id0140",
+                "formula": "[Order Fact/PROMO_DIM/Promo Type]"
+              },
+              {
+                "id": "id0141",
+                "formula": "[Order Fact/PROMO_DIM/Channel]"
+              },
+              {
+                "id": "id0142",
+                "formula": "[Order Fact/PROMO_DIM/Target Segment]"
+              },
+              {
+                "id": "id0143",
+                "formula": "[Order Fact/PROMO_DIM/Discount Pct]"
+              },
+              {
+                "id": "id0144",
+                "formula": "[Order Fact/STORE_DIM/Store Id]"
+              },
+              {
+                "id": "id0145",
+                "formula": "[Order Fact/STORE_DIM/Store Name]"
+              },
+              {
+                "id": "id0146",
+                "formula": "[Order Fact/STORE_DIM/Store Type]"
+              },
+              {
+                "id": "id0147",
+                "formula": "[Order Fact/STORE_DIM/City]"
+              },
+              {
+                "id": "id0148",
+                "formula": "[Order Fact/STORE_DIM/State]"
+              },
+              {
+                "id": "id0149",
+                "formula": "[Order Fact/STORE_DIM/Region]"
+              },
+              {
+                "id": "id0150",
+                "formula": "[Order Fact/STORE_DIM/District]"
+              },
+              {
+                "id": "id0151",
+                "formula": "[Order Fact/STORE_DIM/Square Footage]"
+              },
+              {
+                "id": "id0152",
+                "formula": "[Order Fact/STORE_DIM/Annual Lease Cost]"
+              }
+            ],
+            "order": [
+              "id0095",
+              "id0096",
+              "id0097",
+              "id0098",
+              "id0099",
+              "id0100",
+              "id0101",
+              "id0102",
+              "id0103",
+              "id0104",
+              "id0105",
+              "id0106",
+              "id0107",
+              "id0108",
+              "id0109",
+              "id0110",
+              "id0111",
+              "id0112",
+              "id0113",
+              "id0114",
+              "id0115",
+              "id0116",
+              "id0117",
+              "id0118",
+              "id0119",
+              "id0120",
+              "id0121",
+              "id0122",
+              "id0123",
+              "id0124",
+              "id0125",
+              "id0126",
+              "id0127",
+              "id0128",
+              "id0129",
+              "id0130",
+              "id0131",
+              "id0132",
+              "id0133",
+              "id0134",
+              "id0135",
+              "id0136",
+              "id0137",
+              "id0138",
+              "id0139",
+              "id0140",
+              "id0141",
+              "id0142",
+              "id0143",
+              "id0144",
+              "id0145",
+              "id0146",
+              "id0147",
+              "id0148",
+              "id0149",
+              "id0150",
+              "id0151",
+              "id0152"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "stats": {
+    "elements": 7,
+    "columns": 124,
+    "metrics": 15,
+    "relationships": 5
+  },
+  "warnings": []
+}

@@ -1,0 +1,1510 @@
+{
+  "sigmaDataModel": {
+    "name": "Ec9a73e3-a89b-4b20-a681-5064b86855c7",
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "id0001",
+        "name": "Page 1",
+        "elements": [
+          {
+            "id": "id0002",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "ORDERFACT"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0003",
+                "formula": "[ORDERFACT/Order Id]"
+              },
+              {
+                "id": "id0004",
+                "formula": "[ORDERFACT/Order Line]"
+              },
+              {
+                "id": "id0005",
+                "formula": "[ORDERFACT/Customer Key]"
+              },
+              {
+                "id": "id0006",
+                "formula": "[ORDERFACT/Product Key]"
+              },
+              {
+                "id": "id0007",
+                "formula": "[ORDERFACT/Promo Key]"
+              },
+              {
+                "id": "id0008",
+                "formula": "[ORDERFACT/Store Key]"
+              },
+              {
+                "id": "id0009",
+                "formula": "[ORDERFACT/Date Key]"
+              },
+              {
+                "id": "id0010",
+                "formula": "[ORDERFACT/Order Channel]"
+              },
+              {
+                "id": "id0011",
+                "formula": "[ORDERFACT/Ship Method]"
+              },
+              {
+                "id": "id0012",
+                "formula": "[ORDERFACT/Order Status]"
+              },
+              {
+                "id": "id0013",
+                "formula": "[ORDERFACT/Quantity Ordered]"
+              },
+              {
+                "id": "id0014",
+                "formula": "[ORDERFACT/Quantity Returned]"
+              },
+              {
+                "id": "id0015",
+                "formula": "[ORDERFACT/Unit Price]"
+              },
+              {
+                "id": "id0016",
+                "formula": "[ORDERFACT/Unit Cost]"
+              },
+              {
+                "id": "id0017",
+                "formula": "[ORDERFACT/Discount Amount]"
+              },
+              {
+                "id": "id0018",
+                "formula": "[ORDERFACT/Shipping Amount]"
+              },
+              {
+                "id": "id0019",
+                "formula": "[ORDERFACT/Tax Amount]"
+              },
+              {
+                "id": "id0020",
+                "formula": "[ORDERFACT/Gross Revenue]"
+              },
+              {
+                "id": "id0021",
+                "formula": "[ORDERFACT/Net Revenue]"
+              },
+              {
+                "id": "id0022",
+                "formula": "[ORDERFACT/Gross Profit]"
+              },
+              {
+                "id": "id0023",
+                "formula": "[ORDERFACT/Net Profit]"
+              },
+              {
+                "id": "id0024",
+                "formula": "[ORDERFACT/Is First Order]"
+              },
+              {
+                "id": "id0025",
+                "formula": "[ORDERFACT/Is Returned]"
+              },
+              {
+                "id": "id0026",
+                "formula": "[ORDERFACT/Is Cancelled]"
+              },
+              {
+                "id": "id0027",
+                "formula": "[ORDERFACT/Days to Ship]"
+              }
+            ],
+            "order": [
+              "id0003",
+              "id0004",
+              "id0005",
+              "id0006",
+              "id0007",
+              "id0008",
+              "id0009",
+              "id0010",
+              "id0011",
+              "id0012",
+              "id0013",
+              "id0014",
+              "id0015",
+              "id0016",
+              "id0017",
+              "id0018",
+              "id0019",
+              "id0020",
+              "id0021",
+              "id0022",
+              "id0023",
+              "id0024",
+              "id0025",
+              "id0026",
+              "id0027"
+            ],
+            "metrics": [
+              {
+                "id": "id0028",
+                "formula": "Avg([Days to Ship])",
+                "name": "Avg Days to Ship"
+              },
+              {
+                "id": "id0029",
+                "formula": "Sum([Net Revenue])/Count(DISTINCT [Order Id])",
+                "name": "Avg Order Value",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0030",
+                "formula": "Sum([Discount Amount])",
+                "name": "Discount Amount",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0031",
+                "formula": "Sum([Gross Profit])",
+                "name": "Gross Profit",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0032",
+                "formula": "Sum([Gross Revenue])",
+                "name": "Gross Revenue",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0033",
+                "formula": "Sum(If( [Is Holiday] =1, [Net Revenue] , 0))",
+                "name": "Holiday Revenue",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0034",
+                "formula": "Sum([Net Profit])/Sum([Net Revenue])",
+                "name": "Net Margin %",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.2%"
+                }
+              },
+              {
+                "id": "id0035",
+                "formula": "Sum([Net Profit])",
+                "name": "Net Profit",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0036",
+                "formula": "Sum([Net Revenue])",
+                "name": "Net Revenue",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0037",
+                "formula": "Count(DISTINCT [Order Id])",
+                "name": "Order Count",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.0f"
+                }
+              },
+              {
+                "id": "id0038",
+                "formula": "Sum([Quantity Returned])/Sum([Quantity Ordered])",
+                "name": "Return Rate %",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.2%"
+                }
+              },
+              {
+                "id": "id0039",
+                "formula": "Sum([Quantity Returned])",
+                "name": "Units Returned"
+              },
+              {
+                "id": "id0040",
+                "formula": "Sum([Quantity Ordered])",
+                "name": "Units Sold"
+              }
+            ]
+          },
+          {
+            "id": "id0041",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "CUSTOMER"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0042",
+                "formula": "[CUSTOMER/Customer Key]"
+              },
+              {
+                "id": "id0043",
+                "formula": "[CUSTOMER/Customer Id]"
+              },
+              {
+                "id": "id0044",
+                "formula": "[CUSTOMER/First Name]"
+              },
+              {
+                "id": "id0045",
+                "formula": "[CUSTOMER/Last Name]"
+              },
+              {
+                "id": "id0046",
+                "formula": "[CUSTOMER/Customer City]"
+              },
+              {
+                "id": "id0047",
+                "formula": "[CUSTOMER/Customer State]"
+              },
+              {
+                "id": "id0048",
+                "formula": "[CUSTOMER/Customer Region]"
+              },
+              {
+                "id": "id0049",
+                "formula": "[CUSTOMER/Customer Segment]"
+              },
+              {
+                "id": "id0050",
+                "formula": "[CUSTOMER/Loyalty Tier]"
+              },
+              {
+                "id": "id0051",
+                "formula": "[CUSTOMER/Acquisition Channel]"
+              },
+              {
+                "id": "id0052",
+                "formula": "[CUSTOMER/Lifetime Revenue]"
+              }
+            ],
+            "order": [
+              "id0042",
+              "id0043",
+              "id0044",
+              "id0045",
+              "id0046",
+              "id0047",
+              "id0048",
+              "id0049",
+              "id0050",
+              "id0051",
+              "id0052"
+            ],
+            "relationships": [
+              {
+                "id": "id0053",
+                "targetElementId": "id0002",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0042",
+                    "targetColumnId": "id0005"
+                  }
+                ],
+                "name": "ORDERFACT"
+              }
+            ]
+          },
+          {
+            "id": "id0054",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "PRODUCT"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0055",
+                "formula": "[PRODUCT/Product Key]"
+              },
+              {
+                "id": "id0056",
+                "formula": "[PRODUCT/Product Id]"
+              },
+              {
+                "id": "id0057",
+                "formula": "[PRODUCT/Product Name]"
+              },
+              {
+                "id": "id0058",
+                "formula": "[PRODUCT/Category]"
+              },
+              {
+                "id": "id0059",
+                "formula": "[PRODUCT/Subcategory]"
+              },
+              {
+                "id": "id0060",
+                "formula": "[PRODUCT/Brand]"
+              },
+              {
+                "id": "id0061",
+                "formula": "[PRODUCT/Is Private Label]"
+              },
+              {
+                "id": "id0062",
+                "formula": "[PRODUCT/Is Seasonal]"
+              }
+            ],
+            "order": [
+              "id0055",
+              "id0056",
+              "id0057",
+              "id0058",
+              "id0059",
+              "id0060",
+              "id0061",
+              "id0062"
+            ],
+            "relationships": [
+              {
+                "id": "id0063",
+                "targetElementId": "id0002",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0055",
+                    "targetColumnId": "id0006"
+                  }
+                ],
+                "name": "ORDERFACT"
+              }
+            ]
+          },
+          {
+            "id": "id0064",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "STORE"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0065",
+                "formula": "[STORE/Store Key]"
+              },
+              {
+                "id": "id0066",
+                "formula": "[STORE/Store Id]"
+              },
+              {
+                "id": "id0067",
+                "formula": "[STORE/Store Name]"
+              },
+              {
+                "id": "id0068",
+                "formula": "[STORE/Store Type]"
+              },
+              {
+                "id": "id0069",
+                "formula": "[STORE/Store City]"
+              },
+              {
+                "id": "id0070",
+                "formula": "[STORE/Store State]"
+              },
+              {
+                "id": "id0071",
+                "formula": "[STORE/Store Region]"
+              },
+              {
+                "id": "id0072",
+                "formula": "[STORE/District]"
+              },
+              {
+                "id": "id0073",
+                "formula": "[STORE/Manager Name]"
+              }
+            ],
+            "order": [
+              "id0065",
+              "id0066",
+              "id0067",
+              "id0068",
+              "id0069",
+              "id0070",
+              "id0071",
+              "id0072",
+              "id0073"
+            ],
+            "relationships": [
+              {
+                "id": "id0074",
+                "targetElementId": "id0002",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0065",
+                    "targetColumnId": "id0008"
+                  }
+                ],
+                "name": "ORDERFACT"
+              }
+            ]
+          },
+          {
+            "id": "id0075",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "CALENDAR"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0076",
+                "formula": "[CALENDAR/Date Key]"
+              },
+              {
+                "id": "id0077",
+                "formula": "[CALENDAR/Full Date]"
+              },
+              {
+                "id": "id0078",
+                "formula": "[CALENDAR/Day of Week]"
+              },
+              {
+                "id": "id0079",
+                "formula": "[CALENDAR/Month Number]"
+              },
+              {
+                "id": "id0080",
+                "formula": "[CALENDAR/Month Name]"
+              },
+              {
+                "id": "id0081",
+                "formula": "[CALENDAR/Quarter]"
+              },
+              {
+                "id": "id0082",
+                "formula": "[CALENDAR/Year]"
+              },
+              {
+                "id": "id0083",
+                "formula": "[CALENDAR/Is Weekend]"
+              },
+              {
+                "id": "id0084",
+                "formula": "[CALENDAR/Is Holiday]"
+              }
+            ],
+            "order": [
+              "id0076",
+              "id0077",
+              "id0078",
+              "id0079",
+              "id0080",
+              "id0081",
+              "id0082",
+              "id0083",
+              "id0084"
+            ],
+            "relationships": [
+              {
+                "id": "id0085",
+                "targetElementId": "id0002",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0076",
+                    "targetColumnId": "id0009"
+                  }
+                ],
+                "name": "ORDERFACT"
+              }
+            ]
+          },
+          {
+            "id": "id0086",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "PROMO"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0087",
+                "formula": "[PROMO/Promo Key]"
+              },
+              {
+                "id": "id0088",
+                "formula": "[PROMO/Promo Name]"
+              },
+              {
+                "id": "id0089",
+                "formula": "[PROMO/Promo Type]"
+              },
+              {
+                "id": "id0090",
+                "formula": "[PROMO/Promo Channel]"
+              },
+              {
+                "id": "id0091",
+                "formula": "[PROMO/Discount Pct]"
+              },
+              {
+                "id": "id0092",
+                "formula": "[PROMO/Target Segment]"
+              }
+            ],
+            "order": [
+              "id0087",
+              "id0088",
+              "id0089",
+              "id0090",
+              "id0091",
+              "id0092"
+            ],
+            "relationships": [
+              {
+                "id": "id0093",
+                "targetElementId": "id0002",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0087",
+                    "targetColumnId": "id0007"
+                  }
+                ],
+                "name": "ORDERFACT"
+              }
+            ]
+          },
+          {
+            "id": "id0094",
+            "kind": "table",
+            "name": "Customer View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0041"
+            },
+            "columns": [
+              {
+                "id": "id0095",
+                "formula": "[CUSTOMER/Customer Key]"
+              },
+              {
+                "id": "id0096",
+                "formula": "[CUSTOMER/Customer Id]"
+              },
+              {
+                "id": "id0097",
+                "formula": "[CUSTOMER/First Name]"
+              },
+              {
+                "id": "id0098",
+                "formula": "[CUSTOMER/Last Name]"
+              },
+              {
+                "id": "id0099",
+                "formula": "[CUSTOMER/Customer City]"
+              },
+              {
+                "id": "id0100",
+                "formula": "[CUSTOMER/Customer State]"
+              },
+              {
+                "id": "id0101",
+                "formula": "[CUSTOMER/Customer Region]"
+              },
+              {
+                "id": "id0102",
+                "formula": "[CUSTOMER/Customer Segment]"
+              },
+              {
+                "id": "id0103",
+                "formula": "[CUSTOMER/Loyalty Tier]"
+              },
+              {
+                "id": "id0104",
+                "formula": "[CUSTOMER/Acquisition Channel]"
+              },
+              {
+                "id": "id0105",
+                "formula": "[CUSTOMER/Lifetime Revenue]"
+              },
+              {
+                "id": "id0106",
+                "formula": "[CUSTOMER/ORDERFACT/Order Id]"
+              },
+              {
+                "id": "id0107",
+                "formula": "[CUSTOMER/ORDERFACT/Order Line]"
+              },
+              {
+                "id": "id0108",
+                "formula": "[CUSTOMER/ORDERFACT/Product Key]"
+              },
+              {
+                "id": "id0109",
+                "formula": "[CUSTOMER/ORDERFACT/Promo Key]"
+              },
+              {
+                "id": "id0110",
+                "formula": "[CUSTOMER/ORDERFACT/Store Key]"
+              },
+              {
+                "id": "id0111",
+                "formula": "[CUSTOMER/ORDERFACT/Date Key]"
+              },
+              {
+                "id": "id0112",
+                "formula": "[CUSTOMER/ORDERFACT/Order Channel]"
+              },
+              {
+                "id": "id0113",
+                "formula": "[CUSTOMER/ORDERFACT/Ship Method]"
+              },
+              {
+                "id": "id0114",
+                "formula": "[CUSTOMER/ORDERFACT/Order Status]"
+              },
+              {
+                "id": "id0115",
+                "formula": "[CUSTOMER/ORDERFACT/Quantity Ordered]"
+              },
+              {
+                "id": "id0116",
+                "formula": "[CUSTOMER/ORDERFACT/Quantity Returned]"
+              },
+              {
+                "id": "id0117",
+                "formula": "[CUSTOMER/ORDERFACT/Unit Price]"
+              },
+              {
+                "id": "id0118",
+                "formula": "[CUSTOMER/ORDERFACT/Unit Cost]"
+              },
+              {
+                "id": "id0119",
+                "formula": "[CUSTOMER/ORDERFACT/Discount Amount]"
+              },
+              {
+                "id": "id0120",
+                "formula": "[CUSTOMER/ORDERFACT/Shipping Amount]"
+              },
+              {
+                "id": "id0121",
+                "formula": "[CUSTOMER/ORDERFACT/Tax Amount]"
+              },
+              {
+                "id": "id0122",
+                "formula": "[CUSTOMER/ORDERFACT/Gross Revenue]"
+              },
+              {
+                "id": "id0123",
+                "formula": "[CUSTOMER/ORDERFACT/Net Revenue]"
+              },
+              {
+                "id": "id0124",
+                "formula": "[CUSTOMER/ORDERFACT/Gross Profit]"
+              },
+              {
+                "id": "id0125",
+                "formula": "[CUSTOMER/ORDERFACT/Net Profit]"
+              },
+              {
+                "id": "id0126",
+                "formula": "[CUSTOMER/ORDERFACT/Is First Order]"
+              },
+              {
+                "id": "id0127",
+                "formula": "[CUSTOMER/ORDERFACT/Is Returned]"
+              },
+              {
+                "id": "id0128",
+                "formula": "[CUSTOMER/ORDERFACT/Is Cancelled]"
+              },
+              {
+                "id": "id0129",
+                "formula": "[CUSTOMER/ORDERFACT/Days to Ship]"
+              }
+            ],
+            "order": [
+              "id0095",
+              "id0096",
+              "id0097",
+              "id0098",
+              "id0099",
+              "id0100",
+              "id0101",
+              "id0102",
+              "id0103",
+              "id0104",
+              "id0105",
+              "id0106",
+              "id0107",
+              "id0108",
+              "id0109",
+              "id0110",
+              "id0111",
+              "id0112",
+              "id0113",
+              "id0114",
+              "id0115",
+              "id0116",
+              "id0117",
+              "id0118",
+              "id0119",
+              "id0120",
+              "id0121",
+              "id0122",
+              "id0123",
+              "id0124",
+              "id0125",
+              "id0126",
+              "id0127",
+              "id0128",
+              "id0129"
+            ]
+          },
+          {
+            "id": "id0130",
+            "kind": "table",
+            "name": "Product View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0054"
+            },
+            "columns": [
+              {
+                "id": "id0131",
+                "formula": "[PRODUCT/Product Key]"
+              },
+              {
+                "id": "id0132",
+                "formula": "[PRODUCT/Product Id]"
+              },
+              {
+                "id": "id0133",
+                "formula": "[PRODUCT/Product Name]"
+              },
+              {
+                "id": "id0134",
+                "formula": "[PRODUCT/Category]"
+              },
+              {
+                "id": "id0135",
+                "formula": "[PRODUCT/Subcategory]"
+              },
+              {
+                "id": "id0136",
+                "formula": "[PRODUCT/Brand]"
+              },
+              {
+                "id": "id0137",
+                "formula": "[PRODUCT/Is Private Label]"
+              },
+              {
+                "id": "id0138",
+                "formula": "[PRODUCT/Is Seasonal]"
+              },
+              {
+                "id": "id0139",
+                "formula": "[PRODUCT/ORDERFACT/Order Id]"
+              },
+              {
+                "id": "id0140",
+                "formula": "[PRODUCT/ORDERFACT/Order Line]"
+              },
+              {
+                "id": "id0141",
+                "formula": "[PRODUCT/ORDERFACT/Customer Key]"
+              },
+              {
+                "id": "id0142",
+                "formula": "[PRODUCT/ORDERFACT/Promo Key]"
+              },
+              {
+                "id": "id0143",
+                "formula": "[PRODUCT/ORDERFACT/Store Key]"
+              },
+              {
+                "id": "id0144",
+                "formula": "[PRODUCT/ORDERFACT/Date Key]"
+              },
+              {
+                "id": "id0145",
+                "formula": "[PRODUCT/ORDERFACT/Order Channel]"
+              },
+              {
+                "id": "id0146",
+                "formula": "[PRODUCT/ORDERFACT/Ship Method]"
+              },
+              {
+                "id": "id0147",
+                "formula": "[PRODUCT/ORDERFACT/Order Status]"
+              },
+              {
+                "id": "id0148",
+                "formula": "[PRODUCT/ORDERFACT/Quantity Ordered]"
+              },
+              {
+                "id": "id0149",
+                "formula": "[PRODUCT/ORDERFACT/Quantity Returned]"
+              },
+              {
+                "id": "id0150",
+                "formula": "[PRODUCT/ORDERFACT/Unit Price]"
+              },
+              {
+                "id": "id0151",
+                "formula": "[PRODUCT/ORDERFACT/Unit Cost]"
+              },
+              {
+                "id": "id0152",
+                "formula": "[PRODUCT/ORDERFACT/Discount Amount]"
+              },
+              {
+                "id": "id0153",
+                "formula": "[PRODUCT/ORDERFACT/Shipping Amount]"
+              },
+              {
+                "id": "id0154",
+                "formula": "[PRODUCT/ORDERFACT/Tax Amount]"
+              },
+              {
+                "id": "id0155",
+                "formula": "[PRODUCT/ORDERFACT/Gross Revenue]"
+              },
+              {
+                "id": "id0156",
+                "formula": "[PRODUCT/ORDERFACT/Net Revenue]"
+              },
+              {
+                "id": "id0157",
+                "formula": "[PRODUCT/ORDERFACT/Gross Profit]"
+              },
+              {
+                "id": "id0158",
+                "formula": "[PRODUCT/ORDERFACT/Net Profit]"
+              },
+              {
+                "id": "id0159",
+                "formula": "[PRODUCT/ORDERFACT/Is First Order]"
+              },
+              {
+                "id": "id0160",
+                "formula": "[PRODUCT/ORDERFACT/Is Returned]"
+              },
+              {
+                "id": "id0161",
+                "formula": "[PRODUCT/ORDERFACT/Is Cancelled]"
+              },
+              {
+                "id": "id0162",
+                "formula": "[PRODUCT/ORDERFACT/Days to Ship]"
+              }
+            ],
+            "order": [
+              "id0131",
+              "id0132",
+              "id0133",
+              "id0134",
+              "id0135",
+              "id0136",
+              "id0137",
+              "id0138",
+              "id0139",
+              "id0140",
+              "id0141",
+              "id0142",
+              "id0143",
+              "id0144",
+              "id0145",
+              "id0146",
+              "id0147",
+              "id0148",
+              "id0149",
+              "id0150",
+              "id0151",
+              "id0152",
+              "id0153",
+              "id0154",
+              "id0155",
+              "id0156",
+              "id0157",
+              "id0158",
+              "id0159",
+              "id0160",
+              "id0161",
+              "id0162"
+            ]
+          },
+          {
+            "id": "id0163",
+            "kind": "table",
+            "name": "Store View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0064"
+            },
+            "columns": [
+              {
+                "id": "id0164",
+                "formula": "[STORE/Store Key]"
+              },
+              {
+                "id": "id0165",
+                "formula": "[STORE/Store Id]"
+              },
+              {
+                "id": "id0166",
+                "formula": "[STORE/Store Name]"
+              },
+              {
+                "id": "id0167",
+                "formula": "[STORE/Store Type]"
+              },
+              {
+                "id": "id0168",
+                "formula": "[STORE/Store City]"
+              },
+              {
+                "id": "id0169",
+                "formula": "[STORE/Store State]"
+              },
+              {
+                "id": "id0170",
+                "formula": "[STORE/Store Region]"
+              },
+              {
+                "id": "id0171",
+                "formula": "[STORE/District]"
+              },
+              {
+                "id": "id0172",
+                "formula": "[STORE/Manager Name]"
+              },
+              {
+                "id": "id0173",
+                "formula": "[STORE/ORDERFACT/Order Id]"
+              },
+              {
+                "id": "id0174",
+                "formula": "[STORE/ORDERFACT/Order Line]"
+              },
+              {
+                "id": "id0175",
+                "formula": "[STORE/ORDERFACT/Customer Key]"
+              },
+              {
+                "id": "id0176",
+                "formula": "[STORE/ORDERFACT/Product Key]"
+              },
+              {
+                "id": "id0177",
+                "formula": "[STORE/ORDERFACT/Promo Key]"
+              },
+              {
+                "id": "id0178",
+                "formula": "[STORE/ORDERFACT/Date Key]"
+              },
+              {
+                "id": "id0179",
+                "formula": "[STORE/ORDERFACT/Order Channel]"
+              },
+              {
+                "id": "id0180",
+                "formula": "[STORE/ORDERFACT/Ship Method]"
+              },
+              {
+                "id": "id0181",
+                "formula": "[STORE/ORDERFACT/Order Status]"
+              },
+              {
+                "id": "id0182",
+                "formula": "[STORE/ORDERFACT/Quantity Ordered]"
+              },
+              {
+                "id": "id0183",
+                "formula": "[STORE/ORDERFACT/Quantity Returned]"
+              },
+              {
+                "id": "id0184",
+                "formula": "[STORE/ORDERFACT/Unit Price]"
+              },
+              {
+                "id": "id0185",
+                "formula": "[STORE/ORDERFACT/Unit Cost]"
+              },
+              {
+                "id": "id0186",
+                "formula": "[STORE/ORDERFACT/Discount Amount]"
+              },
+              {
+                "id": "id0187",
+                "formula": "[STORE/ORDERFACT/Shipping Amount]"
+              },
+              {
+                "id": "id0188",
+                "formula": "[STORE/ORDERFACT/Tax Amount]"
+              },
+              {
+                "id": "id0189",
+                "formula": "[STORE/ORDERFACT/Gross Revenue]"
+              },
+              {
+                "id": "id0190",
+                "formula": "[STORE/ORDERFACT/Net Revenue]"
+              },
+              {
+                "id": "id0191",
+                "formula": "[STORE/ORDERFACT/Gross Profit]"
+              },
+              {
+                "id": "id0192",
+                "formula": "[STORE/ORDERFACT/Net Profit]"
+              },
+              {
+                "id": "id0193",
+                "formula": "[STORE/ORDERFACT/Is First Order]"
+              },
+              {
+                "id": "id0194",
+                "formula": "[STORE/ORDERFACT/Is Returned]"
+              },
+              {
+                "id": "id0195",
+                "formula": "[STORE/ORDERFACT/Is Cancelled]"
+              },
+              {
+                "id": "id0196",
+                "formula": "[STORE/ORDERFACT/Days to Ship]"
+              }
+            ],
+            "order": [
+              "id0164",
+              "id0165",
+              "id0166",
+              "id0167",
+              "id0168",
+              "id0169",
+              "id0170",
+              "id0171",
+              "id0172",
+              "id0173",
+              "id0174",
+              "id0175",
+              "id0176",
+              "id0177",
+              "id0178",
+              "id0179",
+              "id0180",
+              "id0181",
+              "id0182",
+              "id0183",
+              "id0184",
+              "id0185",
+              "id0186",
+              "id0187",
+              "id0188",
+              "id0189",
+              "id0190",
+              "id0191",
+              "id0192",
+              "id0193",
+              "id0194",
+              "id0195",
+              "id0196"
+            ]
+          },
+          {
+            "id": "id0197",
+            "kind": "table",
+            "name": "Calendar View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0075"
+            },
+            "columns": [
+              {
+                "id": "id0198",
+                "formula": "[CALENDAR/Date Key]"
+              },
+              {
+                "id": "id0199",
+                "formula": "[CALENDAR/Full Date]"
+              },
+              {
+                "id": "id0200",
+                "formula": "[CALENDAR/Day of Week]"
+              },
+              {
+                "id": "id0201",
+                "formula": "[CALENDAR/Month Number]"
+              },
+              {
+                "id": "id0202",
+                "formula": "[CALENDAR/Month Name]"
+              },
+              {
+                "id": "id0203",
+                "formula": "[CALENDAR/Quarter]"
+              },
+              {
+                "id": "id0204",
+                "formula": "[CALENDAR/Year]"
+              },
+              {
+                "id": "id0205",
+                "formula": "[CALENDAR/Is Weekend]"
+              },
+              {
+                "id": "id0206",
+                "formula": "[CALENDAR/Is Holiday]"
+              },
+              {
+                "id": "id0207",
+                "formula": "[CALENDAR/ORDERFACT/Order Id]"
+              },
+              {
+                "id": "id0208",
+                "formula": "[CALENDAR/ORDERFACT/Order Line]"
+              },
+              {
+                "id": "id0209",
+                "formula": "[CALENDAR/ORDERFACT/Customer Key]"
+              },
+              {
+                "id": "id0210",
+                "formula": "[CALENDAR/ORDERFACT/Product Key]"
+              },
+              {
+                "id": "id0211",
+                "formula": "[CALENDAR/ORDERFACT/Promo Key]"
+              },
+              {
+                "id": "id0212",
+                "formula": "[CALENDAR/ORDERFACT/Store Key]"
+              },
+              {
+                "id": "id0213",
+                "formula": "[CALENDAR/ORDERFACT/Order Channel]"
+              },
+              {
+                "id": "id0214",
+                "formula": "[CALENDAR/ORDERFACT/Ship Method]"
+              },
+              {
+                "id": "id0215",
+                "formula": "[CALENDAR/ORDERFACT/Order Status]"
+              },
+              {
+                "id": "id0216",
+                "formula": "[CALENDAR/ORDERFACT/Quantity Ordered]"
+              },
+              {
+                "id": "id0217",
+                "formula": "[CALENDAR/ORDERFACT/Quantity Returned]"
+              },
+              {
+                "id": "id0218",
+                "formula": "[CALENDAR/ORDERFACT/Unit Price]"
+              },
+              {
+                "id": "id0219",
+                "formula": "[CALENDAR/ORDERFACT/Unit Cost]"
+              },
+              {
+                "id": "id0220",
+                "formula": "[CALENDAR/ORDERFACT/Discount Amount]"
+              },
+              {
+                "id": "id0221",
+                "formula": "[CALENDAR/ORDERFACT/Shipping Amount]"
+              },
+              {
+                "id": "id0222",
+                "formula": "[CALENDAR/ORDERFACT/Tax Amount]"
+              },
+              {
+                "id": "id0223",
+                "formula": "[CALENDAR/ORDERFACT/Gross Revenue]"
+              },
+              {
+                "id": "id0224",
+                "formula": "[CALENDAR/ORDERFACT/Net Revenue]"
+              },
+              {
+                "id": "id0225",
+                "formula": "[CALENDAR/ORDERFACT/Gross Profit]"
+              },
+              {
+                "id": "id0226",
+                "formula": "[CALENDAR/ORDERFACT/Net Profit]"
+              },
+              {
+                "id": "id0227",
+                "formula": "[CALENDAR/ORDERFACT/Is First Order]"
+              },
+              {
+                "id": "id0228",
+                "formula": "[CALENDAR/ORDERFACT/Is Returned]"
+              },
+              {
+                "id": "id0229",
+                "formula": "[CALENDAR/ORDERFACT/Is Cancelled]"
+              },
+              {
+                "id": "id0230",
+                "formula": "[CALENDAR/ORDERFACT/Days to Ship]"
+              }
+            ],
+            "order": [
+              "id0198",
+              "id0199",
+              "id0200",
+              "id0201",
+              "id0202",
+              "id0203",
+              "id0204",
+              "id0205",
+              "id0206",
+              "id0207",
+              "id0208",
+              "id0209",
+              "id0210",
+              "id0211",
+              "id0212",
+              "id0213",
+              "id0214",
+              "id0215",
+              "id0216",
+              "id0217",
+              "id0218",
+              "id0219",
+              "id0220",
+              "id0221",
+              "id0222",
+              "id0223",
+              "id0224",
+              "id0225",
+              "id0226",
+              "id0227",
+              "id0228",
+              "id0229",
+              "id0230"
+            ]
+          },
+          {
+            "id": "id0231",
+            "kind": "table",
+            "name": "Promo View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0086"
+            },
+            "columns": [
+              {
+                "id": "id0232",
+                "formula": "[PROMO/Promo Key]"
+              },
+              {
+                "id": "id0233",
+                "formula": "[PROMO/Promo Name]"
+              },
+              {
+                "id": "id0234",
+                "formula": "[PROMO/Promo Type]"
+              },
+              {
+                "id": "id0235",
+                "formula": "[PROMO/Promo Channel]"
+              },
+              {
+                "id": "id0236",
+                "formula": "[PROMO/Discount Pct]"
+              },
+              {
+                "id": "id0237",
+                "formula": "[PROMO/Target Segment]"
+              },
+              {
+                "id": "id0238",
+                "formula": "[PROMO/ORDERFACT/Order Id]"
+              },
+              {
+                "id": "id0239",
+                "formula": "[PROMO/ORDERFACT/Order Line]"
+              },
+              {
+                "id": "id0240",
+                "formula": "[PROMO/ORDERFACT/Customer Key]"
+              },
+              {
+                "id": "id0241",
+                "formula": "[PROMO/ORDERFACT/Product Key]"
+              },
+              {
+                "id": "id0242",
+                "formula": "[PROMO/ORDERFACT/Store Key]"
+              },
+              {
+                "id": "id0243",
+                "formula": "[PROMO/ORDERFACT/Date Key]"
+              },
+              {
+                "id": "id0244",
+                "formula": "[PROMO/ORDERFACT/Order Channel]"
+              },
+              {
+                "id": "id0245",
+                "formula": "[PROMO/ORDERFACT/Ship Method]"
+              },
+              {
+                "id": "id0246",
+                "formula": "[PROMO/ORDERFACT/Order Status]"
+              },
+              {
+                "id": "id0247",
+                "formula": "[PROMO/ORDERFACT/Quantity Ordered]"
+              },
+              {
+                "id": "id0248",
+                "formula": "[PROMO/ORDERFACT/Quantity Returned]"
+              },
+              {
+                "id": "id0249",
+                "formula": "[PROMO/ORDERFACT/Unit Price]"
+              },
+              {
+                "id": "id0250",
+                "formula": "[PROMO/ORDERFACT/Unit Cost]"
+              },
+              {
+                "id": "id0251",
+                "formula": "[PROMO/ORDERFACT/Discount Amount]"
+              },
+              {
+                "id": "id0252",
+                "formula": "[PROMO/ORDERFACT/Shipping Amount]"
+              },
+              {
+                "id": "id0253",
+                "formula": "[PROMO/ORDERFACT/Tax Amount]"
+              },
+              {
+                "id": "id0254",
+                "formula": "[PROMO/ORDERFACT/Gross Revenue]"
+              },
+              {
+                "id": "id0255",
+                "formula": "[PROMO/ORDERFACT/Net Revenue]"
+              },
+              {
+                "id": "id0256",
+                "formula": "[PROMO/ORDERFACT/Gross Profit]"
+              },
+              {
+                "id": "id0257",
+                "formula": "[PROMO/ORDERFACT/Net Profit]"
+              },
+              {
+                "id": "id0258",
+                "formula": "[PROMO/ORDERFACT/Is First Order]"
+              },
+              {
+                "id": "id0259",
+                "formula": "[PROMO/ORDERFACT/Is Returned]"
+              },
+              {
+                "id": "id0260",
+                "formula": "[PROMO/ORDERFACT/Is Cancelled]"
+              },
+              {
+                "id": "id0261",
+                "formula": "[PROMO/ORDERFACT/Days to Ship]"
+              }
+            ],
+            "order": [
+              "id0232",
+              "id0233",
+              "id0234",
+              "id0235",
+              "id0236",
+              "id0237",
+              "id0238",
+              "id0239",
+              "id0240",
+              "id0241",
+              "id0242",
+              "id0243",
+              "id0244",
+              "id0245",
+              "id0246",
+              "id0247",
+              "id0248",
+              "id0249",
+              "id0250",
+              "id0251",
+              "id0252",
+              "id0253",
+              "id0254",
+              "id0255",
+              "id0256",
+              "id0257",
+              "id0258",
+              "id0259",
+              "id0260",
+              "id0261"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "stats": {
+    "elements": 11,
+    "columns": 231,
+    "metrics": 13,
+    "relationships": 5
+  },
+  "warnings": []
+}

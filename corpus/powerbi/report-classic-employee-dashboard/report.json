@@ -1,0 +1,82 @@
+{
+  "config": "{\"version\":\"5.73\",\"themeCollection\":{\"baseTheme\":{\"name\":\"CY26SU05\",\"version\":{\"visual\":\"2.9.0\",\"report\":\"3.3.0\",\"page\":\"2.3.1\"},\"type\":2}},\"activeSectionIndex\":0,\"defaultDrillFilterOtherVisuals\":true,\"settings\":{\"useNewFilterPaneExperience\":true,\"allowChangeFilterTypes\":true,\"useStylableVisualContainerHeader\":true,\"queryLimitOption\":6,\"useEnhancedTooltips\":true,\"exportDataMode\":1,\"useDefaultAggregateDisplayName\":true},\"objects\":{\"section\":[{\"properties\":{\"verticalAlignment\":{\"expr\":{\"Literal\":{\"Value\":\"'Top'\"}}}}}]}}",
+  "layoutOptimization": 0,
+  "resourcePackages": [
+    {
+      "resourcePackage": {
+        "disabled": false,
+        "items": [
+          {
+            "name": "CY26SU05",
+            "path": "BaseThemes/CY26SU05.json",
+            "type": 202
+          }
+        ],
+        "name": "SharedResources",
+        "type": 2
+      }
+    }
+  ],
+  "sections": [
+    {
+      "config": "{\"filterSortOrder\":3}",
+      "displayName": "Page 1",
+      "displayOption": 1,
+      "filters": "[{\"name\":\"b95f78aa17623b7d33c6\",\"expression\":{\"Column\":{\"Expression\":{\"SourceRef\":{\"Entity\":\"EMPLOYEES\"}},\"Property\":\"HIRE_DATE\"}},\"type\":\"Categorical\",\"howCreated\":1,\"ordinal\":0},{\"name\":\"77a6e4967665ed23b470\",\"expression\":{\"Column\":{\"Expression\":{\"SourceRef\":{\"Entity\":\"EMPLOYEES\"}},\"Property\":\"TERMINATION_DATE\"}},\"type\":\"Categorical\",\"howCreated\":1,\"ordinal\":1},{\"name\":\"dd7d4ff0963ddad21589\",\"expression\":{\"Column\":{\"Expression\":{\"SourceRef\":{\"Entity\":\"ABSENCE_RECORDS\"}},\"Property\":\"DATE\"}},\"type\":\"Categorical\",\"howCreated\":1,\"ordinal\":2}]",
+      "height": 720.00,
+      "name": "a2775561ec973465cf18",
+      "visualContainers": [
+        {
+          "config": "{\"name\": \"291ef87d16c50d7a3808\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 40, \"y\": 110, \"width\": 590, \"height\": 280, \"z\": 0, \"tabOrder\": 0}}], \"singleVisual\": {\"visualType\": \"barChart\", \"projections\": {\"Y\": [{\"queryRef\": \"ABSENCE_RECORDS.Absence Count\"}], \"Category\": [{\"queryRef\": \"ABSENCE_RECORDS.DEPARTMENT\", \"active\": true}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"a\", \"Entity\": \"ABSENCE_RECORDS\", \"Type\": 0}], \"Select\": [{\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"a\"}}, \"Property\": \"Absence Count\"}, \"Name\": \"ABSENCE_RECORDS.Absence Count\", \"NativeReferenceName\": \"Absence Count\"}, {\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"a\"}}, \"Property\": \"DEPARTMENT\"}, \"Name\": \"ABSENCE_RECORDS.DEPARTMENT\", \"NativeReferenceName\": \"DEPARTMENT\"}], \"OrderBy\": [{\"Direction\": 2, \"Expression\": {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"a\"}}, \"Property\": \"Absence Count\"}}}]}, \"drillFilterOtherVisuals\": true, \"hasDefaultSort\": true}}",
+          "filters": "[]",
+          "height": 280.00,
+          "queryBinary": "H4sIAAAAAAAEAK1SwU6DQBD9FbNnYsB44tbC6sHQVmjqwTRmhVHXFJYMu2pD+HdnllbbJnow3mZn3rz3eEwvElPXqqk6Ed/3ogCqrS5vHeA2VVYVL6qFHUTEvfADLlaAnTaNiC8CcYWm9uszVYOIhRKBkERjCSkm00LOEvmQy2SepwWNltuWUOGwDkhvA6X1uxmoziEwt/xoEbqRnjwZhyXk8PT98BrDEIgFmhZw1HnsoCnhLDGusYJmOzMn+ufHOIZZ/cb0gNzfb52w9ZTTxtXNn+2lcjHJl5mcLX/xdgD6ydghDwU4xwpwuvUJphopzP1POXb5z+kOw5rmU91UunnmzQXqWo2XcY3GtdQeL4o4XkdX/A6DaO1X+bZyqNzOb+8bK46Y5C+DQ747UjHvXI3icRSG4cD+vm4wGvh7oXTMloFFXXY3mi82YqefCCE+leUCAAA=",
+          "width": 590.00,
+          "x": 40.00,
+          "y": 110.00,
+          "z": 0.00
+        },
+        {
+          "config": "{\"name\": \"4ba3ce17d72a356f103d\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 40, \"y\": 410, \"z\": 3, \"width\": 590, \"height\": 280, \"tabOrder\": 3}}], \"singleVisual\": {\"visualType\": \"azureMap\", \"projections\": {\"Series\": [{\"queryRef\": \"EMPLOYEES.ZIP\"}], \"Size\": [{\"queryRef\": \"EMPLOYEES.Employee Count\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"e\", \"Entity\": \"EMPLOYEES\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"e\"}}, \"Property\": \"ZIP\"}, \"Name\": \"EMPLOYEES.ZIP\", \"NativeReferenceName\": \"ZIP\"}, {\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"e\"}}, \"Property\": \"Employee Count\"}, \"Name\": \"EMPLOYEES.Employee Count\", \"NativeReferenceName\": \"Employee Count\"}]}, \"drillFilterOtherVisuals\": true, \"objects\": {\"mapControls\": [{\"properties\": {\"centerLatitude\": {\"expr\": {\"Literal\": {\"Value\": \"2.842170943040401e-14D\"}}}, \"centerLongitude\": {\"expr\": {\"Literal\": {\"Value\": \"-90D\"}}}, \"zoom\": {\"expr\": {\"Literal\": {\"Value\": \"-1.02D\"}}}}}]}}}",
+          "filters": "[]",
+          "height": 280.00,
+          "queryBinary": "H4sIAAAAAAAEAK1SwU7DMAz9FeRzhTYOHHrcVhCCsbKiSYB2iFoDQW1SuclEVfXfsdMy2AQXxC15eX7v2XEHc1tVyhQNxE8dZMhnp/M7j9QulFPZq6pxpEDcQXiQwwap0dZAfBbBBdkqlN+qCiEGhAgSlnHMhGSZ3qwekiRj8L6t+X3SbyN2KjF3oWpuS18ZEU3ea8Jm0OUw1lOOa3z+ugTxvo8gJVsjBYPHqxQYGb33dqeCC+z0TkSQ0OQ4soaaDpaoGk/4Z++kqkvbIp7MrTfuxxhHlN8SHSvxiFZUIM3aMKOFJh7X58APs/53E32/ZcJMm0KbFylNSVdq+PZLsr5meFgXFnkbYsl9Ek23oVQWZ42FHwN3AdjIL7P/efRdb7VDKlUtkqnVxjWZ4jTSSy8p91s27aVrzL1ILtGRzptrLTs5lbgf8sM33McCAAA=",
+          "width": 590.00,
+          "x": 40.00,
+          "y": 410.00,
+          "z": 3.00
+        },
+        {
+          "config": "{\"name\": \"7125a9126e36012fa303\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 40, \"y\": 20, \"z\": 4, \"width\": 1200, \"height\": 70, \"tabOrder\": 4}}], \"singleVisual\": {\"visualType\": \"textbox\", \"drillFilterOtherVisuals\": true, \"objects\": {\"general\": [{\"properties\": {\"paragraphs\": [{\"textRuns\": [{\"value\": \"Employee Dashboard\", \"textStyle\": {\"fontSize\": \"40pt\"}}]}, {\"textRuns\": [{\"value\": \"\"}], \"horizontalTextAlignment\": \"center\"}]}}]}}}",
+          "filters": "[]",
+          "height": 70.00,
+          "width": 1200.00,
+          "x": 40.00,
+          "y": 20.00,
+          "z": 4.00
+        },
+        {
+          "config": "{\"name\": \"8027becf8487b8c8ec36\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 650, \"y\": 410, \"z\": 2, \"width\": 590, \"height\": 280, \"tabOrder\": 2}}], \"singleVisual\": {\"visualType\": \"lineChart\", \"projections\": {\"Y\": [{\"queryRef\": \"EMPLOYEES.Employee Count\"}], \"Category\": [{\"queryRef\": \"EMPLOYEES.HIRE_DATE.Variation.Date Hierarchy.Year\", \"active\": true}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"e\", \"Entity\": \"EMPLOYEES\", \"Type\": 0}], \"Select\": [{\"Measure\": {\"Expression\": {\"SourceRef\": {\"Source\": \"e\"}}, \"Property\": \"Employee Count\"}, \"Name\": \"EMPLOYEES.Employee Count\", \"NativeReferenceName\": \"Employee Count\"}, {\"HierarchyLevel\": {\"Expression\": {\"Hierarchy\": {\"Expression\": {\"PropertyVariationSource\": {\"Expression\": {\"SourceRef\": {\"Source\": \"e\"}}, \"Name\": \"Variation\", \"Property\": \"HIRE_DATE\"}}, \"Hierarchy\": \"Date Hierarchy\"}}, \"Level\": \"Year\"}, \"Name\": \"EMPLOYEES.HIRE_DATE.Variation.Date Hierarchy.Year\", \"NativeReferenceName\": \"HIRE_DATE Year\"}]}, \"drillFilterOtherVisuals\": true, \"objects\": {\"categoryAxis\": [{\"properties\": {\"axisType\": {\"expr\": {\"Literal\": {\"Value\": \"'Categorical'\"}}}}}]}}}",
+          "filters": "[]",
+          "height": 280.00,
+          "queryBinary": "H4sIAAAAAAAEAN1TTU+DQBD9K82cCQHjiZtt0RpbW9umxpjGbGC0a4AlA1slhP/uflD6ZQ9evS3z8d6bN0wNA5GmLIsLCF5rWKB6lzx6kkjVkJVssWE5tiUQ1GAS+rFCKrjIILhy4JZEatofWYoQAIIDoYIpVSWEk9l4+hKGCxVcVrnKe83aUUwJRqXpmiArJKFGDb9zwsICKzVCUoRzfN9/GPSmcWBGIkeyDGmeiAqxNxAyK0ElWx0dtXtSoitKvtXQSJhFuGs4RaphxJEYRZtqjFtMzjV2+fPUTuKKEVd0ItuN8Jc5W2UdBhyNPrqfh2/Dm2Voag+0gFoe9vYBnW4ngBdk9KtLHZrb0bnHOK7pvWRf19+zFGrNU4qR+pXZ85CTWrmZ2Xcu2fjfbG6atYr1eRbz7MPK5SmzN3RHQuYqbG9P8X1af/S35/hr06qvcI6xbJ2rTWAlEqkFXzuHeM+KRXzpl/1/A9/zvEZr6q7Vb7TzGEmNNsGSeFQ8cH3bvlb6A6bcergPBAAA",
+          "width": 590.00,
+          "x": 650.00,
+          "y": 410.00,
+          "z": 2.00
+        },
+        {
+          "config": "{\"name\": \"9eb042152d00955392d8\", \"layouts\": [{\"id\": 0, \"position\": {\"x\": 650, \"y\": 110, \"z\": 1, \"width\": 590, \"height\": 280, \"tabOrder\": 1}}], \"singleVisual\": {\"visualType\": \"pieChart\", \"projections\": {\"Category\": [{\"queryRef\": \"ABSENCE_RECORDS.LOCATION\", \"active\": true}], \"Y\": [{\"queryRef\": \"Sum(ABSENCE_RECORDS.HOURS)\"}]}, \"prototypeQuery\": {\"Version\": 2, \"From\": [{\"Name\": \"a\", \"Entity\": \"ABSENCE_RECORDS\", \"Type\": 0}], \"Select\": [{\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"a\"}}, \"Property\": \"LOCATION\"}, \"Name\": \"ABSENCE_RECORDS.LOCATION\", \"NativeReferenceName\": \"LOCATION\"}, {\"Aggregation\": {\"Expression\": {\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"a\"}}, \"Property\": \"HOURS\"}}, \"Function\": 0}, \"Name\": \"Sum(ABSENCE_RECORDS.HOURS)\", \"NativeReferenceName\": \"Sum of HOURS\"}], \"OrderBy\": [{\"Direction\": 2, \"Expression\": {\"Aggregation\": {\"Expression\": {\"Column\": {\"Expression\": {\"SourceRef\": {\"Source\": \"a\"}}, \"Property\": \"HOURS\"}}, \"Function\": 0}}}]}, \"drillFilterOtherVisuals\": true, \"hasDefaultSort\": true}}",
+          "filters": "[]",
+          "height": 280.00,
+          "queryBinary": "H4sIAAAAAAAEAL2SQU+DQBCF/0ozJ02IafXGraVUjVoq1F5MY8gyxTWFJQNrbMj+d2cXbGujJxNP7M7Oe+/bZVoIVFGkZVaD/9xCgrxupHjUSLtp2qTJa1ph3wJ+C+7ALlZItVQl+JcezEgVTj5PCwQfUvAgZJuGO2E8ScJ5EL7EYRDF04SPlruKu4Zm7XHeFkXjtIHa6qK01uFHRVh37oykNAmMcXPYuAhjPFiQqpBczH0UjJe30Ry43GOcJF/sW2xHI9+tKRKWAnvBkUcL4zwnzLlP/QD1R9ib6ClOXHGmS9FFDA/giS7OTuGd5PxXdJYM1GbQG/PLRpQhTXbuaaeSsE/hv/Wd+P+vacyaKxNZZrLMrcGCZJF2U3VNSldc7qaRrd46cLsfeqO1k9q5jDHT4gvaFlYWlSmuvGO/par4YyzCfmBHxr4BCm3lD9iQFPWdtOM9smifMuJQBRIDAAA=",
+          "width": 590.00,
+          "x": 650.00,
+          "y": 110.00,
+          "z": 1.00
+        }
+      ],
+      "width": 1280.00
+    }
+  ]
+}

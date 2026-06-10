@@ -1,0 +1,225 @@
+{
+  "sigmaDataModel": {
+    "name": "Order Fact",
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "id0001",
+        "name": "Page 1",
+        "elements": [
+          {
+            "id": "id0002",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "CSA",
+                "TJ",
+                "CUSTOMER_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0003/CUSTOMER_KEY",
+                "formula": "[CUSTOMER_DIM/Customer Key]"
+              },
+              {
+                "id": "inode-NORM0004/REGION",
+                "formula": "[CUSTOMER_DIM/Region]"
+              },
+              {
+                "id": "inode-NORM0005/CUSTOMER_SEGMENT",
+                "formula": "[CUSTOMER_DIM/Customer Segment]"
+              },
+              {
+                "id": "inode-NORM0006/LOYALTY_TIER",
+                "formula": "[CUSTOMER_DIM/Loyalty Tier]"
+              }
+            ],
+            "order": [
+              "inode-NORM0003/CUSTOMER_KEY",
+              "inode-NORM0004/REGION",
+              "inode-NORM0005/CUSTOMER_SEGMENT",
+              "inode-NORM0006/LOYALTY_TIER"
+            ]
+          },
+          {
+            "id": "id0007",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "CSA",
+                "TJ",
+                "ORDER_FACT"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0008/ORDER_ID",
+                "formula": "[ORDER_FACT/Order Id]"
+              },
+              {
+                "id": "inode-NORM0009/ORDER_LINE",
+                "formula": "[ORDER_FACT/Order Line]"
+              },
+              {
+                "id": "inode-NORM0010/CUSTOMER_KEY",
+                "formula": "[ORDER_FACT/Customer Key]"
+              },
+              {
+                "id": "inode-NORM0011/ORDER_CHANNEL",
+                "formula": "[ORDER_FACT/Order Channel]"
+              },
+              {
+                "id": "inode-NORM0012/SHIP_METHOD",
+                "formula": "[ORDER_FACT/Ship Method]"
+              },
+              {
+                "id": "inode-NORM0013/ORDER_STATUS",
+                "formula": "[ORDER_FACT/Order Status]"
+              },
+              {
+                "id": "inode-NORM0014/NET_REVENUE",
+                "formula": "[ORDER_FACT/Net Revenue]"
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0015",
+                "formula": "Sum([Net Revenue])",
+                "name": "Total Net Revenue",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0016",
+                "formula": "CountDistinct([Order Id])",
+                "name": "Order Count"
+              },
+              {
+                "id": "id0017",
+                "formula": "1.0 * (Sum([Net Revenue])) / NullIf((CountDistinct([Order Id])), 0)",
+                "name": "Average Order Value",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              }
+            ],
+            "order": [
+              "inode-NORM0008/ORDER_ID",
+              "inode-NORM0009/ORDER_LINE",
+              "inode-NORM0010/CUSTOMER_KEY",
+              "inode-NORM0011/ORDER_CHANNEL",
+              "inode-NORM0012/SHIP_METHOD",
+              "inode-NORM0013/ORDER_STATUS",
+              "inode-NORM0014/NET_REVENUE"
+            ],
+            "relationships": [
+              {
+                "id": "id0018",
+                "targetElementId": "id0002",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0010/CUSTOMER_KEY",
+                    "targetColumnId": "inode-NORM0003/CUSTOMER_KEY"
+                  }
+                ],
+                "name": "customer_dim",
+                "relationshipType": "N:1"
+              }
+            ]
+          },
+          {
+            "id": "id0019",
+            "kind": "table",
+            "name": "Order Fact",
+            "source": {
+              "kind": "table",
+              "elementId": "id0007"
+            },
+            "columns": [
+              {
+                "id": "id0020",
+                "formula": "[ORDER_FACT/Order Id]"
+              },
+              {
+                "id": "id0021",
+                "formula": "[ORDER_FACT/Order Line]"
+              },
+              {
+                "id": "id0022",
+                "formula": "[ORDER_FACT/Customer Key]"
+              },
+              {
+                "id": "id0023",
+                "formula": "[ORDER_FACT/Order Channel]"
+              },
+              {
+                "id": "id0024",
+                "formula": "[ORDER_FACT/Ship Method]"
+              },
+              {
+                "id": "id0025",
+                "formula": "[ORDER_FACT/Order Status]"
+              },
+              {
+                "id": "id0026",
+                "formula": "[ORDER_FACT/Net Revenue]"
+              },
+              {
+                "id": "id0027",
+                "formula": "[ORDER_FACT/customer_dim/Customer Key]"
+              },
+              {
+                "id": "id0028",
+                "formula": "[ORDER_FACT/customer_dim/Region]"
+              },
+              {
+                "id": "id0029",
+                "formula": "[ORDER_FACT/customer_dim/Customer Segment]"
+              },
+              {
+                "id": "id0030",
+                "formula": "[ORDER_FACT/customer_dim/Loyalty Tier]"
+              }
+            ],
+            "order": [
+              "id0020",
+              "id0021",
+              "id0022",
+              "id0023",
+              "id0024",
+              "id0025",
+              "id0026",
+              "id0027",
+              "id0028",
+              "id0029",
+              "id0030"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "stats": {
+    "views": 2,
+    "explores": 1,
+    "elements": 3,
+    "columns": 22,
+    "metrics": 3,
+    "relationships": 1
+  },
+  "warnings": [
+    "⚠ Connection ID not set — update in JSON before saving to Sigma",
+    "ℹ \"skilltest_orders.model.lkml\": contains include: directive(s) — views/*.view.lkml — cross-file resolution is not supported. Pass all referenced view files explicitly.",
+    "✅ \"average_order_value\" (computed) → 1.0 * (Sum([Net Revenue])) / NullIf((CountDistinct([Order Id])), 0)"
+  ]
+}

@@ -1,0 +1,266 @@
+{
+  "1c376bda-47b7-401f-916b-66bf7ae8fe3b": {
+    "headers": [
+      "Region",
+      "Gross Revenue"
+    ],
+    "row_count": 5,
+    "columns": {
+      "Region": {
+        "kind": "dimension",
+        "distinct_count": 4,
+        "sample": [
+          "Midwest",
+          "Northeast",
+          "South",
+          "West"
+        ],
+        "distinct": [
+          "Midwest",
+          "Northeast",
+          "South",
+          "West"
+        ],
+        "numeric_range": null
+      },
+      "Gross Revenue": {
+        "kind": "numeric",
+        "distinct_count": 5,
+        "sample": [
+          "1,089.84",
+          "5,402.56",
+          "4,140.6",
+          "11,921.11",
+          "12,658.9"
+        ],
+        "distinct": null,
+        "numeric_range": [
+          1089.84,
+          12658.9
+        ]
+      }
+    },
+    "aggregation_hints": null
+  },
+  "25560f9d-b65e-4a7b-bb90-ce7b22a2d8bc": {
+    "headers": [
+      "Customer Value Tier",
+      "Gross Margin Pct"
+    ],
+    "row_count": 4,
+    "columns": {
+      "Customer Value Tier": {
+        "kind": "dimension",
+        "distinct_count": 4,
+        "sample": [
+          "Bronze",
+          "Gold",
+          "Platinum",
+          "Silver"
+        ],
+        "distinct": [
+          "Bronze",
+          "Gold",
+          "Platinum",
+          "Silver"
+        ],
+        "numeric_range": null
+      },
+      "Gross Margin Pct": {
+        "kind": "numeric",
+        "distinct_count": 4,
+        "sample": [
+          "0.656721337",
+          "0.649844463",
+          "0.643137446",
+          "0.634275427"
+        ],
+        "distinct": null,
+        "numeric_range": [
+          0.634275427,
+          0.656721337
+        ]
+      }
+    },
+    "aggregation_hints": null
+  },
+  "2b018d0d-cd3f-402e-a420-0342298f7eb8": {
+    "headers": [
+      "Ship Speed Category",
+      "Gross Revenue"
+    ],
+    "row_count": 3,
+    "columns": {
+      "Ship Speed Category": {
+        "kind": "dimension",
+        "distinct_count": 3,
+        "sample": [
+          "Economy (6-10 days)",
+          "Express (1-2 days)",
+          "Standard (3-5 days)"
+        ],
+        "distinct": [
+          "Economy (6-10 days)",
+          "Express (1-2 days)",
+          "Standard (3-5 days)"
+        ],
+        "numeric_range": null
+      },
+      "Gross Revenue": {
+        "kind": "numeric",
+        "distinct_count": 3,
+        "sample": [
+          "8,240.17",
+          "15,790.51",
+          "11,182.33"
+        ],
+        "distinct": null,
+        "numeric_range": [
+          8240.17,
+          15790.51
+        ]
+      }
+    },
+    "aggregation_hints": null
+  },
+  "6f238513-6536-4dea-a21e-71e83460c915": {
+    "headers": [
+      "Category",
+      "Distinct count of Order Id"
+    ],
+    "row_count": 5,
+    "columns": {
+      "Category": {
+        "kind": "dimension",
+        "distinct_count": 5,
+        "sample": [
+          "Beauty",
+          "Electronics",
+          "Apparel",
+          "Sports",
+          "Home"
+        ],
+        "distinct": [
+          "Apparel",
+          "Beauty",
+          "Electronics",
+          "Home",
+          "Sports"
+        ],
+        "numeric_range": null
+      },
+      "Distinct count of Order Id": {
+        "kind": "numeric",
+        "distinct_count": 4,
+        "sample": [
+          "26",
+          "40",
+          "55",
+          "55",
+          "62"
+        ],
+        "distinct": null,
+        "numeric_range": [
+          26.0,
+          62.0
+        ]
+      }
+    },
+    "aggregation_hints": {
+      "Distinct count of Order Id": {
+        "agg": "count_distinct",
+        "of": "Order Id"
+      }
+    }
+  },
+  "78bd59cd-1055-4d9f-9ba0-1b773d191484": {
+    "headers": [
+      "Ship Speed Category",
+      "Return Rate"
+    ],
+    "row_count": 3,
+    "columns": {
+      "Ship Speed Category": {
+        "kind": "dimension",
+        "distinct_count": 3,
+        "sample": [
+          "Economy (6-10 days)",
+          "Express (1-2 days)",
+          "Standard (3-5 days)"
+        ],
+        "distinct": [
+          "Economy (6-10 days)",
+          "Express (1-2 days)",
+          "Standard (3-5 days)"
+        ],
+        "numeric_range": null
+      },
+      "Return Rate": {
+        "kind": "numeric",
+        "distinct_count": 3,
+        "sample": [
+          "0.023255814",
+          "0.009900990",
+          "0"
+        ],
+        "distinct": null,
+        "numeric_range": [
+          0.0,
+          0.023255814
+        ]
+      }
+    },
+    "aggregation_hints": null
+  },
+  "8d1b1993-9754-4c3d-b70d-ad82f09aa153": {
+    "headers": [
+      "Customer Value Tier",
+      "Gross Margin Pct"
+    ],
+    "row_count": 4,
+    "columns": {
+      "Customer Value Tier": {
+        "kind": "dimension",
+        "distinct_count": 4,
+        "sample": [
+          "Bronze",
+          "Gold",
+          "Platinum",
+          "Silver"
+        ],
+        "distinct": [
+          "Bronze",
+          "Gold",
+          "Platinum",
+          "Silver"
+        ],
+        "numeric_range": null
+      },
+      "Gross Margin Pct": {
+        "kind": "numeric",
+        "distinct_count": 4,
+        "sample": [
+          "0.656721337",
+          "0.649844463",
+          "0.643137446",
+          "0.634275427"
+        ],
+        "distinct": null,
+        "numeric_range": [
+          0.634275427,
+          0.656721337
+        ]
+      }
+    },
+    "aggregation_hints": null
+  },
+  "931aa62d-a420-4f14-afed-7a2f5e950e04": {
+    "headers": [
+
+    ],
+    "row_count": 0,
+    "columns": {
+    },
+    "aggregation_hints": null
+  }
+}

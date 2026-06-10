@@ -1,0 +1,171 @@
+{
+  "sigmaDataModel": {
+    "name": "Orders overview",
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "id0001",
+        "name": "Page 1",
+        "elements": [
+          {
+            "id": "id0002",
+            "kind": "table",
+            "name": "Orders Enriched",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "sql",
+              "statement": "select f.ORDER_ID, f.ORDER_CHANNEL, f.ORDER_STATUS, f.QUANTITY_ORDERED, f.NET_REVENUE, f.GROSS_REVENUE, f.NET_PROFIT, f.DISCOUNT_AMOUNT, p.CATEGORY, p.SUBCATEGORY, p.BRAND, c.REGION, c.STATE, c.CUSTOMER_SEGMENT, c.LOYALTY_TIER, d.FULL_DATE, d.YEAR, d.QUARTER, d.MONTH_NUMBER, d.MONTH_NAME from CSA.TJ.ORDER_FACT f left join CSA.TJ.PRODUCT_DIM p on f.PRODUCT_KEY=p.PRODUCT_KEY left join CSA.TJ.CUSTOMER_DIM c on f.CUSTOMER_KEY=c.CUSTOMER_KEY left join CSA.TJ.DATE_DIM d on f.ORDER_DATE_KEY=d.DATE_KEY"
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0003/ORDER_ID",
+                "name": "Order Id",
+                "formula": "[Custom SQL/ORDER_ID]"
+              },
+              {
+                "id": "inode-NORM0004/ORDER_CHANNEL",
+                "name": "Order Channel",
+                "formula": "[Custom SQL/ORDER_CHANNEL]"
+              },
+              {
+                "id": "inode-NORM0005/ORDER_STATUS",
+                "name": "Order Status",
+                "formula": "[Custom SQL/ORDER_STATUS]"
+              },
+              {
+                "id": "inode-NORM0006/QUANTITY_ORDERED",
+                "name": "Quantity Ordered",
+                "formula": "[Custom SQL/QUANTITY_ORDERED]"
+              },
+              {
+                "id": "inode-NORM0007/NET_REVENUE",
+                "name": "Net Revenue",
+                "formula": "[Custom SQL/NET_REVENUE]"
+              },
+              {
+                "id": "inode-NORM0008/GROSS_REVENUE",
+                "name": "Gross Revenue",
+                "formula": "[Custom SQL/GROSS_REVENUE]"
+              },
+              {
+                "id": "inode-NORM0009/NET_PROFIT",
+                "name": "Net Profit",
+                "formula": "[Custom SQL/NET_PROFIT]"
+              },
+              {
+                "id": "inode-NORM0010/DISCOUNT_AMOUNT",
+                "name": "Discount Amount",
+                "formula": "[Custom SQL/DISCOUNT_AMOUNT]"
+              },
+              {
+                "id": "inode-NORM0011/CATEGORY",
+                "name": "Category",
+                "formula": "[Custom SQL/CATEGORY]"
+              },
+              {
+                "id": "inode-NORM0012/SUBCATEGORY",
+                "name": "Subcategory",
+                "formula": "[Custom SQL/SUBCATEGORY]"
+              },
+              {
+                "id": "inode-NORM0013/BRAND",
+                "name": "Brand",
+                "formula": "[Custom SQL/BRAND]"
+              },
+              {
+                "id": "inode-NORM0014/REGION",
+                "name": "Region",
+                "formula": "[Custom SQL/REGION]"
+              },
+              {
+                "id": "inode-NORM0015/STATE",
+                "name": "State",
+                "formula": "[Custom SQL/STATE]"
+              },
+              {
+                "id": "inode-NORM0016/CUSTOMER_SEGMENT",
+                "name": "Customer Segment",
+                "formula": "[Custom SQL/CUSTOMER_SEGMENT]"
+              },
+              {
+                "id": "inode-NORM0017/LOYALTY_TIER",
+                "name": "Loyalty Tier",
+                "formula": "[Custom SQL/LOYALTY_TIER]"
+              },
+              {
+                "id": "inode-NORM0018/FULL_DATE",
+                "name": "Full Date",
+                "formula": "[Custom SQL/FULL_DATE]"
+              },
+              {
+                "id": "inode-NORM0019/YEAR",
+                "name": "Year",
+                "formula": "[Custom SQL/YEAR]"
+              },
+              {
+                "id": "inode-NORM0020/QUARTER",
+                "name": "Quarter",
+                "formula": "[Custom SQL/QUARTER]"
+              },
+              {
+                "id": "inode-NORM0021/MONTH_NUMBER",
+                "name": "Month Number",
+                "formula": "[Custom SQL/MONTH_NUMBER]"
+              },
+              {
+                "id": "inode-NORM0022/MONTH_NAME",
+                "name": "Month Name",
+                "formula": "[Custom SQL/MONTH_NAME]"
+              },
+              {
+                "id": "inode-NORM0023/PROFIT MARGIN",
+                "formula": "[Custom SQL/NET_PROFIT] / [Custom SQL/NET_REVENUE]",
+                "name": "Profit margin"
+              },
+              {
+                "id": "inode-NORM0024/PROFITABILITY",
+                "formula": "If([Custom SQL/NET_PROFIT] >= 0, \"Profitable\", \"Unprofitable\")",
+                "name": "Profitability"
+              }
+            ],
+            "order": [
+              "inode-NORM0003/ORDER_ID",
+              "inode-NORM0004/ORDER_CHANNEL",
+              "inode-NORM0005/ORDER_STATUS",
+              "inode-NORM0006/QUANTITY_ORDERED",
+              "inode-NORM0007/NET_REVENUE",
+              "inode-NORM0008/GROSS_REVENUE",
+              "inode-NORM0009/NET_PROFIT",
+              "inode-NORM0010/DISCOUNT_AMOUNT",
+              "inode-NORM0011/CATEGORY",
+              "inode-NORM0012/SUBCATEGORY",
+              "inode-NORM0013/BRAND",
+              "inode-NORM0014/REGION",
+              "inode-NORM0015/STATE",
+              "inode-NORM0016/CUSTOMER_SEGMENT",
+              "inode-NORM0017/LOYALTY_TIER",
+              "inode-NORM0018/FULL_DATE",
+              "inode-NORM0019/YEAR",
+              "inode-NORM0020/QUARTER",
+              "inode-NORM0021/MONTH_NUMBER",
+              "inode-NORM0022/MONTH_NAME",
+              "inode-NORM0023/PROFIT MARGIN",
+              "inode-NORM0024/PROFITABILITY"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "stats": {
+    "analyses": 1,
+    "datasets": 1,
+    "elements": 1,
+    "columns": 22,
+    "relationships": 0,
+    "controls": 0,
+    "calcFields": 2,
+    "params": 0
+  },
+  "warnings": []
+}

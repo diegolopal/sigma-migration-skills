@@ -1,6 +1,7 @@
 ---
 name: powerbi-to-sigma
 description: Convert a Power BI report + semantic model into a Sigma data model and matching dashboard. Use when the user has a Power BI report (in Power BI Service / Fabric, or a .pbix/.pbit file) and wants to recreate it in Sigma. Covers connecting to Power BI with no Entra app, extracting the model (TMSL) + report layout (PBIR/Report-Layout), converting via the sigma-data-model MCP, posting the data model + workbook via REST, and parity verification. Can also author dashboards back INTO Power BI via the Fabric write API.
+user-invocable: true
 ---
 
 # Power BI → Sigma

@@ -1,6 +1,7 @@
 ---
 name: cognos-assessment
 description: Take inventory of an IBM Cognos Analytics estate and produce a migration-readiness readout — content-tree counts, per-artifact conversion complexity (scored against the Cognos→Sigma converter's exact coverage), an estate-wide auto-migration percentage, a named gap analysis, and an effort/wave plan. Use when a user wants to scope a Cognos→Sigma migration, audit Cognos sprawl, or pick which modules / reports to convert first. Read-only, all-free, ~Tableau-assessment-style pre-scoping that complements (does not replace) a deeper paid engagement.
+user-invocable: true
 ---
 
 # Cognos Assessment

@@ -1,6 +1,7 @@
 ---
 name: powerbi-assessment
 description: Take inventory of a Power BI / Fabric tenant and produce a migration-readiness readout — environment counts, per-semantic-model DAX complexity (measures / calc columns / calc tables / RLS / DirectQuery / warehouse sources from M), per-report visual complexity, refresh history, a DAX-convertibility score against the Sigma coverage buckets, and a value/cost-ranked migration shortlist. Use when a user wants to scope a Power BI→Sigma migration, audit BI sprawl, or pick which reports to convert first. READ-ONLY — never writes to Power BI or posts to Sigma. Lightweight, device-code auth (no Entra app). Feeds the powerbi-to-sigma conversion skill.
+user-invocable: true
 ---
 
 # Power BI / Fabric Assessment

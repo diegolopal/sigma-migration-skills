@@ -138,9 +138,20 @@ For `layout: grid` (12-column legacy), double each `col` and `width`.
 
 ---
 
-## 4. Sigma-MCP tool validation — **blocked**
+## 4. Sigma-MCP tool validation — RESOLVED (historical: was blocked)
 
-The task asked for `parse_lookml` and `convert_lookml_to_sigma` MCP tools. **Neither exists in the currently exposed Sigma-MCP surface.**
+> **2026-06-10 correction:** `parse_lookml` and `convert_lookml_to_sigma` **DO
+> exist** — on the **sigma-data-model** MCP server
+> (`mcp__sigma-data-model__parse_lookml`,
+> `mcp__sigma-data-model__convert_lookml_to_sigma`), which is the server this
+> skill's Phase 2 actually uses. They are validated against
+> `fixtures/skilltest-orders/` (golden converter output lives at the repo-root
+> `corpus/looker/skilltest-orders/`). The findings below surveyed only the
+> claude.ai "Sigma-MCP" (sigma-on-sigma) server and are kept for historical
+> context — that server has no converter tools, but it is the wrong surface
+> for conversion anyway.
+
+The original task asked for `parse_lookml` and `convert_lookml_to_sigma` MCP tools. Neither existed in the then-exposed claude.ai Sigma-MCP surface (see correction above).
 
 ### 4a. Verbatim tool discovery
 
@@ -173,9 +184,9 @@ mcp__Sigma-Docs__search-endpoints pattern="convert" → No matches found for "co
 
 `mcp__Sigma-Docs__search query="LookML Looker conversion import migration"` returned a single hit, `migrate-a-dataset-to-a-data-model`, which is about migrating Sigma datasets to Sigma data models — unrelated to Looker.
 
-### 4b. What this means for the spike
+### 4b. What this meant for the spike (superseded)
 
-We could not run a real LookML dashboard sample through `parse_lookml` / `convert_lookml_to_sigma` because neither tool is wired up in the MCP. The downstream comparison ("what the converter produces today vs. what's needed") cannot be made. The closest existing Sigma converter for LookML is the **browser-based "Convert from LookML"** tool referenced in `README.md`'s picker table — it's a UI flow, not exposed via MCP.
+At spike time we could not run a real LookML dashboard sample through `parse_lookml` / `convert_lookml_to_sigma` on that server. This is superseded: both tools are live on the sigma-data-model MCP server (see the correction at the top of §4) and the model-conversion comparison has since been made against `fixtures/skilltest-orders/`. Note the converters handle the **model** (views/explores); dashboard *layout* conversion (this doc's subject) remains script-side.
 
 We did successfully retrieve a real public LookML dashboard sample (`looker-open-source/block-redshift-admin/dashboards/redshift_admin.dashboard.lookml`) and confirmed the field shape matches Looker's documentation. The sample is reproduced in §2b above for downstream test cases.
 
