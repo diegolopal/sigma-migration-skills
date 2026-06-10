@@ -425,6 +425,10 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     for (const si of findAll(L, 'sortItem')) {
       if (si['@_refDataItem']) warnings.push(`list "${qName}" sorts by "${si['@_refDataItem']}" (${si['@_sortOrder'] || 'ascending'}) — table sort isn't part of the Sigma workbook spec; apply the sort in the UI.`);
     }
+    // conditional styles on list columns (e.g. threshold-driven $K/$M/$B data formats)
+    // have no spec analog — never drop them silently.
+    const condRefs = [...new Set(findAll(L, 'conditionalStyleRef').map((c: any) => c['@_refConditionalStyle']).filter(Boolean))];
+    if (condRefs.length) warnings.push(`list "${qName}" uses conditional style(s) ${condRefs.map((r) => `"${r}"`).join(', ')} — threshold-driven formats/styles aren't portable to the Sigma spec; set a column format (e.g. $,.3s) or conditional formatting in the UI.`);
     const el: WbElement = {
       id: sigmaShortId(), kind: 'table', name: `${q.subject ? sigmaDisplayName(q.subject) + ' — ' : ''}${qName}`,
       source: dmSource(q),
