@@ -152,3 +152,25 @@ by DM/element/connection IDs at the top; generalize the table/column maps per ap
 - ✅ `scout-validate.py` kpi-chart bug fixed (`value.columnId`, was `value.id` → every kpi validation failed POST).
 - Companion `qlik-assessment` skill — built (sibling dir).
 - **Remaining (beads):** multi-fact relationship topology — two facts sharing dim keys still get fact↔fact links/fan-trap (`beads-sigma-uw5c`, relationship half); denorm "View" column bloat/dupes on multi-fact (`beads-sigma-hsua`); full multi-fact END-TO-END parity needs a real 2nd Snowflake fact + Qlik app (`task`). Aggr() guidance (`beads-sigma-16xc`). Feed reconcile map into `build-sigma-dm.py`; auto-layout charts.
+
+
+## Security: Row- & Column-Level Security (RLS/CLS)
+
+Row/column security is **never silently dropped and never silently ported** — and it is handled by the **skill**, not baked into the converted model. The converter (`convert_qlik_to_sigma`) only **detects and reports** security in `result.security[]`; it does **not** inject it into the data-model spec (a stateless converter can't create Sigma user attributes or assign members, so an injected `CurrentUserAttributeText` filter would fail-closed to 0 rows). This skill provisions + applies it after the model is posted.
+
+**What is detected for Qlik:** Section Access (supply the parsed `sectionAccess` object): `REDUCTION` row reduction (to team/attribute RLS; strict-exclusion equals Sigma fail-closed) and `OMIT` column reduction (to CLS).
+
+**Flow (only runs when `result.security` is non-empty — zero overhead otherwise):**
+1. **Convert + post** the data model as usual. Capture the `dataModelId` and the converter's `result.security[]` (write it to `security.json`).
+2. **Gate (opt-in/out, default _Port_).** Show a plain-English summary of each detected rule + recommended Sigma mapping, then ask: **Port** (recommended) / **Customize** (review per-rule attribute/team mapping + username-to-email reconciliation) / **Skip** (migrated model shows ALL rows to everyone). Reuse-first: existing Sigma user attributes/teams are matched before creating new ones.
+3. **Provision + apply** with the shared engine:
+   ```bash
+   eval "$(scripts/get-token.sh)"
+   python3 scripts/apply_sigma_rls.py --from-security security.json --dm-id <dataModelId>            # plan only (default)
+   python3 scripts/apply_sigma_rls.py --from-security security.json --dm-id <dataModelId> --provision --apply
+   ```
+   `--provision` creates missing user attributes / teams; `--apply` PATCHes the boolean RLS calc column + fail-closed `filters` entry and the `columnSecurities` (CLS) onto the matching element.
+4. **Assign membership.** Assign per-user attribute values / team membership from the source tool's group/role membership (the converter reports the attribute/team names; the values come from the source's user mapping).
+
+**Skip is loud:** opting out leaves the migrated model with NO RLS — all rows visible to everyone. Confirm before skipping.
+
