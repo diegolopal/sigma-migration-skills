@@ -125,6 +125,9 @@ runs these phases (`scripts/*`):
    `--check` compares the actuals to the Cognos source. **GREEN only when `--check` passes.**
 
 positive
+: Between steps 2 and 3 the skill runs a **DM-reuse check** (Phase 1.5: `cognos-dm-signature.py` + `find-or-pick-dm.rb`): it scores the org's existing Sigma data models against the module's tables/columns and on a strong match asks reuse-vs-new — skipping the POST and avoiding DM sprawl.
+
+positive
 : Run `cognos-assessment` first on the whole estate to rank what's worth migrating and surface the manual-work gaps *before* you start.
 
 ## Understanding the output

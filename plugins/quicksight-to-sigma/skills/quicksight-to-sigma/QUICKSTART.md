@@ -111,6 +111,9 @@ Point the `quicksight-to-sigma` skill at an analysis. Phases:
    QuickSight aggregation. The `assert-phase6-ran.rb` hard gate must pass before GREEN.
 
 positive
+: Between steps 2 and 3 the skill runs a **DM-reuse check** (Phase 3.5: `qs-dm-signature.py` + `find-or-pick-dm.rb`): it scores the org's existing Sigma data models against the datasets' tables/columns and on a strong match asks reuse-vs-new — skipping the DM build and avoiding sprawl.
+
+positive
 : For many accounts, the assessment's migration plan clusters analyses by shared dataset so you reuse one Sigma data model across a batch.
 
 ## Understanding the output

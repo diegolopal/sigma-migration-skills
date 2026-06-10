@@ -96,6 +96,28 @@ POST-block the whole DM), inter-record `Above/Below/Peek/Previous/RowNo`, rankin
 converter emits an `ℹ … references fields from N elements` warning — host that metric on
 the **denormalized element** (which carries all fields) or it errors as cross-element.
 
+## Phase 2.5 — Reuse an existing DM? (avoid sprawl — mirrors tableau Phase 1.5)
+Before building a NEW data model in Phase 3, check whether an existing Sigma DM already
+covers the same warehouse tables (don't add a 4th near-identical "Orders" DM):
+```bash
+python3 scripts/qlik-dm-signature.py --model converter-input.json \
+  --database <DB> --schema <SCHEMA> --out $WORK/dm-signature.json
+eval "$(scripts/vendor/get-token.sh)"       # SIGMA_BASE_URL + SIGMA_API_TOKEN
+ruby scripts/vendor/find-or-pick-dm.rb --workbook-signature $WORK/dm-signature.json \
+  --out $WORK/dm-match.json --auto-pick     # exit 0 = candidate ≥ min-score
+```
+`qlik-dm-signature.py` derives `{warehouse_tables, referenced_columns, measures}` from the
+Phase-1 converter input (pass the same `--database`/`--schema` you hand the converter —
+Qlik table names are bare). Decision:
+- **Score ≥ 0.6** → **ASK the user** reuse-vs-new: surface the candidate name, the matched
+  cols (N/M) and the inherited-extras warning from `dm-match.json`. If they reuse, run a
+  **shape preflight** first — read the candidate DM's spec back and confirm every column
+  the workbook needs resolves on the element you'll wire to (no `error` types, fact vs dim
+  location) — then skip Phase 3 and point Phase 4's masters at the matched
+  `recommended_dm_id` + its element ids. With `--auto-pick` a clear winner (no tie within
+  0.05) skips the prompt — still WARN about inherited columns/RLS/metrics.
+- **Score < 0.6** → build new (Phase 3) and TELL the user no reusable DM was found.
+
 ## Phase 3 — Build the Sigma data model  (`scripts/build-sigma-dm.py`)
 Reconcile the converter output to the real warehouse and POST:
 - Map Qlik-renamed fields → real warehouse columns (e.g. `STORE_KEY`→`ORDER_STORE_KEY`, `CUSTOMER_REGION`→`REGION`). Relationships are by column-**id**, so they survive the repoint.
@@ -125,6 +147,8 @@ from) and compare to Sigma `query` results — at the metric level AND per chart
 | Script | Phase | Purpose |
 |---|---|---|
 | `scripts/qlik-discover.py` | 1 | Extract data model (load script), master measures/dimensions (Engine MeasureList/DimensionList), and sheets/charts from any app → `converter-input.json`. **Validated.** |
+| `scripts/qlik-dm-signature.py` | 2.5 | Converter-input JSON → DM-reuse signature (`{warehouse_tables, referenced_columns, measures}`) for `find-or-pick-dm.rb`. **Validated live.** |
+| `scripts/vendor/find-or-pick-dm.rb` | 2.5 | Scan existing Sigma DMs and recommend reuse (score = 0.7·column + 0.2·table + 0.1·metric overlap; `--auto-pick` with tie-window safety). Shared vendor-neutral copy (canonical: tableau-to-sigma). Non-destructive. |
 | `scripts/reconcile-columns.py` | 3 | Auto-derive the Qlik-field → real-warehouse-column map from the load script's `AS` aliases + `FROM` tables (so the DM points at real columns). **Validated.** |
 | `scripts/gen-denorm-sql.py` | 3 | Turn reconcile.json into the denormalized SQL element (`real AS qlik` + inferred fact↔dim joins) — feeds `build-sigma-dm.py`. **Validated.** |
 | `scripts/batch-migrate.py` | 3–6 | Migrate many apps in one pass (one Sigma workbook each, reusing a DM) incl. the reusable `auto_layout()` heuristic (KPIs top row, charts 2-wide grid). **Validated on 5 apps.** |

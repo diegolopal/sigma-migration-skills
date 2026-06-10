@@ -65,6 +65,30 @@ What the converter handles vs. what it doesn't (see `refs/migration-test-slate.m
 
 For an untranslated calc-field expression, spawn the **gap-scout subagent** (see `scripts/gap-scout.md`): it proposes a Sigma formula, validates it against the live DM via `scripts/scout-validate-and-persist.rb`, and on success persists a rule to `~/.quicksight-to-sigma/learned-rules.yaml` (customer home — `git pull` can't clobber; the build script auto-applies it next run via `LearnedRules.load`). On failure the scout returns an **opt-in** `escalate-gap.py` command — filing a tracking issue is never automatic: run the returned `escalation.dry_run_cmd` to draft the issue (shows target repo + dedupe), show the user, and only re-run with `--yes` if they accept. Calc-field gaps route to the converter repos (`sigma-data-model-manager` + `sigma-data-model-mcp`, mirrored) with a cross-linked bead.
 
+## Phase 3.5 — Reuse an existing DM? (avoid sprawl — mirrors tableau Phase 1.5 / powerbi Phase 3.5)
+
+Before Phase 4 POSTs a NEW data model, check whether an existing Sigma DM already covers
+the same warehouse tables (don't add a 4th near-identical "Orders" DM):
+
+```bash
+python3 scripts/qs-dm-signature.py --discover-dir ~/quicksight-migration/<name> \
+  --out dm-signature.json
+ruby scripts/find-or-pick-dm.rb --workbook-signature dm-signature.json \
+  --out dm-match.json --auto-pick           # exit 0 = candidate ≥ min-score
+```
+
+`qs-dm-signature.py` derives `{warehouse_tables, referenced_columns}` from the Phase-2
+dataset JSONs (RelationalTable FQNs; CustomSql tables lifted from the SQL's FROM/JOIN;
+calc columns from CreateColumnsOperation). Decision:
+- **Score ≥ 0.6** → **ASK the user** reuse-vs-new: surface the candidate name, matched cols
+  (N/M), and the inherited-extras warning from `dm-match.json`. If they reuse, run a
+  **shape preflight** first — read the candidate DM's spec back and confirm every column
+  the analysis references resolves on the element you'll wire to (no `error` columns; fact
+  vs separate-dim location) — then **skip Phase 4** and point Phase 5's masters at the
+  matched `recommended_dm_id` + its element ids. With `--auto-pick` a clear winner (no tie
+  within 0.05) skips the prompt — still WARN about inherited columns/RLS/metrics.
+- **Score < 0.6** → build new (Phase 4) and TELL the user no reusable DM was found.
+
 ## Phase 4 — Fixup + POST the data model
 
 The converter output needs fixups before `POST /v2/dataModels/spec` (gap `beads-sigma-vy4k`: CustomSql / DIRECT_QUERY elements come back nameless, and sql refs need rewriting):
@@ -138,7 +162,7 @@ ruby scripts/assert-phase6-ran.rb --workdir /tmp/<name> --workbook-id <WORKBOOK_
 - **Window/table-calc functions are a known gap** — they degrade to a `/* TODO */` placeholder; verify the graceful degradation rather than treating it as a failure, and surface it in the migration warning manifest.
 
 ## Reuse, don't reinvent
-These vendor-agnostic Sigma-side scripts are reused across the migration skills: `get-token.sh`, `lib/sigma_rest.rb`, `post-and-readback.rb`, `put-layout.rb`, `find-or-pick-dm.rb`, `validate-spec.rb`, `verify-parity.rb`, `cleanup-orphan-workbooks.rb`. Only the QuickSight-specific stages (`quicksight-discover.py`, `convert-model.rb`, `build-workbook-from-quicksight.rb`, `build-quicksight-layout.rb`, `phase6-parity-quicksight.rb`) are new.
+These vendor-agnostic Sigma-side scripts are reused across the migration skills: `get-token.sh`, `lib/sigma_rest.rb`, `post-and-readback.rb`, `put-layout.rb`, `find-or-pick-dm.rb`, `validate-spec.rb`, `verify-parity.rb`, `cleanup-orphan-workbooks.rb`. Only the QuickSight-specific stages (`quicksight-discover.py`, `convert-model.rb`, `build-workbook-from-quicksight.rb`, `build-quicksight-layout.rb`, `phase6-parity-quicksight.rb`, `qs-dm-signature.py`) are new.
 
 
 ## Security: Row- & Column-Level Security (RLS/CLS)

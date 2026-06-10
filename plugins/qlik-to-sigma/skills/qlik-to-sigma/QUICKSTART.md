@@ -120,6 +120,9 @@ In Claude Code, point the `qlik-to-sigma` skill at an app. The skill runs these 
 6. **Verify parity** — compare Sigma query results to the warehouse, metric-by-metric.
 
 positive
+: Before building a new data model (Phase 2.5), the skill runs a **DM-reuse check** (`qlik-dm-signature.py` + `scripts/vendor/find-or-pick-dm.rb`): it scores the org's existing Sigma data models against the app's tables/columns and on a strong match asks reuse-vs-new — avoiding DM sprawl and skipping the build entirely.
+
+positive
 : For a whole tenant, `batch-migrate.py` converts many apps in one pass (one Sigma workbook each), reusing a shared data model.
 
 ## Understanding the output

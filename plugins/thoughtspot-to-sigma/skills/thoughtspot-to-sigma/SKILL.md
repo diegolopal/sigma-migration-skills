@@ -63,9 +63,38 @@ Liveboard that reads the model (or just the `--liveboard` ones).
 6. **Parity** — query the model via `ts_lib.searchdata` (ground truth) vs the
    Sigma workbook elements (v2 query MCP); values match to the cent.
 
+## Step 2.5 — Reuse an existing DM? (between convert and POST — mirrors tableau Phase 1.5 / powerbi Phase 3.5)
+
+Before step 2 POSTs a NEW data model, check whether an existing Sigma DM already covers
+the same warehouse tables (don't add a 4th near-identical DM for the same star):
+
+```bash
+python3 scripts/ts-dm-signature.py --tml model.tml \
+  --database $TS_DB --schema $TS_SCHEMA --out dm-signature.json
+ruby scripts/find-or-pick-dm.rb --workbook-signature dm-signature.json \
+  --out dm-match.json --auto-pick           # exit 0 = candidate ≥ min-score
+```
+
+`ts-dm-signature.py` derives `{warehouse_tables, referenced_columns, measures}` from the
+exported model TML (`model_tables[].fqn` is a TS guid, so pass the same `TS_DB`/`TS_SCHEMA`
+you export for `migrate.py`). Decision:
+- **Score ≥ 0.6** → **ASK the user** reuse-vs-new: surface the candidate name, matched cols
+  (N/M), and the inherited-extras warning from `dm-match.json`. If they reuse, run a
+  **shape preflight** first — read the candidate DM's spec back and confirm every column the
+  Liveboards reference resolves on the element you'll wire to (no `type=error` columns;
+  the denormalized "<root> View" element vs separate dims) — then skip the DM POST and
+  build the workbooks (step 4) against the matched `recommended_dm_id` + its element ids.
+  With `--auto-pick` a clear winner (no tie within 0.05) skips the prompt — still WARN
+  about inherited columns/RLS/metrics.
+- **Score < 0.6** → POST new and TELL the user no reusable DM was found.
+
 ## Scripts
 - `migrate.py` — **canonical entry**: model → DM → migrate its Liveboards (parameterized)
 - `convert_model.mjs` — model TML → Sigma DM spec (imports the built converter)
+- `ts-dm-signature.py` — step 2.5: model TML → DM-reuse signature for `find-or-pick-dm.rb`
+- `find-or-pick-dm.rb` — step 2.5: scan existing Sigma DMs, recommend reuse (0.7·column +
+  0.2·table + 0.1·metric overlap; `--auto-pick` w/ tie-window). Shared vendor-neutral copy
+  (canonical: tableau-to-sigma; needs `scripts/lib/sigma_rest.rb`). Non-destructive.
 - `ts_lib.py` — ThoughtSpot REST v2 (whoami/search/export_tml/import_tml/searchdata)
 - `ts_discover.py` — inventory / per-object summary
 - `ts_common.py` — `build_resolver` (from model TML), viz↔element mappers, format/currency mapping
