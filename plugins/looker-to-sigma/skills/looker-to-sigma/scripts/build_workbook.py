@@ -261,6 +261,13 @@ def main():
     }
 
     # ── tile -> Sigma element ──
+    # Looker newspaper rows are ~40px; Sigma grid rows are ~20px. Mapping them 1:1
+    # halves every tile's height — and Sigma SUPPRESSES x-axis category labels (and
+    # most y gridline labels) when the chart band is that short, so migrated bar
+    # charts rendered with NO category names (same short-band suppression seen on
+    # tableau, beads-sigma-tkkv). Scale rows 2x so tile heights land near their
+    # Looker pixel heights and axis labels render.
+    ROW_SCALE = 2
     elements, layout_items = [], []
     for el in dash["elements"]:
         # Text/markdown tiles → Sigma text element (kind: "text"). No query, no
@@ -281,7 +288,7 @@ def main():
             body = "\n\n".join(parts) if parts else (el.get("name") or title or "")
             elements.append({"id": eid, "kind": "text", "body": body})
             L = el["layout"]; c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
-            r0 = L["row"] + 1; r1 = L["row"] + 1 + L["height"]
+            r0 = L["row"] * ROW_SCALE + 1; r1 = r0 + L["height"] * ROW_SCALE
             layout_items.append((eid, c0, c1, r0, r1, "text"))
             continue
         kind = TILE_KIND.get(el["tileType"])
@@ -293,6 +300,7 @@ def main():
         ds = [f for f in el["fields"] if not is_measure(f)]
         eid = sid()
         base = {"id": eid, "kind": kind, "name": el["name"], "source": {"elementId": "m-master", "kind": "table"}}
+        field2cid = {}   # "view.field" -> tile column id (for sorts: resolution)
 
         if kind == "kpi-chart":
             vf = formula_for(ms[0], ex) if ms else "Count()"
@@ -329,10 +337,12 @@ def main():
             xid = sid("x"); xf = ds[0] if ds else (el["fields"][0] if el["fields"] else None)
             cols.append({"id": xid, "formula": formula_for(xf, ex) if xf else "Count()",
                          "name": (col_display(xf, ex) if xf else None) or "Group"})
+            if xf: field2cid[xf] = xid
             for mf in (ms or []):
                 yid = sid("y")
                 cols.append(apply_fmt({"id": yid, "formula": formula_for(mf, ex), "name": disp(leaf(mf))}, mf))
                 ymids.append(yid)
+                field2cid[mf] = yid
                 _warn_count(mf, el)
             if not ymids:
                 yid = sid("y"); cols.append({"id": yid, "formula": "Count()", "name": "Count"}); ymids.append(yid)
@@ -364,17 +374,30 @@ def main():
             ]
             base["value"] = {"id": valid}      # donut/pie use value.id (KPI uses value.columnId)
             base["color"] = {"id": catid}
+            if catf: field2cid[catf] = catid
+            if valf: field2cid[valf] = valid
             if valf: _warn_count(valf, el)
             if el["tileType"] == "looker_donut_multiples":
                 warnings.append(f"tile '{el['name']}': donut_multiples → single donut sliced by "
                                 f"'{leaf(catf) if catf else 'category'}'; the per-multiple dimension is dropped — review in Sigma")
         elif kind == "table":
-            cols = []
+            cols, gids, cids = [], [], []
             for f in el["fields"] + (el.get("pivots") or []):
                 tcol = {"id": sid("c"), "formula": formula_for(f, ex), "name": disp(leaf(f))}
-                if is_measure(f): apply_fmt(tcol, f); _warn_count(f, el)
+                if is_measure(f):
+                    apply_fmt(tcol, f); _warn_count(f, el); cids.append(tcol["id"])
+                else:
+                    gids.append(tcol["id"])
                 cols.append(tcol)
+                field2cid[f] = tcol["id"]
             base["columns"] = cols
+            # A Looker table tile is an AGGREGATING query (group by dims, aggregate
+            # measures). Without `groupings` a Sigma table with dim + Sum(...) columns
+            # renders one row per SOURCE row (no roll-up). Verified shape (hand-PATCH
+            # round-trip): groupings:[{id, groupBy:[dim col ids], calculations:[measure
+            # col ids]}].
+            if gids and cids:
+                base["groupings"] = [{"id": sid("g"), "groupBy": gids, "calculations": cids}]
             if el.get("pivots"):
                 warnings.append(f"tile '{el['name']}': pivot {el['pivots']} flattened to columns — "
                                 f"rebuild as a Sigma pivot-table for true cross-tab")
@@ -387,11 +410,39 @@ def main():
                 continue
             col = next((c for c in base["columns"] if c["name"] == d), None)
             if not col:
-                col = {"id": sid("c"), "formula": f"[{a.master_name}/{d}]", "name": d}
+                # filter-only field: the tile filters by it but doesn't display it —
+                # carry it hidden so the filter works without adding a visible column.
+                col = {"id": sid("c"), "formula": f"[{a.master_name}/{d}]", "name": d, "hidden": True}
                 base["columns"].append(col)
             vals = [v.strip() for v in str(val).split(",") if v.strip()]
             base.setdefault("filters", []).append(
                 {"id": sid("f"), "columnId": col["id"], "kind": "list", "mode": "include", "values": vals})
+        # tile sorts: -> Sigma sort. Verified shapes (live POST + readback + render,
+        # 2026-06-10):
+        #   bar/line/area/scatter : xAxis.sort  = {by: <colId>, direction}
+        #   pie/donut             : color.sort  = {by: <colId>, direction}
+        #   UNGROUPED table       : element sort = [{columnId, direction}]
+        #   GROUPED table         : groupings[0].sort = [{columnId, direction}] —
+        #     element-level sort on a grouped table 400s with "Sort column not found"
+        #     for BOTH groupBy and calculation column ids; nesting the sort inside the
+        #     grouping entry is the shape that posts, round-trips, and orders groups.
+        for si, s in enumerate(el.get("sorts") or []):
+            toks = str(s).split()
+            sf = toks[0]
+            direction = "descending" if (len(toks) > 1 and toks[1].lower().startswith("desc")) else "ascending"
+            cid = field2cid.get(sf)
+            if not cid:
+                warnings.append(f"tile '{el['name']}': sort field '{sf}' not among the tile's columns — sort skipped")
+                continue
+            if kind in ("bar-chart", "area-chart", "line-chart", "scatter-chart"):
+                if si == 0: base.setdefault("xAxis", {})["sort"] = {"by": cid, "direction": direction}
+            elif kind in ("pie-chart", "donut-chart"):
+                if si == 0: base.setdefault("color", {})["sort"] = {"by": cid, "direction": direction}
+            elif kind == "table":
+                if base.get("groupings"):
+                    base["groupings"][0].setdefault("sort", []).append({"columnId": cid, "direction": direction})
+                else:
+                    base.setdefault("sort", []).append({"columnId": cid, "direction": direction})
         # Looker table calcs (dynamic_fields) → Sigma formula columns
         for dyn in (el.get("dynamicFields") or []):
             if not isinstance(dyn, dict):
@@ -412,9 +463,9 @@ def main():
             base.setdefault("columns", []).append({"id": sid("tc"), "formula": sig.strip(), "name": label})
         elements.append(base)
 
-        # newspaper -> 24-col grid
+        # newspaper -> 24-col grid (rows scaled — see ROW_SCALE above)
         L = el["layout"]; c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
-        r0 = L["row"] + 1; r1 = L["row"] + 1 + L["height"]
+        r0 = L["row"] * ROW_SCALE + 1; r1 = r0 + L["height"] * ROW_SCALE
         layout_items.append((eid, c0, c1, r0, r1, kind))
 
     # ── controls from dashboard filters ──

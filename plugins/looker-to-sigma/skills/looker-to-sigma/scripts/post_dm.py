@@ -34,6 +34,50 @@ def api(method, path, body=None):
         return raw  # YAML/text
 
 
+def drop_join_key_passthroughs(spec):
+    """Guard: drop derived-view columns that pass a relationship's OWN join key across
+    the join (formula [Base/REL_NAME/<target key col>]). A cross-element passthrough of
+    a join key compiles to type "error" in Sigma (the base element already carries that
+    value; Sigma degrades the ref on readback). The MCP lookml converter's denormalized
+    element can still emit one — strip it here with a WARN before POSTing."""
+    rel_keys = {}   # relationship name -> set of target-key DISPLAY names
+    elements = [e for p in spec.get("pages", []) for e in (p.get("elements") or [])]
+    by_id = {e.get("id"): e for e in elements}
+    for el in elements:
+        for rel in (el.get("relationships") or []):
+            tgt = by_id.get(rel.get("targetElementId")) or {}
+            tcols = {c.get("id"): c for c in (tgt.get("columns") or [])}
+            names = rel_keys.setdefault(rel.get("name") or "", set())
+            for k in (rel.get("keys") or []):
+                c = tcols.get(k.get("targetColumnId"))
+                if not c:
+                    continue
+                d = c.get("name")
+                if not d:
+                    m = re.match(r"\[([^\]]+)\]$", c.get("formula") or "")
+                    if m:
+                        d = m.group(1).split("/")[-1]
+                if d:
+                    names.add(d)
+    for el in elements:
+        cols = el.get("columns") or []
+        kept = []
+        for c in cols:
+            m = re.match(r"\[([^/\]]+)/([^/\]]+)/([^\]]+)\]$", c.get("formula") or "")
+            if m and m.group(3) in rel_keys.get(m.group(2), set()):
+                print(f"WARN: dropping join-key passthrough column {c.get('id')} "
+                      f"({c.get('formula')}) on element {el.get('name') or el.get('id')} — "
+                      f"cross-element passthrough of a join key compiles to type=error in Sigma",
+                      file=sys.stderr)
+                if el.get("order"):
+                    el["order"] = [o for o in el["order"] if o != c.get("id")]
+                continue
+            kept.append(c)
+        if len(kept) != len(cols):
+            el["columns"] = kept
+    return spec
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("spec")
@@ -41,6 +85,7 @@ def main():
     a = ap.parse_args()
 
     spec = json.load(open(a.spec))
+    spec = drop_join_key_passthroughs(spec)
 
     # rewrite every connectionId (placeholder or short prefix) to the full UUID
     if FULL_CONN:

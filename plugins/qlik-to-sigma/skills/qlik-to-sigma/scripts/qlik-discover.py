@@ -113,11 +113,22 @@ def main():
         oid, qtype = o.get("qId"), o.get("qType")
         props = qlik("app", "object", "properties", oid, "-a", a.app, *ctx) or {}
         hc = props.get("qHyperCubeDef", {})
+        # Carry the object's sort definition so the workbook build can reproduce it:
+        # per-dimension qSortCriterias (qSortByNumeric/qSortByAscii/qSortByExpression),
+        # per-measure qSortBy, and the column precedence (qInterColumnSortOrder).
+        # Empty lists/{} mean "Qlik default" — the builder should only emit a Sigma
+        # sort (xAxis.sort / element sort:[{columnId,direction}]) when one is present.
+        sort = {
+            "interColumnSortOrder": hc.get("qInterColumnSortOrder") or [],
+            "dimensions": [ (dd.get("qDef", {}).get("qSortCriterias") or []) for dd in hc.get("qDimensions", []) ],
+            "measures":   [ (mm.get("qSortBy") or {}) for mm in hc.get("qMeasures", []) ],
+        }
         charts.append({
             "id": oid, "vizType": qtype,
             "title": (props.get("qMetaDef") or {}).get("title") or (props.get("title")),
             "dimensions": [ (dd.get("qDef", {}).get("qFieldDefs") or [dd.get("qLibraryId")]) for dd in hc.get("qDimensions", []) ],
             "measures":   [ (mm.get("qDef", {}).get("qDef") or mm.get("qLibraryId")) for mm in hc.get("qMeasures", []) ],
+            "sort": sort,
         })
     json.dump(charts, open(os.path.join(a.out, "charts.json"), "w"), indent=2)
 

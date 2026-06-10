@@ -93,6 +93,15 @@ list in the hub — graft onto a **UI-created native sheet** instead.
 - **pivot-table**: `rowsBy` + `columnsBy` (`[{id}]`) + `values` (see feedback_sigma_pivot_rowsby_columnsby).
 - KPIs need ≥5 grid-rows of height or the title clips.
 
+## Sorting a GROUPED table — sort lives INSIDE the grouping (verified 2026-06-10)
+Element-level `sort:[{columnId,direction}]` works only on UNGROUPED tables. On a table
+with `groupings`, the POST 400s with `Sort column not found` for **both** groupBy and
+calculation column ids. The shape that posts, round-trips on GET (gains `nulls:
+"connection-default"`), and actually orders the groups is the sort nested in the
+grouping entry:
+`groupings: [{id, groupBy: [...], calculations: [...], sort: [{columnId: <calc or dim col id>, direction: "descending"}]}]`.
+Charts keep using `xAxis.sort: {by, direction}` / pie-donut `color.sort`.
+
 ## Excluding a null/unmatched group — element list-filter
 To drop a null dimension bucket (e.g. fact rows whose FK didn't match a dim under a
 LEFT JOIN), add an element filter (verified shape):

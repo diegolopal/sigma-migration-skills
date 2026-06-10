@@ -32,13 +32,22 @@ v2e = map['visualToElement']             # QS VisualId -> Sigma element id
 GRID = 36.0                              # QuickSight max grid width (fallback only)
 SIG = 24                                 # Sigma grid width
 
-# QuickSight does NOT use a fixed 36-column grid. A sheet's effective grid width is
-# whatever the widest row of tiles adds up to — commonly 12, 18, 24, or 36 depending
-# on how the author sized things. Scaling every layout by a hardcoded 36 squeezes a
-# 12-wide D4 into the left third of the Sigma page. Infer the real width as the max
-# (ColumnIndex + ColumnSpan) across the sheet's elements, so relative widths + the
-# overall span are preserved when we scale to Sigma's 24 columns.
-def infer_grid_width(els)
+# QuickSight does NOT use a fixed 36-column grid when indices are EXPLICIT. A sheet's
+# effective grid width is whatever the widest row of tiles adds up to — commonly 12,
+# 18, 24, or 36 depending on how the author sized things. Scaling every layout by a
+# hardcoded 36 squeezes a 12-wide D4 into the left third of the Sigma page. Infer the
+# real width as the max row edge (ColumnIndex + ColumnSpan — i.e. the per-row span sum
+# of the widest row) across the sheet's elements, so relative widths + the overall
+# span are preserved when we scale to Sigma's 24 columns.
+#
+# SPANS-ONLY layouts (auto-flow GridLayout: ColumnSpan but no ColumnIndex) are a
+# DIFFERENT case: QS auto-flows those on its full 36-column canvas, so the canvas IS
+# 36. Taking max(span) as the width here collapsed a uniform-18-span sheet (2-up on
+# the QS canvas) into a full-width single-column stack (every 18-span tile scaled to
+# 18/18 = full width) — beads-sigma-vvus. Spans-only callers must pass
+# spans_only: true to get the fixed 36 canvas.
+def infer_grid_width(els, spans_only: false)
+  return GRID if spans_only
   edges = els.map { |e| (e['ColumnIndex'] || 0) + (e['ColumnSpan'] || 0) }
   w = edges.compact.max.to_f
   w >= 1 ? w : GRID
@@ -85,7 +94,7 @@ def layout_sheet(sheet, v2e, eids_for_sheet)
         placed << [eid, c0, c1, r0, r1]
       end
     else
-      grid_w = infer_grid_width(els); grid_w = GRID if grid_w <= 0
+      grid_w = infer_grid_width(els, spans_only: true); grid_w = GRID if grid_w <= 0
       col = 0; row = 1; row_h = 0
       els.each do |e|
         eid = v2e[e['ElementId']]; next unless eid && eids_for_sheet.include?(eid)

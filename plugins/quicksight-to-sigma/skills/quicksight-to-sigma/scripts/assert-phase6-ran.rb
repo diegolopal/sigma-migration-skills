@@ -269,11 +269,9 @@ unless opts[:skip_layout]
         if layout_xml.empty?
           warn "[FAIL] gate 4/4: live workbook #{wb_id} has NO top-level layout XML."
           warn "       Elements render as a single-column stack instead of the"
-          warn "       dashboard grid. Build a layout and PUT it:"
-          warn "         ruby scripts/build-dashboard-layout.rb \\"
-          warn "           --layout #{opts[:tab]}/dashboard-layout.json \\"
-          warn "           --wb-ids #{opts[:tab]}/wb-ids.json \\"
-          warn "           --out #{opts[:tab]}/layout.xml"
+          warn "       dashboard grid. Rebuild the layout with this skill's layout"
+          warn "       builder (see SKILL.md — layout phase) into #{opts[:tab]}/layout.xml,"
+          warn "       then PUT it:"
           warn "         ruby scripts/put-layout.rb --workbook #{wb_id} \\"
           warn "           --layout #{opts[:tab]}/layout.xml"
           warn "       See beads-sigma-bw3."
@@ -291,9 +289,8 @@ unless opts[:skip_layout]
           non_data_stack_pages.each do |pid, col, n|
             warn "         page=#{pid.inspect}: #{n} elements all at gridColumn=#{col.inspect}"
           end
-          warn "       Build a real layout and PUT it:"
-          warn "         ruby scripts/build-dashboard-layout.rb --layout #{opts[:tab]}/dashboard-layout.json \\"
-          warn "           --wb-ids #{opts[:tab]}/wb-ids.json --out #{opts[:tab]}/layout.xml"
+          warn "       Rebuild the layout with this skill's layout builder (see SKILL.md —"
+          warn "       layout phase) into #{opts[:tab]}/layout.xml, then PUT it:"
           warn "         ruby scripts/put-layout.rb --workbook #{wb_id} --layout #{opts[:tab]}/layout.xml"
           warn "       See beads-sigma-bw3."
           exit 6

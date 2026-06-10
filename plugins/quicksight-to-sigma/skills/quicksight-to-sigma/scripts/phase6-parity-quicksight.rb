@@ -66,24 +66,26 @@ rescue JSON::ParserError
   YAML.safe_load(body, permitted_classes: [Date, Time]) || {}
 end
 
-# Resolve the (dim, val) column display names for a chart element, by kind.
-# Returns [dim_name, val_name] (dim_name nil for KPI) or nil if not plannable.
+# Resolve the (dim, val) columns for a chart element, by kind. Returns
+# [[dim_id, dim_name], [val_id, val_name]] (dim pair nil for KPI) or nil if not
+# plannable. The IDs matter: sigma-mcp-v2 workbook queries resolve COLUMN IDS, not
+# display labels — SQL emitted against display names fails to resolve.
 def chart_columns(el)
   cols = el['columns'] || []
   by_id = cols.each_with_object({}) { |c, h| h[c['id']] = c['name'] }
   case el['kind']
   when 'kpi-chart'
     vid = el.dig('value', 'columnId') || el.dig('value', 'id')
-    by_id[vid] && [nil, by_id[vid]]
+    by_id[vid] && [nil, [vid, by_id[vid]]]
   when 'pie-chart', 'donut-chart'
     did = el.dig('color', 'id') || el.dig('color', 'columnId')
     vid = el.dig('value', 'id') || el.dig('value', 'columnId')
-    by_id[did] && by_id[vid] ? [by_id[did], by_id[vid]] : nil
+    by_id[did] && by_id[vid] ? [[did, by_id[did]], [vid, by_id[vid]]] : nil
   else # bar-chart, line-chart, combo-chart, scatter-chart, ...
     did = el.dig('xAxis', 'columnId')
     vid = Array(el.dig('yAxis', 'columnIds')).first
     vid = vid['columnId'] if vid.is_a?(Hash) # combo dual-axis object form
-    by_id[did] && by_id[vid] ? [by_id[did], by_id[vid]] : nil
+    by_id[did] && by_id[vid] ? [[did, by_id[did]], [vid, by_id[vid]]] : nil
   end
 end
 
@@ -103,10 +105,12 @@ if !opts[:finalize]
   Array(spec['pages']).each do |page|
     Array(page['elements']).each do |el|
       next unless el['kind'].to_s.end_with?('-chart')
-      names = chart_columns(el)
-      next unless names
+      pairs = chart_columns(el)
+      next unless pairs
       charts << { 'chart' => el['name'], 'sigma_element_id' => el['id'],
-                  'kind' => el['kind'], 'sigma_columns' => names.compact,
+                  'kind' => el['kind'],
+                  'sigma_columns' => pairs.compact.map { |id_name| id_name[1] },
+                  'sigma_column_ids' => pairs.compact.map { |id_name| id_name[0] },
                   'workbook_id' => opts[:wb] }
     end
   end
@@ -129,11 +133,14 @@ if !opts[:finalize]
   puts 'KPI charts: a single row [[null, <value>]].'
   puts ''
   charts.each_with_index do |c, i|
-    cols = c['sigma_columns']
-    sql = if cols.length >= 2
-            %(SELECT "#{cols[0]}" AS dim, "#{cols[1]}" AS val FROM "workbook"."#{c['sigma_element_id']}" ORDER BY dim NULLS FIRST)
+    # Query by COLUMN ID (sigma-mcp-v2 can't resolve display labels in workbook
+    # queries); the display names ride along in a trailing SQL comment for readability.
+    ids = c['sigma_column_ids']
+    names = c['sigma_columns']
+    sql = if ids.length >= 2
+            %(SELECT "#{ids[0]}" AS dim, "#{ids[1]}" AS val FROM "workbook"."#{c['sigma_element_id']}" ORDER BY dim NULLS FIRST -- dim: #{names[0]}, val: #{names[1]})
           else
-            %(SELECT "#{cols[0]}" AS val FROM "workbook"."#{c['sigma_element_id']}")
+            %(SELECT "#{ids[0]}" AS val FROM "workbook"."#{c['sigma_element_id']}" -- val: #{names[0]})
           end
     puts "  [#{i + 1}/#{charts.length}] #{c['chart']} (#{c['kind']})"
     puts "    mcp__sigma-mcp-v2__query  type=workbook  workbookId=#{opts[:wb]}"
