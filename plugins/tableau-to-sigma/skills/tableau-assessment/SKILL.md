@@ -1,6 +1,7 @@
 ---
 name: tableau-assessment
 description: Take inventory of a Tableau Cloud site and produce a migration-readiness readout — environment counts, licenses, datasource mix, refresh history, per-workbook usage, per-workbook complexity (via .twb gap-scan), and a value/cost-ranked migration shortlist. Use when a user wants to scope a Tableau→Sigma migration, audit BI sprawl, or pick which workbooks to convert first. Lightweight (~90s) MCP-driven pre-scoping; complements Hakkoda's deeper Assessment App rather than replacing it.
+user-invocable: true
 ---
 
 # Tableau Assessment

@@ -73,6 +73,20 @@ Parity     →  query Sigma vs the source warehouse — GREEN only on a match
 
 Each plugin's `skills/<name>/SKILL.md` is the entry point; `refs/` holds the spec
 gotchas and `scripts/` the pipeline. Skills are self-contained — no external paths to wire up.
+The canonical phase arc and a per-skill phase-number mapping live in
+[`docs/phase-schema.md`](docs/phase-schema.md).
+
+## Corpus
+
+[`corpus/`](corpus/README.md) is a regression corpus: real (demo-data) source
+artifacts for every tool — .twb, .bim, classic + PBIR report JSON, Qlik app
+metadata, ThoughtSpot TML, QuickSight describes, Cognos modules/reports,
+LookML — with **golden converter outputs** and a runner. Smoke-test converter
+or builder changes without a live tenant:
+
+```
+corpus/run-corpus.sh --check      # no creds needed; CI-safe
+```
 
 ## Requirements
 

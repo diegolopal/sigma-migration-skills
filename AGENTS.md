@@ -42,6 +42,21 @@ reading the relevant `SKILL.md` and executing its scripts.
 Assessments are read-only (never write to the source or post to Sigma); run one
 to pick what to convert, then hand off to the matching converter.
 
+Each converter's phase numbering is local to its SKILL.md — the canonical
+Assess → Discover → Reuse-check → Convert → Post-DM gate → Build workbook →
+Layout → Parity → Security → Enhance arc, with the per-skill phase-number
+mapping, is in [`docs/phase-schema.md`](docs/phase-schema.md). Never renumber
+a skill's phases.
+
+## Corpus (regression fixtures)
+
+`corpus/` holds per-tool source artifacts + golden converter outputs + a
+runner (`corpus/run-corpus.sh --check`, creds-free). When you change a
+converter or builder, run the corpus check and reconvert the affected case
+(`--reconvert` prints the exact tool call; `--diff` byte-compares after id
+normalization). See `corpus/README.md` for the case inventory and how to add
+cases.
+
 ## Credentials (agent-neutral)
 
 All scripts read credentials from **environment variables**. Setup writes them to

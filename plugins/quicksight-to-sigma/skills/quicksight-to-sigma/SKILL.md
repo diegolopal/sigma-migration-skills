@@ -1,6 +1,7 @@
 ---
 name: quicksight-to-sigma
 description: Convert an Amazon QuickSight analysis or dashboard into a Sigma data model and matching dashboard. Use when the user has a QuickSight analysis/dashboard and wants to recreate it in Sigma. Covers AWS-CLI extraction of the analysis definition + datasets + data sources, calc-field / data-prep translation via the convert_quicksight_to_sigma MCP, posting the data model + workbook via the Sigma REST API, layout, and parity verification against the same warehouse.
+user-invocable: true
 ---
 
 # QuickSight → Sigma

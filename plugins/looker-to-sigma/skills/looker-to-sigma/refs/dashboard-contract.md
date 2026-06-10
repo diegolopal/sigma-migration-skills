@@ -69,14 +69,14 @@ filter expressions — flag for manual review). Maps:
 - `single_value` → Sigma `kpi-chart`; `looker_column` → `bar-chart`;
   `looker_area` → `area-chart`; `table` → `table`;
   `looker_donut_multiples` → single `donut-chart` + warn (Looker shows N donuts).
-- Full tile-type, filter-type, and layout maps live in
-  `~/sigma-skills-staging/research/looker-dashboard-layout.md` §5e/§5f/§3 — do not duplicate; defer there.
+- Full tile-type, filter-type, and layout maps live in this skill's
+  `refs/looker-dashboard-layout.md` §5e/§5f/§3 — do not duplicate; defer there.
 
 ## Layout → Sigma 24-col grid (newspaper)
 `gridColumn = (col+1) / (col+1+width)`, `gridRow = (row+1) / (row+1+height)`.
-tile/static/grid modes need a snap heuristic — see research note §3 (lossy; warn + stack).
+tile/static/grid modes need a snap heuristic — see `refs/looker-dashboard-layout.md` §3 (lossy; warn + stack).
 
-## Translation hazards to enforce (research note §5)
+## Translation hazards to enforce (refs/looker-dashboard-layout.md §5)
 Liquid (`{%`/`{{`) → warn/partial; `merged_results` → DM join or custom SQL; table calcs
 (`pct_of_total`/`running_total`/`offset`) → workbook `Sum/GrandTotal`/`RunningSum`/`Lag`;
 field prefix resolution must walk explore `join`s (alias vs `from:` view); cross-filtering

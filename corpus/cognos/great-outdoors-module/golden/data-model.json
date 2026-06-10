@@ -1,0 +1,1299 @@
+{
+  "sigmaDataModel": {
+    "name": "Great Outdoors data module",
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "id0001",
+        "name": "Page 1",
+        "elements": [
+          {
+            "id": "id0002",
+            "kind": "table",
+            "name": "Sales",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SALES"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0003",
+                "formula": "[SALES/Quantity]"
+              },
+              {
+                "id": "id0004",
+                "formula": "[SALES/Unit Cost]"
+              },
+              {
+                "id": "id0005",
+                "formula": "[SALES/Unit Price]"
+              },
+              {
+                "id": "id0006",
+                "formula": "[SALES/Unit Sale Price]"
+              },
+              {
+                "id": "id0007",
+                "formula": "[SALES/Revenue]"
+              },
+              {
+                "id": "id0008",
+                "formula": "[SALES/Product Cost]"
+              },
+              {
+                "id": "id0009",
+                "formula": "[SALES/Planned Revenue]"
+              },
+              {
+                "id": "id0010",
+                "formula": "[SALES/Gross Profit]"
+              },
+              {
+                "id": "id0011",
+                "name": "Gross Margin",
+                "formula": "[SALES/Gross Profit] / [SALES/Revenue]"
+              },
+              {
+                "id": "id0012",
+                "formula": "[SALES/Order Method Code]",
+                "hidden": true
+              },
+              {
+                "id": "id0013",
+                "formula": "[SALES/Product Number]",
+                "hidden": true
+              },
+              {
+                "id": "id0014",
+                "formula": "[SALES/Retailer Site Code]",
+                "hidden": true
+              },
+              {
+                "id": "id0015",
+                "formula": "[SALES/Day Key Order Date]",
+                "hidden": true
+              },
+              {
+                "id": "id0016",
+                "formula": "[SALES/Day Key Close Date]",
+                "hidden": true
+              },
+              {
+                "id": "id0017",
+                "formula": "[SALES/Day Key Ship Date]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0003",
+              "id0004",
+              "id0005",
+              "id0006",
+              "id0007",
+              "id0008",
+              "id0009",
+              "id0010",
+              "id0011",
+              "id0012",
+              "id0013",
+              "id0014",
+              "id0015",
+              "id0016",
+              "id0017"
+            ],
+            "relationships": [
+              {
+                "id": "id0018",
+                "targetElementId": "id0019",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0012",
+                    "targetColumnId": "id0020"
+                  }
+                ],
+                "name": "ORDER_METHODS_SALES"
+              },
+              {
+                "id": "id0021",
+                "targetElementId": "id0022",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0013",
+                    "targetColumnId": "id0023"
+                  }
+                ],
+                "name": "PRODUCTS_SALES"
+              },
+              {
+                "id": "id0024",
+                "targetElementId": "id0025",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0014",
+                    "targetColumnId": "id0026"
+                  }
+                ],
+                "name": "RETAILERS_SALES"
+              },
+              {
+                "id": "id0027",
+                "targetElementId": "id0028",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0015",
+                    "targetColumnId": "id0029"
+                  }
+                ],
+                "name": "TIME_SALES"
+              },
+              {
+                "id": "id0030",
+                "targetElementId": "id0031",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0016",
+                    "targetColumnId": "id0032"
+                  }
+                ],
+                "name": "TIME_CLOSE_SALES"
+              },
+              {
+                "id": "id0033",
+                "targetElementId": "id0034",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0017",
+                    "targetColumnId": "id0035"
+                  }
+                ],
+                "name": "TIME_SHIP_SALES"
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0036",
+                "name": "Quantity",
+                "formula": "Sum([Quantity])"
+              },
+              {
+                "id": "id0037",
+                "name": "Unit Cost",
+                "formula": "Sum([Unit Cost])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0038",
+                "name": "Unit Price",
+                "formula": "Avg([Unit Price])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0039",
+                "name": "Unit Sale Price",
+                "formula": "Avg([Unit Sale Price])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0040",
+                "name": "Revenue",
+                "formula": "Sum([Revenue])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0041",
+                "name": "Product Cost",
+                "formula": "Sum([Product Cost])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0042",
+                "name": "Planned Revenue",
+                "formula": "Sum([Planned Revenue])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              },
+              {
+                "id": "id0043",
+                "name": "Gross Profit",
+                "formula": "Sum([Gross Profit])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              }
+            ]
+          },
+          {
+            "id": "id0044",
+            "kind": "table",
+            "name": "Returned Items",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "RETURNED_ITEMS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0045",
+                "formula": "[RETURNED_ITEMS/Return Quantity]"
+              },
+              {
+                "id": "id0046",
+                "formula": "[RETURNED_ITEMS/Order Method Code]",
+                "hidden": true
+              },
+              {
+                "id": "id0047",
+                "formula": "[RETURNED_ITEMS/Day Key Return]",
+                "hidden": true
+              },
+              {
+                "id": "id0048",
+                "formula": "[RETURNED_ITEMS/Retailer Site Code]",
+                "hidden": true
+              },
+              {
+                "id": "id0049",
+                "formula": "[RETURNED_ITEMS/Product Number]",
+                "hidden": true
+              },
+              {
+                "id": "id0050",
+                "formula": "[RETURNED_ITEMS/Return Reason Code]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0045",
+              "id0046",
+              "id0047",
+              "id0048",
+              "id0049",
+              "id0050"
+            ],
+            "relationships": [
+              {
+                "id": "id0051",
+                "targetElementId": "id0052",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0046",
+                    "targetColumnId": "id0053"
+                  }
+                ],
+                "name": "ORDER_METHODS_RETURNS"
+              },
+              {
+                "id": "id0054",
+                "targetElementId": "id0055",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0047",
+                    "targetColumnId": "id0056"
+                  }
+                ],
+                "name": "TIME_RETURNS"
+              },
+              {
+                "id": "id0057",
+                "targetElementId": "id0058",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0048",
+                    "targetColumnId": "id0059"
+                  }
+                ],
+                "name": "RETAILERS_RETURNS"
+              },
+              {
+                "id": "id0060",
+                "targetElementId": "id0061",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0049",
+                    "targetColumnId": "id0062"
+                  }
+                ],
+                "name": "PRODUCTS_RETURNS"
+              },
+              {
+                "id": "id0063",
+                "targetElementId": "id0064",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0050",
+                    "targetColumnId": "id0065"
+                  }
+                ],
+                "name": "RETURNS_REASON"
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0066",
+                "name": "Return Quantity",
+                "formula": "Sum([Return Quantity])"
+              }
+            ]
+          },
+          {
+            "id": "id0067",
+            "kind": "table",
+            "name": "Sales Targets",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SALES_TARGETS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0068",
+                "formula": "[SALES_TARGETS/Sales Target]"
+              },
+              {
+                "id": "id0069",
+                "name": "Month Date",
+                "formula": "cast (\r\n Mid(\r\n Text(Month_Key)) ,1,4 ) & \"-\"\r\n +\r\n  Mid(\r\n Text(Month_Key)) ,5,2 )&\"-01\"\r\n, date)"
+              },
+              {
+                "id": "id0070",
+                "formula": "[SALES_TARGETS/Product Type Code]",
+                "hidden": true
+              },
+              {
+                "id": "id0071",
+                "formula": "[SALES_TARGETS/Month Key]",
+                "hidden": true
+              },
+              {
+                "id": "id0072",
+                "formula": "[SALES_TARGETS/Retailer Site Code]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0068",
+              "id0069",
+              "id0070",
+              "id0071",
+              "id0072"
+            ],
+            "relationships": [
+              {
+                "id": "id0073",
+                "targetElementId": "id0074",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0070",
+                    "targetColumnId": "id0075"
+                  }
+                ],
+                "name": "PRODUCTS_SALES_TARGETS"
+              },
+              {
+                "id": "id0076",
+                "targetElementId": "id0077",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0071",
+                    "targetColumnId": "id0078"
+                  }
+                ],
+                "name": "TIME_SALES_TARGETS"
+              },
+              {
+                "id": "id0079",
+                "targetElementId": "id0080",
+                "keys": [
+                  {
+                    "sourceColumnId": "id0072",
+                    "targetColumnId": "id0081"
+                  }
+                ],
+                "name": "RETAILERS_SALES_TARGETS"
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0082",
+                "name": "Sales Target",
+                "formula": "Sum([Sales Target])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              }
+            ]
+          },
+          {
+            "id": "id0083",
+            "kind": "table",
+            "name": "Order Methods Base",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "ORDER_METHODS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0084",
+                "formula": "[ORDER_METHODS/Order Method Type]"
+              }
+            ],
+            "order": [
+              "id0084"
+            ]
+          },
+          {
+            "id": "id0085",
+            "kind": "table",
+            "name": "Products Base",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "PRODUCTS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0086",
+                "formula": "[PRODUCTS/Product Line]"
+              },
+              {
+                "id": "id0087",
+                "formula": "[PRODUCTS/Product Type]"
+              },
+              {
+                "id": "id0088",
+                "formula": "[PRODUCTS/Product]"
+              },
+              {
+                "id": "id0089",
+                "formula": "[PRODUCTS/Introduction Date]"
+              },
+              {
+                "id": "id0090",
+                "formula": "[PRODUCTS/Product Description]"
+              }
+            ],
+            "order": [
+              "id0086",
+              "id0087",
+              "id0088",
+              "id0089",
+              "id0090"
+            ]
+          },
+          {
+            "id": "id0091",
+            "kind": "table",
+            "name": "Retailers Base",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "RETAILERS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0092",
+                "formula": "[RETAILERS/Retailer Region]"
+              },
+              {
+                "id": "id0093",
+                "formula": "[RETAILERS/Retailer Country]"
+              },
+              {
+                "id": "id0094",
+                "formula": "[RETAILERS/Retailer]"
+              },
+              {
+                "id": "id0095",
+                "formula": "[RETAILERS/Retailer Address]"
+              },
+              {
+                "id": "id0096",
+                "formula": "[RETAILERS/Retailer City]"
+              },
+              {
+                "id": "id0097",
+                "formula": "[RETAILERS/Retailer Province or State]"
+              },
+              {
+                "id": "id0098",
+                "formula": "[RETAILERS/Retailer Postal Zone]"
+              }
+            ],
+            "order": [
+              "id0092",
+              "id0093",
+              "id0094",
+              "id0095",
+              "id0096",
+              "id0097",
+              "id0098"
+            ]
+          },
+          {
+            "id": "id0099",
+            "kind": "table",
+            "name": "Time Base",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "TIME_"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0100",
+                "formula": "[TIME_/Year]"
+              },
+              {
+                "id": "id0101",
+                "formula": "[TIME_/Quarter Numeric]",
+                "name": "Quarter (numeric)"
+              },
+              {
+                "id": "id0102",
+                "formula": "[TIME_/Quarter]"
+              },
+              {
+                "id": "id0103",
+                "formula": "[TIME_/Month Number]"
+              },
+              {
+                "id": "id0104",
+                "formula": "[TIME_/Month Numeric]",
+                "name": "Month (numeric)"
+              },
+              {
+                "id": "id0105",
+                "formula": "[TIME_/Month]"
+              },
+              {
+                "id": "id0106",
+                "formula": "[TIME_/Date]"
+              }
+            ],
+            "order": [
+              "id0100",
+              "id0101",
+              "id0102",
+              "id0103",
+              "id0104",
+              "id0105",
+              "id0106"
+            ]
+          },
+          {
+            "id": "id0052",
+            "kind": "table",
+            "name": "Order Methods Returns",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "ORDER_METHODS_RETURNS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0053",
+                "formula": "[ORDER_METHODS_RETURNS/Order Method Code]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0053"
+            ]
+          },
+          {
+            "id": "id0019",
+            "kind": "table",
+            "name": "Order Methods Sales",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "ORDER_METHODS_SALES"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0020",
+                "formula": "[ORDER_METHODS_SALES/Order Method Code]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0020"
+            ]
+          },
+          {
+            "id": "id0028",
+            "kind": "table",
+            "name": "Time Sales",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "TIME_SALES"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0029",
+                "formula": "[TIME_SALES/Day Key]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0029"
+            ]
+          },
+          {
+            "id": "id0022",
+            "kind": "table",
+            "name": "Products Sales",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "PRODUCTS_SALES"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0023",
+                "formula": "[PRODUCTS_SALES/Product Number]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0023"
+            ]
+          },
+          {
+            "id": "id0061",
+            "kind": "table",
+            "name": "Products Returns",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "PRODUCTS_RETURNS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0062",
+                "formula": "[PRODUCTS_RETURNS/Product Number]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0062"
+            ]
+          },
+          {
+            "id": "id0055",
+            "kind": "table",
+            "name": "Time Returns",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "TIME_RETURNS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0056",
+                "formula": "[TIME_RETURNS/Day Key]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0056"
+            ]
+          },
+          {
+            "id": "id0074",
+            "kind": "table",
+            "name": "Products Sales Targets",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "PRODUCTS_SALES_TARGETS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0075",
+                "formula": "[PRODUCTS_SALES_TARGETS/Product Type Code]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0075"
+            ]
+          },
+          {
+            "id": "id0077",
+            "kind": "table",
+            "name": "Time Sales Targets",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "TIME_SALES_TARGETS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0078",
+                "formula": "[TIME_SALES_TARGETS/Month Key]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0078"
+            ]
+          },
+          {
+            "id": "id0025",
+            "kind": "table",
+            "name": "Retailers Sales",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "RETAILERS_SALES"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0026",
+                "formula": "[RETAILERS_SALES/Retailer Site Code]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0026"
+            ]
+          },
+          {
+            "id": "id0058",
+            "kind": "table",
+            "name": "Retailers Returns",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "RETAILERS_RETURNS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0059",
+                "formula": "[RETAILERS_RETURNS/Retailer Site Code]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0059"
+            ]
+          },
+          {
+            "id": "id0080",
+            "kind": "table",
+            "name": "Retailers Sales Targets",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "RETAILERS_SALES_TARGETS"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0081",
+                "formula": "[RETAILERS_SALES_TARGETS/Retailer Site Code]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0081"
+            ]
+          },
+          {
+            "id": "id0064",
+            "kind": "table",
+            "name": "Returns Reason",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "RETURNS_REASON"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0107",
+                "name": "Return Reason Code",
+                "formula": "Returned_Items.[RETURNS_REASON/Return Reason Code]"
+              },
+              {
+                "id": "id0108",
+                "name": "Reason Description",
+                "formula": "Returned_Items.[RETURNS_REASON/Reason Description]"
+              },
+              {
+                "id": "id0065",
+                "formula": "[RETURNS_REASON/Return Reason Code]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0107",
+              "id0108",
+              "id0065"
+            ]
+          },
+          {
+            "id": "id0034",
+            "kind": "table",
+            "name": "Time Ship Sales",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "TIME_SHIP_SALES"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0109",
+                "name": "Year (ship)",
+                "formula": "Time_Base.[TIME_SHIP_SALES/Year (ship)]"
+              },
+              {
+                "id": "id0110",
+                "name": "Quarter (numeric) (ship)",
+                "formula": "Time_Base.[TIME_SHIP_SALES/Quarter (numeric) (ship)]"
+              },
+              {
+                "id": "id0111",
+                "name": "Quarter (ship)",
+                "formula": "Time_Base.[TIME_SHIP_SALES/Quarter (ship)]"
+              },
+              {
+                "id": "id0112",
+                "name": "Month Number (ship)",
+                "formula": "Time_Base.[TIME_SHIP_SALES/Month ship]"
+              },
+              {
+                "id": "id0113",
+                "name": "Month (numeric) (ship)",
+                "formula": "Time_Base.[TIME_SHIP_SALES/Month (numeric) (ship)]"
+              },
+              {
+                "id": "id0114",
+                "name": "Month (ship)",
+                "formula": "Time_Base.[TIME_SHIP_SALES/Month (ship)]"
+              },
+              {
+                "id": "id0115",
+                "name": "Date (ship)",
+                "formula": "Time_Base.[TIME_SHIP_SALES/Date (ship)]"
+              },
+              {
+                "id": "id0035",
+                "formula": "[TIME_SHIP_SALES/Day Key]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0109",
+              "id0110",
+              "id0111",
+              "id0112",
+              "id0113",
+              "id0114",
+              "id0115",
+              "id0035"
+            ]
+          },
+          {
+            "id": "id0031",
+            "kind": "table",
+            "name": "Time Close Sales",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "TIME_CLOSE_SALES"
+              ]
+            },
+            "columns": [
+              {
+                "id": "id0116",
+                "name": "Year (close)",
+                "formula": "Time_Base.[TIME_CLOSE_SALES/Year (close)]"
+              },
+              {
+                "id": "id0117",
+                "name": "Quarter (numeric) (close)",
+                "formula": "Time_Base.[TIME_CLOSE_SALES/Quarter (numeric) (close)]"
+              },
+              {
+                "id": "id0118",
+                "name": "Quarter (close)",
+                "formula": "Time_Base.[TIME_CLOSE_SALES/Quarter (close)]"
+              },
+              {
+                "id": "id0119",
+                "name": "Month Number (close)",
+                "formula": "Time_Base.[TIME_CLOSE_SALES/Month close]"
+              },
+              {
+                "id": "id0120",
+                "name": "Month (numeric) (close)",
+                "formula": "Time_Base.[TIME_CLOSE_SALES/Month (numeric) (close)]"
+              },
+              {
+                "id": "id0121",
+                "name": "Month (close)",
+                "formula": "Time_Base.[TIME_CLOSE_SALES/Month (close)]"
+              },
+              {
+                "id": "id0122",
+                "name": "Date (close)",
+                "formula": "Time_Base.[TIME_CLOSE_SALES/Date (close)]"
+              },
+              {
+                "id": "id0032",
+                "formula": "[TIME_CLOSE_SALES/Day Key]",
+                "hidden": true
+              }
+            ],
+            "order": [
+              "id0116",
+              "id0117",
+              "id0118",
+              "id0119",
+              "id0120",
+              "id0121",
+              "id0122",
+              "id0032"
+            ]
+          },
+          {
+            "id": "id0123",
+            "kind": "table",
+            "name": "Gregorian Calendar Csv",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "GREGORIANCALENDAR_CSV"
+              ]
+            },
+            "columns": [],
+            "order": []
+          },
+          {
+            "id": "id0124",
+            "kind": "table",
+            "name": "Sales View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0002"
+            },
+            "columns": [
+              {
+                "id": "id0125",
+                "formula": "[Sales/Quantity]"
+              },
+              {
+                "id": "id0126",
+                "formula": "[Sales/Unit Cost]"
+              },
+              {
+                "id": "id0127",
+                "formula": "[Sales/Unit Price]"
+              },
+              {
+                "id": "id0128",
+                "formula": "[Sales/Unit Sale Price]"
+              },
+              {
+                "id": "id0129",
+                "formula": "[Sales/Revenue]"
+              },
+              {
+                "id": "id0130",
+                "formula": "[Sales/Product Cost]"
+              },
+              {
+                "id": "id0131",
+                "formula": "[Sales/Planned Revenue]"
+              },
+              {
+                "id": "id0132",
+                "formula": "[Sales/Gross Profit]"
+              },
+              {
+                "id": "id0133",
+                "formula": "[Sales/Order Method Code]"
+              },
+              {
+                "id": "id0134",
+                "formula": "[Sales/Product Number]"
+              },
+              {
+                "id": "id0135",
+                "formula": "[Sales/Retailer Site Code]"
+              },
+              {
+                "id": "id0136",
+                "formula": "[Sales/Day Key Order Date]"
+              },
+              {
+                "id": "id0137",
+                "formula": "[Sales/Day Key Close Date]"
+              },
+              {
+                "id": "id0138",
+                "formula": "[Sales/Day Key Ship Date]"
+              },
+              {
+                "id": "id0139",
+                "formula": "[Sales/ORDER_METHODS_SALES/Order Method Code]"
+              },
+              {
+                "id": "id0140",
+                "formula": "[Sales/PRODUCTS_SALES/Product Number]"
+              },
+              {
+                "id": "id0141",
+                "formula": "[Sales/RETAILERS_SALES/Retailer Site Code]"
+              },
+              {
+                "id": "id0142",
+                "formula": "[Sales/TIME_SALES/Day Key]"
+              },
+              {
+                "id": "id0143",
+                "formula": "[Sales/TIME_CLOSE_SALES/Day Key]"
+              },
+              {
+                "id": "id0144",
+                "formula": "[Sales/TIME_SHIP_SALES/Day Key]"
+              }
+            ],
+            "order": [
+              "id0125",
+              "id0126",
+              "id0127",
+              "id0128",
+              "id0129",
+              "id0130",
+              "id0131",
+              "id0132",
+              "id0133",
+              "id0134",
+              "id0135",
+              "id0136",
+              "id0137",
+              "id0138",
+              "id0139",
+              "id0140",
+              "id0141",
+              "id0142",
+              "id0143",
+              "id0144"
+            ]
+          },
+          {
+            "id": "id0145",
+            "kind": "table",
+            "name": "Returned Items View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0044"
+            },
+            "columns": [
+              {
+                "id": "id0146",
+                "formula": "[Returned Items/Return Quantity]"
+              },
+              {
+                "id": "id0147",
+                "formula": "[Returned Items/Order Method Code]"
+              },
+              {
+                "id": "id0148",
+                "formula": "[Returned Items/Day Key Return]"
+              },
+              {
+                "id": "id0149",
+                "formula": "[Returned Items/Retailer Site Code]"
+              },
+              {
+                "id": "id0150",
+                "formula": "[Returned Items/Product Number]"
+              },
+              {
+                "id": "id0151",
+                "formula": "[Returned Items/Return Reason Code]"
+              },
+              {
+                "id": "id0152",
+                "formula": "[Returned Items/ORDER_METHODS_RETURNS/Order Method Code]"
+              },
+              {
+                "id": "id0153",
+                "formula": "[Returned Items/TIME_RETURNS/Day Key]"
+              },
+              {
+                "id": "id0154",
+                "formula": "[Returned Items/RETAILERS_RETURNS/Retailer Site Code]"
+              },
+              {
+                "id": "id0155",
+                "formula": "[Returned Items/PRODUCTS_RETURNS/Product Number]"
+              },
+              {
+                "id": "id0156",
+                "formula": "[Returned Items/RETURNS_REASON/Return Reason Code]"
+              }
+            ],
+            "order": [
+              "id0146",
+              "id0147",
+              "id0148",
+              "id0149",
+              "id0150",
+              "id0151",
+              "id0152",
+              "id0153",
+              "id0154",
+              "id0155",
+              "id0156"
+            ]
+          },
+          {
+            "id": "id0157",
+            "kind": "table",
+            "name": "Sales Targets View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0067"
+            },
+            "columns": [
+              {
+                "id": "id0158",
+                "formula": "[Sales Targets/Sales Target]"
+              },
+              {
+                "id": "id0159",
+                "formula": "[Sales Targets/Product Type Code]"
+              },
+              {
+                "id": "id0160",
+                "formula": "[Sales Targets/Month Key]"
+              },
+              {
+                "id": "id0161",
+                "formula": "[Sales Targets/Retailer Site Code]"
+              },
+              {
+                "id": "id0162",
+                "formula": "[Sales Targets/PRODUCTS_SALES_TARGETS/Product Type Code]"
+              },
+              {
+                "id": "id0163",
+                "formula": "[Sales Targets/TIME_SALES_TARGETS/Month Key]"
+              },
+              {
+                "id": "id0164",
+                "formula": "[Sales Targets/RETAILERS_SALES_TARGETS/Retailer Site Code]"
+              }
+            ],
+            "order": [
+              "id0158",
+              "id0159",
+              "id0160",
+              "id0161",
+              "id0162",
+              "id0163",
+              "id0164"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "stats": {
+    "querySubjects": 22,
+    "elements": 25,
+    "columns": 114,
+    "metrics": 10,
+    "relationships": 14
+  },
+  "warnings": [
+    "\"Sales_Targets.Month_Date\": function \"cast()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Ship_Sales.Year_\": function \"Year()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Ship_Sales.Quarter_numeric\": function \"Quarter()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Ship_Sales.Quarter\": function \"Quarter()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Ship_Sales.Month_numeric\": function \"Month()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Ship_Sales.Month_\": function \"Month()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Ship_Sales.Date_\": function \"Date()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Close_Sales.Year_\": function \"Year()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Close_Sales.Quarter_numeric\": function \"Quarter()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Close_Sales.Quarter\": function \"Quarter()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Close_Sales.Month_numeric\": function \"Month()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Close_Sales.Month_\": function \"Month()\" has no confirmed Sigma mapping — review/translate manually.",
+    "\"Time_Close_Sales.Date_\": function \"Date()\" has no confirmed Sigma mapping — review/translate manually."
+  ]
+}

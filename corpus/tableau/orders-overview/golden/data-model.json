@@ -1,0 +1,1559 @@
+{
+  "sigmaDataModel": {
+    "name": "ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)",
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "id0001",
+        "name": "Page 1",
+        "elements": [
+          {
+            "id": "id0002",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SCHEMA",
+                "CUSTOMER_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0003/390A3F4B-C43C-34BB-AD41-041BE5EA5EDE",
+                "formula": "[CUSTOMER_DIM/Customer Key]",
+                "name": "Customer Key"
+              },
+              {
+                "id": "inode-NORM0004/D885A468-9E01-3697-BC72-79ED0750CD3C",
+                "formula": "[CUSTOMER_DIM/Customer Id]",
+                "name": "Customer Id"
+              },
+              {
+                "id": "inode-NORM0005/429C9ADB-DEF4-3075-ABD4-875141500A26",
+                "formula": "[CUSTOMER_DIM/First Name]",
+                "name": "First Name"
+              },
+              {
+                "id": "inode-NORM0006/6B5048AB-89FC-3CC1-B65D-C406CC73A4BF",
+                "formula": "[CUSTOMER_DIM/Last Name]",
+                "name": "Last Name"
+              },
+              {
+                "id": "inode-NORM0007/1754C0C0-D2FC-3F9E-8B2B-59381AD90547",
+                "formula": "[CUSTOMER_DIM/Email]",
+                "name": "Email"
+              },
+              {
+                "id": "inode-NORM0008/59D34EF1-B41D-3656-BF9F-CA61E028D942",
+                "formula": "[CUSTOMER_DIM/Phone]",
+                "name": "Phone"
+              },
+              {
+                "id": "inode-NORM0009/93EEAC1D-9977-3B57-9E58-3995615E1B2B",
+                "formula": "[CUSTOMER_DIM/City]",
+                "name": "City"
+              },
+              {
+                "id": "inode-NORM0010/4E3AA1FC-4BE6-3B50-9688-3552824310BE",
+                "formula": "[CUSTOMER_DIM/State]",
+                "name": "State"
+              },
+              {
+                "id": "inode-NORM0011/8FDB1236-128B-3F06-824B-27151B98976B",
+                "formula": "[CUSTOMER_DIM/Zip Code]",
+                "name": "Zip Code"
+              },
+              {
+                "id": "inode-NORM0012/D73055C0-9ED1-347D-8F8E-05A48CE2C8A8",
+                "formula": "[CUSTOMER_DIM/Region]",
+                "name": "Region"
+              },
+              {
+                "id": "inode-NORM0013/49C438C6-924A-38D9-91A5-1C9DCA786152",
+                "formula": "[CUSTOMER_DIM/Customer Segment]",
+                "name": "Customer Segment"
+              },
+              {
+                "id": "inode-NORM0014/E9A1D9E9-E9B3-3C75-B608-537D3078CED4",
+                "formula": "[CUSTOMER_DIM/Loyalty Tier]",
+                "name": "Loyalty Tier"
+              },
+              {
+                "id": "inode-NORM0015/DBB68D30-ED2B-33A7-B863-8B74C7FFCEC1",
+                "formula": "[CUSTOMER_DIM/Acquisition Channel]",
+                "name": "Acquisition Channel"
+              },
+              {
+                "id": "inode-NORM0016/43C4A763-8031-30F0-947A-A12C74B1091B",
+                "formula": "[CUSTOMER_DIM/First Order Date]",
+                "name": "First Order Date"
+              },
+              {
+                "id": "inode-NORM0017/B886F556-DC7B-3939-96B6-F29E519B6F82",
+                "formula": "[CUSTOMER_DIM/Is Active]",
+                "name": "Is Active"
+              },
+              {
+                "id": "inode-NORM0018/07380494-7E6A-384F-95EA-149101E228EC",
+                "formula": "[CUSTOMER_DIM/Is Email Opt In]",
+                "name": "Is Email Opt In"
+              },
+              {
+                "id": "inode-NORM0019/F1F4CDF6-C95F-35D1-96B6-6BACE95969C4",
+                "formula": "[CUSTOMER_DIM/Lifetime Order Count]",
+                "name": "Lifetime Order Count"
+              },
+              {
+                "id": "inode-NORM0020/06DB681D-04BE-3A38-B324-85DC4732A408",
+                "formula": "[CUSTOMER_DIM/Lifetime Revenue]",
+                "name": "Lifetime Revenue"
+              }
+            ],
+            "order": [
+              "inode-NORM0003/390A3F4B-C43C-34BB-AD41-041BE5EA5EDE",
+              "inode-NORM0004/D885A468-9E01-3697-BC72-79ED0750CD3C",
+              "inode-NORM0005/429C9ADB-DEF4-3075-ABD4-875141500A26",
+              "inode-NORM0006/6B5048AB-89FC-3CC1-B65D-C406CC73A4BF",
+              "inode-NORM0007/1754C0C0-D2FC-3F9E-8B2B-59381AD90547",
+              "inode-NORM0008/59D34EF1-B41D-3656-BF9F-CA61E028D942",
+              "inode-NORM0009/93EEAC1D-9977-3B57-9E58-3995615E1B2B",
+              "inode-NORM0010/4E3AA1FC-4BE6-3B50-9688-3552824310BE",
+              "inode-NORM0011/8FDB1236-128B-3F06-824B-27151B98976B",
+              "inode-NORM0012/D73055C0-9ED1-347D-8F8E-05A48CE2C8A8",
+              "inode-NORM0013/49C438C6-924A-38D9-91A5-1C9DCA786152",
+              "inode-NORM0014/E9A1D9E9-E9B3-3C75-B608-537D3078CED4",
+              "inode-NORM0015/DBB68D30-ED2B-33A7-B863-8B74C7FFCEC1",
+              "inode-NORM0016/43C4A763-8031-30F0-947A-A12C74B1091B",
+              "inode-NORM0017/B886F556-DC7B-3939-96B6-F29E519B6F82",
+              "inode-NORM0018/07380494-7E6A-384F-95EA-149101E228EC",
+              "inode-NORM0019/F1F4CDF6-C95F-35D1-96B6-6BACE95969C4",
+              "inode-NORM0020/06DB681D-04BE-3A38-B324-85DC4732A408"
+            ]
+          },
+          {
+            "id": "id0021",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SCHEMA",
+                "DATE_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0022/737611AE-3A14-349A-8FA8-D92DD0BB0432",
+                "formula": "[DATE_DIM/Date Key]",
+                "name": "Date Key"
+              },
+              {
+                "id": "inode-NORM0023/934012FA-382F-341A-8E44-797E16EEAF1E",
+                "formula": "[DATE_DIM/Full Date]",
+                "name": "Full Date"
+              },
+              {
+                "id": "inode-NORM0024/865369DA-A163-39C6-91DD-E0A2CEF6C93A",
+                "formula": "[DATE_DIM/Day Of Week]",
+                "name": "Day Of Week"
+              },
+              {
+                "id": "inode-NORM0025/D6E079A5-4CCC-3733-9661-E188BC7C58F6",
+                "formula": "[DATE_DIM/Day Of Month]",
+                "name": "Day Of Month"
+              },
+              {
+                "id": "inode-NORM0026/82B9C13A-15E6-3F95-87FB-424DCDB90D57",
+                "formula": "[DATE_DIM/Week Of Year]",
+                "name": "Week Of Year"
+              },
+              {
+                "id": "inode-NORM0027/70B1F3B8-0025-335A-A492-59F4C0078F71",
+                "formula": "[DATE_DIM/Month Number]",
+                "name": "Month Number"
+              },
+              {
+                "id": "inode-NORM0028/273F4937-8B99-37C1-AB49-68FA1EFCD376",
+                "formula": "[DATE_DIM/Month Name]",
+                "name": "Month Name"
+              },
+              {
+                "id": "inode-NORM0029/5C131071-A71A-3710-AAED-5CCA82B7FFC7",
+                "formula": "[DATE_DIM/Quarter]",
+                "name": "Quarter"
+              },
+              {
+                "id": "inode-NORM0030/F39416DF-A452-37EF-9BDB-25F1314F2D11",
+                "formula": "[DATE_DIM/Year]",
+                "name": "Year"
+              },
+              {
+                "id": "inode-NORM0031/66792CBD-306E-3A9B-882A-F08CD73BB433",
+                "formula": "[DATE_DIM/Is Weekend]",
+                "name": "Is Weekend"
+              },
+              {
+                "id": "inode-NORM0032/6247D8BC-9486-3D2B-B68B-039E9DD0B178",
+                "formula": "[DATE_DIM/Is Holiday]",
+                "name": "Is Holiday"
+              },
+              {
+                "id": "inode-NORM0033/1646CE10-B14D-3A88-8706-54AF1A627322",
+                "formula": "[DATE_DIM/Fiscal Period]",
+                "name": "Fiscal Period"
+              }
+            ],
+            "order": [
+              "inode-NORM0022/737611AE-3A14-349A-8FA8-D92DD0BB0432",
+              "inode-NORM0023/934012FA-382F-341A-8E44-797E16EEAF1E",
+              "inode-NORM0024/865369DA-A163-39C6-91DD-E0A2CEF6C93A",
+              "inode-NORM0025/D6E079A5-4CCC-3733-9661-E188BC7C58F6",
+              "inode-NORM0026/82B9C13A-15E6-3F95-87FB-424DCDB90D57",
+              "inode-NORM0027/70B1F3B8-0025-335A-A492-59F4C0078F71",
+              "inode-NORM0028/273F4937-8B99-37C1-AB49-68FA1EFCD376",
+              "inode-NORM0029/5C131071-A71A-3710-AAED-5CCA82B7FFC7",
+              "inode-NORM0030/F39416DF-A452-37EF-9BDB-25F1314F2D11",
+              "inode-NORM0031/66792CBD-306E-3A9B-882A-F08CD73BB433",
+              "inode-NORM0032/6247D8BC-9486-3D2B-B68B-039E9DD0B178",
+              "inode-NORM0033/1646CE10-B14D-3A88-8706-54AF1A627322"
+            ]
+          },
+          {
+            "id": "id0034",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SCHEMA",
+                "DATE_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0035/737611AE-3A14-349A-8FA8-D92DD0BB0432",
+                "formula": "[DATE_DIM/Date Key]",
+                "name": "Date Key"
+              },
+              {
+                "id": "inode-NORM0036/934012FA-382F-341A-8E44-797E16EEAF1E",
+                "formula": "[DATE_DIM/Full Date]",
+                "name": "Full Date"
+              },
+              {
+                "id": "inode-NORM0037/865369DA-A163-39C6-91DD-E0A2CEF6C93A",
+                "formula": "[DATE_DIM/Day Of Week]",
+                "name": "Day Of Week"
+              },
+              {
+                "id": "inode-NORM0038/D6E079A5-4CCC-3733-9661-E188BC7C58F6",
+                "formula": "[DATE_DIM/Day Of Month]",
+                "name": "Day Of Month"
+              },
+              {
+                "id": "inode-NORM0039/82B9C13A-15E6-3F95-87FB-424DCDB90D57",
+                "formula": "[DATE_DIM/Week Of Year]",
+                "name": "Week Of Year"
+              },
+              {
+                "id": "inode-NORM0040/70B1F3B8-0025-335A-A492-59F4C0078F71",
+                "formula": "[DATE_DIM/Month Number]",
+                "name": "Month Number"
+              },
+              {
+                "id": "inode-NORM0041/273F4937-8B99-37C1-AB49-68FA1EFCD376",
+                "formula": "[DATE_DIM/Month Name]",
+                "name": "Month Name"
+              },
+              {
+                "id": "inode-NORM0042/5C131071-A71A-3710-AAED-5CCA82B7FFC7",
+                "formula": "[DATE_DIM/Quarter]",
+                "name": "Quarter"
+              },
+              {
+                "id": "inode-NORM0043/F39416DF-A452-37EF-9BDB-25F1314F2D11",
+                "formula": "[DATE_DIM/Year]",
+                "name": "Year"
+              },
+              {
+                "id": "inode-NORM0044/66792CBD-306E-3A9B-882A-F08CD73BB433",
+                "formula": "[DATE_DIM/Is Weekend]",
+                "name": "Is Weekend"
+              },
+              {
+                "id": "inode-NORM0045/6247D8BC-9486-3D2B-B68B-039E9DD0B178",
+                "formula": "[DATE_DIM/Is Holiday]",
+                "name": "Is Holiday"
+              },
+              {
+                "id": "inode-NORM0046/1646CE10-B14D-3A88-8706-54AF1A627322",
+                "formula": "[DATE_DIM/Fiscal Period]",
+                "name": "Fiscal Period"
+              }
+            ],
+            "order": [
+              "inode-NORM0035/737611AE-3A14-349A-8FA8-D92DD0BB0432",
+              "inode-NORM0036/934012FA-382F-341A-8E44-797E16EEAF1E",
+              "inode-NORM0037/865369DA-A163-39C6-91DD-E0A2CEF6C93A",
+              "inode-NORM0038/D6E079A5-4CCC-3733-9661-E188BC7C58F6",
+              "inode-NORM0039/82B9C13A-15E6-3F95-87FB-424DCDB90D57",
+              "inode-NORM0040/70B1F3B8-0025-335A-A492-59F4C0078F71",
+              "inode-NORM0041/273F4937-8B99-37C1-AB49-68FA1EFCD376",
+              "inode-NORM0042/5C131071-A71A-3710-AAED-5CCA82B7FFC7",
+              "inode-NORM0043/F39416DF-A452-37EF-9BDB-25F1314F2D11",
+              "inode-NORM0044/66792CBD-306E-3A9B-882A-F08CD73BB433",
+              "inode-NORM0045/6247D8BC-9486-3D2B-B68B-039E9DD0B178",
+              "inode-NORM0046/1646CE10-B14D-3A88-8706-54AF1A627322"
+            ]
+          },
+          {
+            "id": "id0047",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SCHEMA",
+                "DIM_TIME"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0048/D6E9E979-3BE5-3740-B133-2F9F8220DFAF",
+                "formula": "[DIM_TIME/Date Key]",
+                "name": "Date Key"
+              },
+              {
+                "id": "inode-NORM0049/B6D33443-4DCA-3C41-9A2C-FAE7EF9750DB",
+                "formula": "[DIM_TIME/Year]",
+                "name": "Year"
+              },
+              {
+                "id": "inode-NORM0050/8375D049-C0A9-32B1-9CA4-3676AF45628F",
+                "formula": "[DIM_TIME/Quarter]",
+                "name": "Quarter"
+              },
+              {
+                "id": "inode-NORM0051/1F7D8D19-CA35-3C3C-AD76-8060D74CB3DE",
+                "formula": "[DIM_TIME/Quarter Label]",
+                "name": "Quarter Label"
+              },
+              {
+                "id": "inode-NORM0052/2272CDFE-0D86-39FA-9AAF-A1C2717168D6",
+                "formula": "[DIM_TIME/Month]",
+                "name": "Month"
+              },
+              {
+                "id": "inode-NORM0053/EC42DFF0-1AE0-361D-A00E-88024BEC395B",
+                "formula": "[DIM_TIME/Month Name]",
+                "name": "Month Name"
+              },
+              {
+                "id": "inode-NORM0054/D256BCCF-7746-3B46-83F7-77ABB1E4C35E",
+                "formula": "[DIM_TIME/Fiscal Year]",
+                "name": "Fiscal Year"
+              },
+              {
+                "id": "inode-NORM0055/7BAF5EA5-4D43-3B80-A75F-330BFD674DAC",
+                "formula": "[DIM_TIME/Fiscal Quarter]",
+                "name": "Fiscal Quarter"
+              }
+            ],
+            "order": [
+              "inode-NORM0048/D6E9E979-3BE5-3740-B133-2F9F8220DFAF",
+              "inode-NORM0049/B6D33443-4DCA-3C41-9A2C-FAE7EF9750DB",
+              "inode-NORM0050/8375D049-C0A9-32B1-9CA4-3676AF45628F",
+              "inode-NORM0051/1F7D8D19-CA35-3C3C-AD76-8060D74CB3DE",
+              "inode-NORM0052/2272CDFE-0D86-39FA-9AAF-A1C2717168D6",
+              "inode-NORM0053/EC42DFF0-1AE0-361D-A00E-88024BEC395B",
+              "inode-NORM0054/D256BCCF-7746-3B46-83F7-77ABB1E4C35E",
+              "inode-NORM0055/7BAF5EA5-4D43-3B80-A75F-330BFD674DAC"
+            ]
+          },
+          {
+            "id": "id0056",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SCHEMA",
+                "PRODUCT_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0057/E5AB1927-144B-30A9-8616-CCF69721D066",
+                "formula": "[PRODUCT_DIM/Product Key]",
+                "name": "Product Key"
+              },
+              {
+                "id": "inode-NORM0058/0907CF08-F465-399D-99AD-7FC433C24EE4",
+                "formula": "[PRODUCT_DIM/Product Id]",
+                "name": "Product Id"
+              },
+              {
+                "id": "inode-NORM0059/784CF965-F359-3FAF-8FEC-767BF50157A5",
+                "formula": "[PRODUCT_DIM/Product Name]",
+                "name": "Product Name"
+              },
+              {
+                "id": "inode-NORM0060/C8F5BD1D-0C0F-3A58-8464-94A181EEFEF9",
+                "formula": "[PRODUCT_DIM/Category]",
+                "name": "Category"
+              },
+              {
+                "id": "inode-NORM0061/B2400248-B5ED-3566-98DA-F747B94DA623",
+                "formula": "[PRODUCT_DIM/Subcategory]",
+                "name": "Subcategory"
+              },
+              {
+                "id": "inode-NORM0062/B278B946-2B0F-322F-88C0-3D5EF23599CC",
+                "formula": "[PRODUCT_DIM/Brand]",
+                "name": "Brand"
+              },
+              {
+                "id": "inode-NORM0063/B564FFC4-06FB-322A-AA1C-700B749741C4",
+                "formula": "[PRODUCT_DIM/Unit Cost]",
+                "name": "Unit Cost"
+              },
+              {
+                "id": "inode-NORM0064/212126F3-1B5D-35DA-9EB7-5EACCA3039B6",
+                "formula": "[PRODUCT_DIM/Unit Price]",
+                "name": "Unit Price"
+              },
+              {
+                "id": "inode-NORM0065/9BFD2122-0253-3760-97F2-367E059BBBE5",
+                "formula": "[PRODUCT_DIM/Weight Lbs]",
+                "name": "Weight Lbs"
+              },
+              {
+                "id": "inode-NORM0066/6834CF39-5EDF-389E-AA8E-E69F7AF3CF2B",
+                "formula": "[PRODUCT_DIM/Is Active]",
+                "name": "Is Active"
+              },
+              {
+                "id": "inode-NORM0067/88F70CEE-F193-388D-AE2D-17D32D39A019",
+                "formula": "[PRODUCT_DIM/Is Private Label]",
+                "name": "Is Private Label"
+              },
+              {
+                "id": "inode-NORM0068/4A0D1220-9028-3776-AD47-793117AD3977",
+                "formula": "[PRODUCT_DIM/Is Seasonal]",
+                "name": "Is Seasonal"
+              },
+              {
+                "id": "inode-NORM0069/A4568EAB-9446-3AD4-ACFF-910D08DB6960",
+                "formula": "[PRODUCT_DIM/Launch Date]",
+                "name": "Launch Date"
+              },
+              {
+                "id": "inode-NORM0070/1A09B7A9-F21A-3B76-B5DB-BAB99D153703",
+                "formula": "[PRODUCT_DIM/Discontinue Date]",
+                "name": "Discontinue Date"
+              },
+              {
+                "id": "inode-NORM0071/02ED8132-C35B-3E68-97EC-3179CA0CFBDE",
+                "formula": "[PRODUCT_DIM/Product Key/Name]",
+                "name": "Product Key/Name"
+              }
+            ],
+            "order": [
+              "inode-NORM0057/E5AB1927-144B-30A9-8616-CCF69721D066",
+              "inode-NORM0058/0907CF08-F465-399D-99AD-7FC433C24EE4",
+              "inode-NORM0059/784CF965-F359-3FAF-8FEC-767BF50157A5",
+              "inode-NORM0060/C8F5BD1D-0C0F-3A58-8464-94A181EEFEF9",
+              "inode-NORM0061/B2400248-B5ED-3566-98DA-F747B94DA623",
+              "inode-NORM0062/B278B946-2B0F-322F-88C0-3D5EF23599CC",
+              "inode-NORM0063/B564FFC4-06FB-322A-AA1C-700B749741C4",
+              "inode-NORM0064/212126F3-1B5D-35DA-9EB7-5EACCA3039B6",
+              "inode-NORM0065/9BFD2122-0253-3760-97F2-367E059BBBE5",
+              "inode-NORM0066/6834CF39-5EDF-389E-AA8E-E69F7AF3CF2B",
+              "inode-NORM0067/88F70CEE-F193-388D-AE2D-17D32D39A019",
+              "inode-NORM0068/4A0D1220-9028-3776-AD47-793117AD3977",
+              "inode-NORM0069/A4568EAB-9446-3AD4-ACFF-910D08DB6960",
+              "inode-NORM0070/1A09B7A9-F21A-3B76-B5DB-BAB99D153703",
+              "inode-NORM0071/02ED8132-C35B-3E68-97EC-3179CA0CFBDE"
+            ]
+          },
+          {
+            "id": "id0072",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SCHEMA",
+                "PROMO_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0073/40D8AB1E-E1C3-3111-97FD-ED3854CF65A1",
+                "formula": "[PROMO_DIM/Promo Key]",
+                "name": "Promo Key"
+              },
+              {
+                "id": "inode-NORM0074/CB2A7691-0325-343C-ABC8-281586A8A015",
+                "formula": "[PROMO_DIM/Promo Id]",
+                "name": "Promo Id"
+              },
+              {
+                "id": "inode-NORM0075/BE3D0E94-A6FC-3F3D-98F1-79D94F013EB9",
+                "formula": "[PROMO_DIM/Promo Name]",
+                "name": "Promo Name"
+              },
+              {
+                "id": "inode-NORM0076/D196FE31-5EE4-3C57-9C10-A868ED52AD04",
+                "formula": "[PROMO_DIM/Promo Type]",
+                "name": "Promo Type"
+              },
+              {
+                "id": "inode-NORM0077/79080C1C-9823-351C-B842-00082C83E5D8",
+                "formula": "[PROMO_DIM/Channel]",
+                "name": "Channel"
+              },
+              {
+                "id": "inode-NORM0078/42C2B2C4-28D4-3603-AA46-D5B137E5BC4A",
+                "formula": "[PROMO_DIM/Discount Pct]",
+                "name": "Discount Pct"
+              },
+              {
+                "id": "inode-NORM0079/9866AD41-DEC7-3208-95EF-E713C3C57D33",
+                "formula": "[PROMO_DIM/Start Date]",
+                "name": "Start Date"
+              },
+              {
+                "id": "inode-NORM0080/3476E381-7CAD-32C2-A6C0-13E1F369BEFB",
+                "formula": "[PROMO_DIM/End Date]",
+                "name": "End Date"
+              },
+              {
+                "id": "inode-NORM0081/18D1508B-BDF7-306C-9860-D935349533A6",
+                "formula": "[PROMO_DIM/Min Order Amount]",
+                "name": "Min Order Amount"
+              },
+              {
+                "id": "inode-NORM0082/AD7E2D4D-4CDD-38B3-854C-3CEF935F920A",
+                "formula": "[PROMO_DIM/Is Stackable]",
+                "name": "Is Stackable"
+              },
+              {
+                "id": "inode-NORM0083/2684C172-27C9-372F-90A3-561009835CEF",
+                "formula": "[PROMO_DIM/Target Segment]",
+                "name": "Target Segment"
+              },
+              {
+                "id": "inode-NORM0084/1CF2A336-56C9-3E33-912C-56AB8B2D21D2",
+                "formula": "[PROMO_DIM/Promo Cost]",
+                "name": "Promo Cost"
+              }
+            ],
+            "order": [
+              "inode-NORM0073/40D8AB1E-E1C3-3111-97FD-ED3854CF65A1",
+              "inode-NORM0074/CB2A7691-0325-343C-ABC8-281586A8A015",
+              "inode-NORM0075/BE3D0E94-A6FC-3F3D-98F1-79D94F013EB9",
+              "inode-NORM0076/D196FE31-5EE4-3C57-9C10-A868ED52AD04",
+              "inode-NORM0077/79080C1C-9823-351C-B842-00082C83E5D8",
+              "inode-NORM0078/42C2B2C4-28D4-3603-AA46-D5B137E5BC4A",
+              "inode-NORM0079/9866AD41-DEC7-3208-95EF-E713C3C57D33",
+              "inode-NORM0080/3476E381-7CAD-32C2-A6C0-13E1F369BEFB",
+              "inode-NORM0081/18D1508B-BDF7-306C-9860-D935349533A6",
+              "inode-NORM0082/AD7E2D4D-4CDD-38B3-854C-3CEF935F920A",
+              "inode-NORM0083/2684C172-27C9-372F-90A3-561009835CEF",
+              "inode-NORM0084/1CF2A336-56C9-3E33-912C-56AB8B2D21D2"
+            ]
+          },
+          {
+            "id": "id0085",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SCHEMA",
+                "STORE_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0086/5A01056A-C8BC-37F2-B406-515546B256FA",
+                "formula": "[STORE_DIM/Store Key]",
+                "name": "Store Key"
+              },
+              {
+                "id": "inode-NORM0087/178E4B43-183B-3D7C-A283-261A93E61949",
+                "formula": "[STORE_DIM/Store Id]",
+                "name": "Store Id"
+              },
+              {
+                "id": "inode-NORM0088/3C4FBB09-A975-3126-96E1-2F64FAE9FF89",
+                "formula": "[STORE_DIM/Store Name]",
+                "name": "Store Name"
+              },
+              {
+                "id": "inode-NORM0089/8B9A712F-2902-3F3C-A8CF-6B9122F64494",
+                "formula": "[STORE_DIM/Store Type]",
+                "name": "Store Type"
+              },
+              {
+                "id": "inode-NORM0090/4A2E583E-763A-3DA7-9C54-8E9B229371F4",
+                "formula": "[STORE_DIM/City]",
+                "name": "City"
+              },
+              {
+                "id": "inode-NORM0091/33BF543D-6F8E-389E-8F8C-BE6BA15AF94E",
+                "formula": "[STORE_DIM/State]",
+                "name": "State"
+              },
+              {
+                "id": "inode-NORM0092/7CD59A3C-E5EE-3EA0-9B01-E85233A70FE5",
+                "formula": "[STORE_DIM/Region]",
+                "name": "Region"
+              },
+              {
+                "id": "inode-NORM0093/87BBF835-F5FE-318C-B4EF-3165C34B4A9F",
+                "formula": "[STORE_DIM/District]",
+                "name": "District"
+              },
+              {
+                "id": "inode-NORM0094/6BDC2304-9587-326D-A1DB-D495C1F8D19F",
+                "formula": "[STORE_DIM/Square Footage]",
+                "name": "Square Footage"
+              },
+              {
+                "id": "inode-NORM0095/B715AEFD-A4F7-301A-B3A1-9955CE8781F6",
+                "formula": "[STORE_DIM/Open Date]",
+                "name": "Open Date"
+              },
+              {
+                "id": "inode-NORM0096/764E01F9-927A-3CC8-A5BA-A8CC975DD093",
+                "formula": "[STORE_DIM/Close Date]",
+                "name": "Close Date"
+              },
+              {
+                "id": "inode-NORM0097/92CA1AE5-C60C-3AF3-816E-BEC6E6537369",
+                "formula": "[STORE_DIM/Is Active]",
+                "name": "Is Active"
+              },
+              {
+                "id": "inode-NORM0098/02D363E4-6AD8-36C8-BE7C-213E9FD9B1DA",
+                "formula": "[STORE_DIM/Has Cafe]",
+                "name": "Has Cafe"
+              },
+              {
+                "id": "inode-NORM0099/5D72E9ED-F5F6-308D-98BD-25EE28119093",
+                "formula": "[STORE_DIM/Has Curbside]",
+                "name": "Has Curbside"
+              },
+              {
+                "id": "inode-NORM0100/CF9F009E-0936-3E56-A5DB-3CC3BDD23A86",
+                "formula": "[STORE_DIM/Manager Name]",
+                "name": "Manager Name"
+              },
+              {
+                "id": "inode-NORM0101/86F8F640-D414-3ED2-BDCB-86EC75F0DDC1",
+                "formula": "[STORE_DIM/Store Phone]",
+                "name": "Store Phone"
+              },
+              {
+                "id": "inode-NORM0102/39639630-E588-3F75-9E4B-AE0390BA9AC6",
+                "formula": "[STORE_DIM/Annual Lease Cost]",
+                "name": "Annual Lease Cost"
+              }
+            ],
+            "order": [
+              "inode-NORM0086/5A01056A-C8BC-37F2-B406-515546B256FA",
+              "inode-NORM0087/178E4B43-183B-3D7C-A283-261A93E61949",
+              "inode-NORM0088/3C4FBB09-A975-3126-96E1-2F64FAE9FF89",
+              "inode-NORM0089/8B9A712F-2902-3F3C-A8CF-6B9122F64494",
+              "inode-NORM0090/4A2E583E-763A-3DA7-9C54-8E9B229371F4",
+              "inode-NORM0091/33BF543D-6F8E-389E-8F8C-BE6BA15AF94E",
+              "inode-NORM0092/7CD59A3C-E5EE-3EA0-9B01-E85233A70FE5",
+              "inode-NORM0093/87BBF835-F5FE-318C-B4EF-3165C34B4A9F",
+              "inode-NORM0094/6BDC2304-9587-326D-A1DB-D495C1F8D19F",
+              "inode-NORM0095/B715AEFD-A4F7-301A-B3A1-9955CE8781F6",
+              "inode-NORM0096/764E01F9-927A-3CC8-A5BA-A8CC975DD093",
+              "inode-NORM0097/92CA1AE5-C60C-3AF3-816E-BEC6E6537369",
+              "inode-NORM0098/02D363E4-6AD8-36C8-BE7C-213E9FD9B1DA",
+              "inode-NORM0099/5D72E9ED-F5F6-308D-98BD-25EE28119093",
+              "inode-NORM0100/CF9F009E-0936-3E56-A5DB-3CC3BDD23A86",
+              "inode-NORM0101/86F8F640-D414-3ED2-BDCB-86EC75F0DDC1",
+              "inode-NORM0102/39639630-E588-3F75-9E4B-AE0390BA9AC6"
+            ]
+          },
+          {
+            "id": "id0103",
+            "kind": "table",
+            "source": {
+              "connectionId": "<CONNECTION_ID>",
+              "kind": "warehouse-table",
+              "path": [
+                "SCHEMA",
+                "ORDER_FACT"
+              ]
+            },
+            "columns": [
+              {
+                "id": "inode-NORM0104/7B7DC9C3-09E2-3BB1-AD44-754F9C95F56A",
+                "formula": "[ORDER_FACT/Order Id]",
+                "name": "Order Id"
+              },
+              {
+                "id": "inode-NORM0105/872765E8-7D8B-3159-8B16-86838A6B1B55",
+                "formula": "[ORDER_FACT/Order Line]",
+                "name": "Order Line"
+              },
+              {
+                "id": "inode-NORM0106/B3F0B0A7-407B-3A84-9F36-BAF80CFFD304",
+                "formula": "[ORDER_FACT/Customer Key]",
+                "name": "Customer Key"
+              },
+              {
+                "id": "inode-NORM0107/24B65633-EE2F-3D8B-BAD4-90949FB46739",
+                "formula": "[ORDER_FACT/Product Key]",
+                "name": "Product Key"
+              },
+              {
+                "id": "inode-NORM0108/83DEA93F-80E0-3AA5-AF27-1597D58746CD",
+                "formula": "[ORDER_FACT/Order Store Key]",
+                "name": "Order Store Key"
+              },
+              {
+                "id": "inode-NORM0109/39D74B7D-8614-35BE-A07D-80B26B3FDB93",
+                "formula": "[ORDER_FACT/Ship Store Key]",
+                "name": "Ship Store Key"
+              },
+              {
+                "id": "inode-NORM0110/E446B3EA-CD95-3FCF-B63B-A0EFBDF81BEA",
+                "formula": "[ORDER_FACT/Promo Key]",
+                "name": "Promo Key"
+              },
+              {
+                "id": "inode-NORM0111/EBC4DAA3-51CE-398F-B6A1-13FD122F9D41",
+                "formula": "[ORDER_FACT/Ship Date Key]",
+                "name": "Ship Date Key"
+              },
+              {
+                "id": "inode-NORM0112/B518310F-4944-3006-8C48-6226C11EFCCB",
+                "formula": "[ORDER_FACT/Return Date Key]",
+                "name": "Return Date Key"
+              },
+              {
+                "id": "inode-NORM0113/05199259-E51E-3219-AB41-855BF1FA72F8",
+                "formula": "[ORDER_FACT/Order Channel]",
+                "name": "Order Channel"
+              },
+              {
+                "id": "inode-NORM0114/E079B853-5EF2-3371-A4B6-CC79A4F64F06",
+                "formula": "[ORDER_FACT/Ship Method]",
+                "name": "Ship Method"
+              },
+              {
+                "id": "inode-NORM0115/FC06CAC7-D000-364C-AE40-B33516F27653",
+                "formula": "[ORDER_FACT/Order Status]",
+                "name": "Order Status"
+              },
+              {
+                "id": "inode-NORM0116/890F7E36-18AF-3796-93D8-1F3FC0C8878F",
+                "formula": "[ORDER_FACT/Quantity Ordered]",
+                "name": "Quantity Ordered"
+              },
+              {
+                "id": "inode-NORM0117/DC000DC6-F630-3CE2-AF1D-978DA1D8292C",
+                "formula": "[ORDER_FACT/Quantity Returned]",
+                "name": "Quantity Returned"
+              },
+              {
+                "id": "inode-NORM0118/295BC6D6-2C28-389D-8ECE-0C4794F0A874",
+                "formula": "[ORDER_FACT/Unit Price]",
+                "name": "Unit Price"
+              },
+              {
+                "id": "inode-NORM0119/5643FECF-C7BE-3D03-B3CA-8C573B8721A4",
+                "formula": "[ORDER_FACT/Unit Cost]",
+                "name": "Unit Cost"
+              },
+              {
+                "id": "inode-NORM0120/F9173DD6-0818-3F29-8634-AD8CAD04EF1D",
+                "formula": "[ORDER_FACT/Discount Amount]",
+                "name": "Discount Amount"
+              },
+              {
+                "id": "inode-NORM0121/18D11FC0-60B2-3CB1-A84F-C7028D5519E1",
+                "formula": "[ORDER_FACT/Shipping Amount]",
+                "name": "Shipping Amount"
+              },
+              {
+                "id": "inode-NORM0122/2D3B6F44-73DA-39A5-B0B8-8591C587DDD4",
+                "formula": "[ORDER_FACT/Tax Amount]",
+                "name": "Tax Amount"
+              },
+              {
+                "id": "inode-NORM0123/33B6C718-9B55-3DC0-9698-D1D57FAC0F90",
+                "formula": "[ORDER_FACT/Gross Revenue]",
+                "name": "Gross Revenue"
+              },
+              {
+                "id": "inode-NORM0124/20DDAF1B-C665-351E-8AA6-F590DC70321A",
+                "formula": "[ORDER_FACT/Net Revenue]",
+                "name": "Net Revenue"
+              },
+              {
+                "id": "inode-NORM0125/801A2D74-680D-3A22-B61D-C4CB64EA73B4",
+                "formula": "[ORDER_FACT/Gross Profit]",
+                "name": "Gross Profit"
+              },
+              {
+                "id": "inode-NORM0126/24F617C5-4842-39B3-819E-E95C1ED5D00D",
+                "formula": "[ORDER_FACT/Net Profit]",
+                "name": "Net Profit"
+              },
+              {
+                "id": "inode-NORM0127/9522C5A5-CF68-34DF-815A-11F7A6979A1B",
+                "formula": "[ORDER_FACT/Is First Order]",
+                "name": "Is First Order"
+              },
+              {
+                "id": "inode-NORM0128/D3B60B0E-F547-3D2C-8602-5D077EB3151A",
+                "formula": "[ORDER_FACT/Is Returned]",
+                "name": "Is Returned"
+              },
+              {
+                "id": "inode-NORM0129/43E3DB83-1F40-3110-93A0-5DCB260AED8B",
+                "formula": "[ORDER_FACT/Is Cancelled]",
+                "name": "Is Cancelled"
+              },
+              {
+                "id": "inode-NORM0130/C7281F06-2028-3164-BE3D-25BE6D085A5E",
+                "formula": "[ORDER_FACT/Days To Ship]",
+                "name": "Days To Ship"
+              },
+              {
+                "id": "id0131",
+                "formula": "If([Days To Ship] <= 2, \"Express (1-2 days)\", If([Days To Ship] <= 5, \"Standard (3-5 days)\", If([Days To Ship] <= 10, \"Economy (6-10 days)\", \"Slow (10+ days)\")))",
+                "name": "Ship Speed Category"
+              },
+              {
+                "id": "id0132",
+                "formula": "2023",
+                "name": "Year Filter"
+              }
+            ],
+            "order": [
+              "inode-NORM0104/7B7DC9C3-09E2-3BB1-AD44-754F9C95F56A",
+              "inode-NORM0105/872765E8-7D8B-3159-8B16-86838A6B1B55",
+              "inode-NORM0106/B3F0B0A7-407B-3A84-9F36-BAF80CFFD304",
+              "inode-NORM0107/24B65633-EE2F-3D8B-BAD4-90949FB46739",
+              "inode-NORM0108/83DEA93F-80E0-3AA5-AF27-1597D58746CD",
+              "inode-NORM0109/39D74B7D-8614-35BE-A07D-80B26B3FDB93",
+              "inode-NORM0110/E446B3EA-CD95-3FCF-B63B-A0EFBDF81BEA",
+              "inode-NORM0111/EBC4DAA3-51CE-398F-B6A1-13FD122F9D41",
+              "inode-NORM0112/B518310F-4944-3006-8C48-6226C11EFCCB",
+              "inode-NORM0113/05199259-E51E-3219-AB41-855BF1FA72F8",
+              "inode-NORM0114/E079B853-5EF2-3371-A4B6-CC79A4F64F06",
+              "inode-NORM0115/FC06CAC7-D000-364C-AE40-B33516F27653",
+              "inode-NORM0116/890F7E36-18AF-3796-93D8-1F3FC0C8878F",
+              "inode-NORM0117/DC000DC6-F630-3CE2-AF1D-978DA1D8292C",
+              "inode-NORM0118/295BC6D6-2C28-389D-8ECE-0C4794F0A874",
+              "inode-NORM0119/5643FECF-C7BE-3D03-B3CA-8C573B8721A4",
+              "inode-NORM0120/F9173DD6-0818-3F29-8634-AD8CAD04EF1D",
+              "inode-NORM0121/18D11FC0-60B2-3CB1-A84F-C7028D5519E1",
+              "inode-NORM0122/2D3B6F44-73DA-39A5-B0B8-8591C587DDD4",
+              "inode-NORM0123/33B6C718-9B55-3DC0-9698-D1D57FAC0F90",
+              "inode-NORM0124/20DDAF1B-C665-351E-8AA6-F590DC70321A",
+              "inode-NORM0125/801A2D74-680D-3A22-B61D-C4CB64EA73B4",
+              "inode-NORM0126/24F617C5-4842-39B3-819E-E95C1ED5D00D",
+              "inode-NORM0127/9522C5A5-CF68-34DF-815A-11F7A6979A1B",
+              "inode-NORM0128/D3B60B0E-F547-3D2C-8602-5D077EB3151A",
+              "inode-NORM0129/43E3DB83-1F40-3110-93A0-5DCB260AED8B",
+              "inode-NORM0130/C7281F06-2028-3164-BE3D-25BE6D085A5E",
+              "id0131",
+              "id0132"
+            ],
+            "relationships": [
+              {
+                "id": "id0133",
+                "targetElementId": "id0002",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0106/B3F0B0A7-407B-3A84-9F36-BAF80CFFD304",
+                    "targetColumnId": "inode-NORM0003/390A3F4B-C43C-34BB-AD41-041BE5EA5EDE"
+                  }
+                ],
+                "name": "CUSTOMER_DIM"
+              },
+              {
+                "id": "id0134",
+                "targetElementId": "id0021",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0112/B518310F-4944-3006-8C48-6226C11EFCCB",
+                    "targetColumnId": "inode-NORM0022/737611AE-3A14-349A-8FA8-D92DD0BB0432"
+                  }
+                ],
+                "name": "DATE_DIM"
+              },
+              {
+                "id": "id0135",
+                "targetElementId": "id0034",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0111/EBC4DAA3-51CE-398F-B6A1-13FD122F9D41",
+                    "targetColumnId": "inode-NORM0035/737611AE-3A14-349A-8FA8-D92DD0BB0432"
+                  }
+                ],
+                "name": "DATE_DIM"
+              },
+              {
+                "id": "id0136",
+                "targetElementId": "id0056",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0107/24B65633-EE2F-3D8B-BAD4-90949FB46739",
+                    "targetColumnId": "inode-NORM0057/E5AB1927-144B-30A9-8616-CCF69721D066"
+                  }
+                ],
+                "name": "PRODUCT_DIM"
+              },
+              {
+                "id": "id0137",
+                "targetElementId": "id0072",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0110/E446B3EA-CD95-3FCF-B63B-A0EFBDF81BEA",
+                    "targetColumnId": "inode-NORM0073/40D8AB1E-E1C3-3111-97FD-ED3854CF65A1"
+                  }
+                ],
+                "name": "PROMO_DIM"
+              },
+              {
+                "id": "id0138",
+                "targetElementId": "id0085",
+                "keys": [
+                  {
+                    "sourceColumnId": "inode-NORM0108/83DEA93F-80E0-3AA5-AF27-1597D58746CD",
+                    "targetColumnId": "inode-NORM0086/5A01056A-C8BC-37F2-B406-515546B256FA"
+                  }
+                ],
+                "name": "STORE_DIM"
+              }
+            ],
+            "metrics": [
+              {
+                "id": "id0139",
+                "formula": "If(Sum([Gross Revenue]) != 0, Sum([Gross Profit]) / Sum([Gross Revenue]), 0)",
+                "name": "Gross Margin Pct",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.2%"
+                }
+              },
+              {
+                "id": "id0140",
+                "formula": "Sum([Is Returned]) / CountIf(IsNotNull([Order Id]))",
+                "name": "Return Rate",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.2%"
+                }
+              },
+              {
+                "id": "id0141",
+                "formula": "Sum([Net Revenue]) / CountDistinct([Order Id])",
+                "name": "Revenue Per Order",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              }
+            ]
+          },
+          {
+            "id": "id0142",
+            "kind": "table",
+            "name": "Order Fact View",
+            "source": {
+              "kind": "table",
+              "elementId": "id0103"
+            },
+            "columns": [
+              {
+                "id": "id0143",
+                "formula": "[ORDER_FACT/Order Id]"
+              },
+              {
+                "id": "id0144",
+                "formula": "[ORDER_FACT/Order Line]"
+              },
+              {
+                "id": "id0145",
+                "formula": "[ORDER_FACT/Customer Key]"
+              },
+              {
+                "id": "id0146",
+                "formula": "[ORDER_FACT/Product Key]"
+              },
+              {
+                "id": "id0147",
+                "formula": "[ORDER_FACT/Order Store Key]"
+              },
+              {
+                "id": "id0148",
+                "formula": "[ORDER_FACT/Ship Store Key]"
+              },
+              {
+                "id": "id0149",
+                "formula": "[ORDER_FACT/Promo Key]"
+              },
+              {
+                "id": "id0150",
+                "formula": "[ORDER_FACT/Ship Date Key]"
+              },
+              {
+                "id": "id0151",
+                "formula": "[ORDER_FACT/Return Date Key]"
+              },
+              {
+                "id": "id0152",
+                "formula": "[ORDER_FACT/Order Channel]"
+              },
+              {
+                "id": "id0153",
+                "formula": "[ORDER_FACT/Ship Method]"
+              },
+              {
+                "id": "id0154",
+                "formula": "[ORDER_FACT/Order Status]"
+              },
+              {
+                "id": "id0155",
+                "formula": "[ORDER_FACT/Quantity Ordered]"
+              },
+              {
+                "id": "id0156",
+                "formula": "[ORDER_FACT/Quantity Returned]"
+              },
+              {
+                "id": "id0157",
+                "formula": "[ORDER_FACT/Unit Price]"
+              },
+              {
+                "id": "id0158",
+                "formula": "[ORDER_FACT/Unit Cost]"
+              },
+              {
+                "id": "id0159",
+                "formula": "[ORDER_FACT/Discount Amount]"
+              },
+              {
+                "id": "id0160",
+                "formula": "[ORDER_FACT/Shipping Amount]"
+              },
+              {
+                "id": "id0161",
+                "formula": "[ORDER_FACT/Tax Amount]"
+              },
+              {
+                "id": "id0162",
+                "formula": "[ORDER_FACT/Gross Revenue]"
+              },
+              {
+                "id": "id0163",
+                "formula": "[ORDER_FACT/Net Revenue]"
+              },
+              {
+                "id": "id0164",
+                "formula": "[ORDER_FACT/Gross Profit]"
+              },
+              {
+                "id": "id0165",
+                "formula": "[ORDER_FACT/Net Profit]"
+              },
+              {
+                "id": "id0166",
+                "formula": "[ORDER_FACT/Is First Order]"
+              },
+              {
+                "id": "id0167",
+                "formula": "[ORDER_FACT/Is Returned]"
+              },
+              {
+                "id": "id0168",
+                "formula": "[ORDER_FACT/Is Cancelled]"
+              },
+              {
+                "id": "id0169",
+                "formula": "[ORDER_FACT/Days To Ship]"
+              },
+              {
+                "id": "id0170",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Customer Id]"
+              },
+              {
+                "id": "id0171",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/First Name]"
+              },
+              {
+                "id": "id0172",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Last Name]"
+              },
+              {
+                "id": "id0173",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Email]"
+              },
+              {
+                "id": "id0174",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Phone]"
+              },
+              {
+                "id": "id0175",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/City]"
+              },
+              {
+                "id": "id0176",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/State]"
+              },
+              {
+                "id": "id0177",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Zip Code]"
+              },
+              {
+                "id": "id0178",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Region]"
+              },
+              {
+                "id": "id0179",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Customer Segment]"
+              },
+              {
+                "id": "id0180",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Loyalty Tier]"
+              },
+              {
+                "id": "id0181",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Acquisition Channel]"
+              },
+              {
+                "id": "id0182",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/First Order Date]"
+              },
+              {
+                "id": "id0183",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Is Active]"
+              },
+              {
+                "id": "id0184",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Is Email Opt In]"
+              },
+              {
+                "id": "id0185",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Lifetime Order Count]"
+              },
+              {
+                "id": "id0186",
+                "formula": "[ORDER_FACT/CUSTOMER_DIM/Lifetime Revenue]"
+              },
+              {
+                "id": "id0187",
+                "formula": "[ORDER_FACT/DATE_DIM/Full Date]"
+              },
+              {
+                "id": "id0188",
+                "formula": "[ORDER_FACT/DATE_DIM/Day Of Week]"
+              },
+              {
+                "id": "id0189",
+                "formula": "[ORDER_FACT/DATE_DIM/Day Of Month]"
+              },
+              {
+                "id": "id0190",
+                "formula": "[ORDER_FACT/DATE_DIM/Week Of Year]"
+              },
+              {
+                "id": "id0191",
+                "formula": "[ORDER_FACT/DATE_DIM/Month Number]"
+              },
+              {
+                "id": "id0192",
+                "formula": "[ORDER_FACT/DATE_DIM/Month Name]"
+              },
+              {
+                "id": "id0193",
+                "formula": "[ORDER_FACT/DATE_DIM/Quarter]"
+              },
+              {
+                "id": "id0194",
+                "formula": "[ORDER_FACT/DATE_DIM/Year]"
+              },
+              {
+                "id": "id0195",
+                "formula": "[ORDER_FACT/DATE_DIM/Is Weekend]"
+              },
+              {
+                "id": "id0196",
+                "formula": "[ORDER_FACT/DATE_DIM/Is Holiday]"
+              },
+              {
+                "id": "id0197",
+                "formula": "[ORDER_FACT/DATE_DIM/Fiscal Period]"
+              },
+              {
+                "id": "id0198",
+                "formula": "[ORDER_FACT/DATE_DIM/Full Date]"
+              },
+              {
+                "id": "id0199",
+                "formula": "[ORDER_FACT/DATE_DIM/Day Of Week]"
+              },
+              {
+                "id": "id0200",
+                "formula": "[ORDER_FACT/DATE_DIM/Day Of Month]"
+              },
+              {
+                "id": "id0201",
+                "formula": "[ORDER_FACT/DATE_DIM/Week Of Year]"
+              },
+              {
+                "id": "id0202",
+                "formula": "[ORDER_FACT/DATE_DIM/Month Number]"
+              },
+              {
+                "id": "id0203",
+                "formula": "[ORDER_FACT/DATE_DIM/Month Name]"
+              },
+              {
+                "id": "id0204",
+                "formula": "[ORDER_FACT/DATE_DIM/Quarter]"
+              },
+              {
+                "id": "id0205",
+                "formula": "[ORDER_FACT/DATE_DIM/Year]"
+              },
+              {
+                "id": "id0206",
+                "formula": "[ORDER_FACT/DATE_DIM/Is Weekend]"
+              },
+              {
+                "id": "id0207",
+                "formula": "[ORDER_FACT/DATE_DIM/Is Holiday]"
+              },
+              {
+                "id": "id0208",
+                "formula": "[ORDER_FACT/DATE_DIM/Fiscal Period]"
+              },
+              {
+                "id": "id0209",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Product Id]"
+              },
+              {
+                "id": "id0210",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Product Name]"
+              },
+              {
+                "id": "id0211",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Category]"
+              },
+              {
+                "id": "id0212",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Subcategory]"
+              },
+              {
+                "id": "id0213",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Brand]"
+              },
+              {
+                "id": "id0214",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Unit Cost]"
+              },
+              {
+                "id": "id0215",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Unit Price]"
+              },
+              {
+                "id": "id0216",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Weight Lbs]"
+              },
+              {
+                "id": "id0217",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Is Active]"
+              },
+              {
+                "id": "id0218",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Is Private Label]"
+              },
+              {
+                "id": "id0219",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Is Seasonal]"
+              },
+              {
+                "id": "id0220",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Launch Date]"
+              },
+              {
+                "id": "id0221",
+                "formula": "[ORDER_FACT/PRODUCT_DIM/Discontinue Date]"
+              },
+              {
+                "id": "id0222",
+                "formula": "[ORDER_FACT/PROMO_DIM/Promo Id]"
+              },
+              {
+                "id": "id0223",
+                "formula": "[ORDER_FACT/PROMO_DIM/Promo Name]"
+              },
+              {
+                "id": "id0224",
+                "formula": "[ORDER_FACT/PROMO_DIM/Promo Type]"
+              },
+              {
+                "id": "id0225",
+                "formula": "[ORDER_FACT/PROMO_DIM/Channel]"
+              },
+              {
+                "id": "id0226",
+                "formula": "[ORDER_FACT/PROMO_DIM/Discount Pct]"
+              },
+              {
+                "id": "id0227",
+                "formula": "[ORDER_FACT/PROMO_DIM/Start Date]"
+              },
+              {
+                "id": "id0228",
+                "formula": "[ORDER_FACT/PROMO_DIM/End Date]"
+              },
+              {
+                "id": "id0229",
+                "formula": "[ORDER_FACT/PROMO_DIM/Min Order Amount]"
+              },
+              {
+                "id": "id0230",
+                "formula": "[ORDER_FACT/PROMO_DIM/Is Stackable]"
+              },
+              {
+                "id": "id0231",
+                "formula": "[ORDER_FACT/PROMO_DIM/Target Segment]"
+              },
+              {
+                "id": "id0232",
+                "formula": "[ORDER_FACT/PROMO_DIM/Promo Cost]"
+              },
+              {
+                "id": "id0233",
+                "formula": "[ORDER_FACT/STORE_DIM/Store Id]"
+              },
+              {
+                "id": "id0234",
+                "formula": "[ORDER_FACT/STORE_DIM/Store Name]"
+              },
+              {
+                "id": "id0235",
+                "formula": "[ORDER_FACT/STORE_DIM/Store Type]"
+              },
+              {
+                "id": "id0236",
+                "formula": "[ORDER_FACT/STORE_DIM/City]"
+              },
+              {
+                "id": "id0237",
+                "formula": "[ORDER_FACT/STORE_DIM/State]"
+              },
+              {
+                "id": "id0238",
+                "formula": "[ORDER_FACT/STORE_DIM/Region]"
+              },
+              {
+                "id": "id0239",
+                "formula": "[ORDER_FACT/STORE_DIM/District]"
+              },
+              {
+                "id": "id0240",
+                "formula": "[ORDER_FACT/STORE_DIM/Square Footage]"
+              },
+              {
+                "id": "id0241",
+                "formula": "[ORDER_FACT/STORE_DIM/Open Date]"
+              },
+              {
+                "id": "id0242",
+                "formula": "[ORDER_FACT/STORE_DIM/Close Date]"
+              },
+              {
+                "id": "id0243",
+                "formula": "[ORDER_FACT/STORE_DIM/Is Active]"
+              },
+              {
+                "id": "id0244",
+                "formula": "[ORDER_FACT/STORE_DIM/Has Cafe]"
+              },
+              {
+                "id": "id0245",
+                "formula": "[ORDER_FACT/STORE_DIM/Has Curbside]"
+              },
+              {
+                "id": "id0246",
+                "formula": "[ORDER_FACT/STORE_DIM/Manager Name]"
+              },
+              {
+                "id": "id0247",
+                "formula": "[ORDER_FACT/STORE_DIM/Store Phone]"
+              },
+              {
+                "id": "id0248",
+                "formula": "[ORDER_FACT/STORE_DIM/Annual Lease Cost]"
+              },
+              {
+                "id": "id0249",
+                "formula": "If([ORDER_FACT/CUSTOMER_DIM/Lifetime Revenue] >= 5000, \"Platinum\", If([ORDER_FACT/CUSTOMER_DIM/Lifetime Revenue] >= 2000, \"Gold\", If([ORDER_FACT/CUSTOMER_DIM/Lifetime Revenue] >= 500, \"Silver\", \"Bronze\")))",
+                "name": "Customer Value Tier",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2f",
+                  "currencySymbol": "$"
+                }
+              }
+            ],
+            "order": [
+              "id0143",
+              "id0144",
+              "id0145",
+              "id0146",
+              "id0147",
+              "id0148",
+              "id0149",
+              "id0150",
+              "id0151",
+              "id0152",
+              "id0153",
+              "id0154",
+              "id0155",
+              "id0156",
+              "id0157",
+              "id0158",
+              "id0159",
+              "id0160",
+              "id0161",
+              "id0162",
+              "id0163",
+              "id0164",
+              "id0165",
+              "id0166",
+              "id0167",
+              "id0168",
+              "id0169",
+              "id0170",
+              "id0171",
+              "id0172",
+              "id0173",
+              "id0174",
+              "id0175",
+              "id0176",
+              "id0177",
+              "id0178",
+              "id0179",
+              "id0180",
+              "id0181",
+              "id0182",
+              "id0183",
+              "id0184",
+              "id0185",
+              "id0186",
+              "id0187",
+              "id0188",
+              "id0189",
+              "id0190",
+              "id0191",
+              "id0192",
+              "id0193",
+              "id0194",
+              "id0195",
+              "id0196",
+              "id0197",
+              "id0198",
+              "id0199",
+              "id0200",
+              "id0201",
+              "id0202",
+              "id0203",
+              "id0204",
+              "id0205",
+              "id0206",
+              "id0207",
+              "id0208",
+              "id0209",
+              "id0210",
+              "id0211",
+              "id0212",
+              "id0213",
+              "id0214",
+              "id0215",
+              "id0216",
+              "id0217",
+              "id0218",
+              "id0219",
+              "id0220",
+              "id0221",
+              "id0222",
+              "id0223",
+              "id0224",
+              "id0225",
+              "id0226",
+              "id0227",
+              "id0228",
+              "id0229",
+              "id0230",
+              "id0231",
+              "id0232",
+              "id0233",
+              "id0234",
+              "id0235",
+              "id0236",
+              "id0237",
+              "id0238",
+              "id0239",
+              "id0240",
+              "id0241",
+              "id0242",
+              "id0243",
+              "id0244",
+              "id0245",
+              "id0246",
+              "id0247",
+              "id0248",
+              "id0249"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "stats": {
+    "datasources": 1,
+    "elements": 9,
+    "columns": 230,
+    "metrics": 3,
+    "relationships": 6,
+    "controls": 0,
+    "parameters": 0,
+    "lodChildElements": 1
+  },
+  "warnings": [
+    "⚠ Connection ID not set — update in JSON before saving to Sigma",
+    "ℹ Relationship ORDER_FACT → CUSTOMER_DIM on B3F0B0A7-407B-3A84-9F36-BAF80CFFD304 = 390A3F4B-C43C-34BB-AD41-041BE5EA5EDE",
+    "ℹ Relationship ORDER_FACT → DATE_DIM on B518310F-4944-3006-8C48-6226C11EFCCB = 737611AE-3A14-349A-8FA8-D92DD0BB0432",
+    "ℹ Relationship ORDER_FACT → DATE_DIM on EBC4DAA3-51CE-398F-B6A1-13FD122F9D41 = 737611AE-3A14-349A-8FA8-D92DD0BB0432",
+    "⚠ Relationship ORDER_FACT → DIM_TIME joins on a computed key (DATE([c2ec6b07-897e-39ab-9422-aa895d35a6); Sigma joins on physical columns only — skipped, needs manual authoring.",
+    "ℹ Relationship ORDER_FACT → PRODUCT_DIM on 24B65633-EE2F-3D8B-BAD4-90949FB46739 = E5AB1927-144B-30A9-8616-CCF69721D066",
+    "ℹ Relationship ORDER_FACT → PROMO_DIM on E446B3EA-CD95-3FCF-B63B-A0EFBDF81BEA = 40D8AB1E-E1C3-3111-97FD-ED3854CF65A1",
+    "ℹ Relationship ORDER_FACT → STORE_DIM on 83DEA93F-80E0-3AA5-AF27-1597D58746CD = 5A01056A-C8BC-37F2-B406-515546B256FA",
+    "⚠ Virtual connection: pass database and schema parameters to set the full warehouse path.",
+    "ℹ \"Customer Value Tier\" → calculated column. Review: If([Lifetime Revenue] >= 5000, \"Platinum\", If([Lifetime Reve",
+    "⚠ Metric \"Promo ROI\" aggregates a dimension-table column [Promo Cost] (cross-element); Sigma metrics can't reference related-element columns — needs manual authoring. Skipped.",
+    "ℹ \"Ship Speed Category\" → calculated column. Review: If([Days To Ship] <= 2, \"Express (1-2 days)\", If([Days To Sh",
+    "⚠ LOD \"YTD Revenue\" (FIXED) groups by a dimension-table column (cross-table grain); not mechanizable as a single-table helper — needs manual Sigma authoring. Skipped.",
+    "ℹ \"Year Filter\" → calculated column. Review: 2023",
+    "ℹ 1 calc col(s) moved to derived \"Order Fact View\" (cross-element refs)"
+  ]
+}

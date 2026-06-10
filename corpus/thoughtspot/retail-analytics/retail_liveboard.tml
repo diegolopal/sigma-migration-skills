@@ -1,0 +1,138 @@
+liveboard:
+  name: Retail Analytics (TS Fixture)
+  description: "Migration fixture \u2014 KPI, column, line, pie, table over Retail Analytics model"
+  visualizations:
+  - id: Viz_1
+    answer:
+      name: Total Net Revenue
+      tables:
+      - id: Retail Analytics
+        name: Retail Analytics
+        fqn: d09e27fd-414e-4378-a148-c061da79d8e4
+      search_query: '[Net Revenue]'
+      answer_columns:
+      - name: Total Net Revenue
+      table:
+        table_columns:
+        - column_id: Total Net Revenue
+        ordered_column_ids:
+        - Total Net Revenue
+      chart:
+        type: KPI
+        chart_columns:
+        - column_id: Total Net Revenue
+        axis_configs:
+        - x:
+          - Total Net Revenue
+          y:
+          - Total Net Revenue
+      display_mode: CHART_MODE
+  - id: Viz_2
+    answer:
+      name: Net Revenue by Category
+      tables:
+      - id: Retail Analytics
+        name: Retail Analytics
+        fqn: d09e27fd-414e-4378-a148-c061da79d8e4
+      search_query: '[Category] [Net Revenue]'
+      answer_columns:
+      - name: Category
+      - name: Total Net Revenue
+      table:
+        table_columns:
+        - column_id: Category
+        - column_id: Total Net Revenue
+        ordered_column_ids:
+        - Category
+        - Total Net Revenue
+      chart:
+        type: COLUMN
+        chart_columns:
+        - column_id: Category
+        - column_id: Total Net Revenue
+        axis_configs:
+        - x:
+          - Category
+          y:
+          - Total Net Revenue
+      display_mode: CHART_MODE
+  - id: Viz_3
+    answer:
+      name: Net Revenue by Month
+      tables:
+      - id: Retail Analytics
+        name: Retail Analytics
+        fqn: d09e27fd-414e-4378-a148-c061da79d8e4
+      search_query: '[Month Name] [Net Revenue]'
+      answer_columns:
+      - name: Month Name
+      - name: Total Net Revenue
+      table:
+        table_columns:
+        - column_id: Month Name
+        - column_id: Total Net Revenue
+        ordered_column_ids:
+        - Month Name
+        - Total Net Revenue
+      chart:
+        type: LINE
+        chart_columns:
+        - column_id: Month Name
+        - column_id: Total Net Revenue
+        axis_configs:
+        - x:
+          - Month Name
+          y:
+          - Total Net Revenue
+      display_mode: CHART_MODE
+  - id: Viz_4
+    answer:
+      name: Net Revenue by Customer Segment
+      tables:
+      - id: Retail Analytics
+        name: Retail Analytics
+        fqn: d09e27fd-414e-4378-a148-c061da79d8e4
+      search_query: '[Customer Segment] [Net Revenue]'
+      answer_columns:
+      - name: Customer Segment
+      - name: Total Net Revenue
+      table:
+        table_columns:
+        - column_id: Customer Segment
+        - column_id: Total Net Revenue
+        ordered_column_ids:
+        - Customer Segment
+        - Total Net Revenue
+      chart:
+        type: PIE
+        chart_columns:
+        - column_id: Customer Segment
+        - column_id: Total Net Revenue
+        axis_configs:
+        - x:
+          - Customer Segment
+          y:
+          - Total Net Revenue
+      display_mode: CHART_MODE
+  - id: Viz_5
+    answer:
+      name: Region Performance
+      tables:
+      - id: Retail Analytics
+        name: Retail Analytics
+        fqn: d09e27fd-414e-4378-a148-c061da79d8e4
+      search_query: '[Region] [Net Revenue] [Gross Profit]'
+      answer_columns:
+      - name: Region
+      - name: Total Net Revenue
+      - name: Total Gross Profit
+      table:
+        table_columns:
+        - column_id: Region
+        - column_id: Total Net Revenue
+        - column_id: Total Gross Profit
+        ordered_column_ids:
+        - Region
+        - Total Net Revenue
+        - Total Gross Profit
+      display_mode: TABLE_MODE

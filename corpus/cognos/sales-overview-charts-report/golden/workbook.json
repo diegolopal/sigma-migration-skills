@@ -1,0 +1,609 @@
+{
+  "workbook": {
+    "name": "GO modern sample report (Light)",
+    "schemaVersion": 1,
+    "pages": [
+      {
+        "id": "id0001",
+        "name": "Retailer Page",
+        "elements": [
+          {
+            "id": "id0002",
+            "kind": "kpi-chart",
+            "name": "Revenue",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0005",
+                "name": "Revenue",
+                "formula": "Sum([Sales/revenue])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.3s"
+                }
+              }
+            ],
+            "order": [
+              "id0005"
+            ],
+            "value": {
+              "columnId": "id0005"
+            }
+          },
+          {
+            "id": "id0006",
+            "kind": "kpi-chart",
+            "name": "Product cost",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0007",
+                "name": "Product Cost",
+                "formula": "Sum([Sales/product Cost])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.3s"
+                }
+              }
+            ],
+            "order": [
+              "id0007"
+            ],
+            "value": {
+              "columnId": "id0007"
+            }
+          },
+          {
+            "id": "id0008",
+            "kind": "kpi-chart",
+            "name": "Gross profit",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0009",
+                "name": "Gross Profit",
+                "formula": "Sum([Sales/gross Profit])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.3s"
+                }
+              }
+            ],
+            "order": [
+              "id0009"
+            ],
+            "value": {
+              "columnId": "id0009"
+            }
+          },
+          {
+            "id": "id0010",
+            "kind": "kpi-chart",
+            "name": "Gross margin",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0011",
+                "name": "Gross Margin",
+                "formula": "Sum([Sales/gross Margin])",
+                "format": {
+                  "kind": "number",
+                  "formatString": ",.0%"
+                }
+              }
+            ],
+            "order": [
+              "id0011"
+            ],
+            "value": {
+              "columnId": "id0011"
+            }
+          },
+          {
+            "id": "id0012",
+            "kind": "kpi-chart",
+            "name": "Revenue",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0013",
+                "name": "Revenue",
+                "formula": "Sum([Sales/revenue])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.3s"
+                }
+              }
+            ],
+            "order": [
+              "id0013"
+            ],
+            "value": {
+              "columnId": "id0013"
+            }
+          },
+          {
+            "id": "id0014",
+            "kind": "kpi-chart",
+            "name": "Revenue vs Target",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0015",
+                "name": "Revenue",
+                "formula": "Sum([Sales/revenue])"
+              },
+              {
+                "id": "id0016",
+                "name": "Revenue Vs Target",
+                "formula": "Sum([Sales/revenue]) - Sum([Sales Targets/sales Target])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.4s"
+                }
+              }
+            ],
+            "order": [
+              "id0015",
+              "id0016"
+            ],
+            "value": {
+              "columnId": "id0016"
+            }
+          },
+          {
+            "id": "id0017",
+            "kind": "kpi-chart",
+            "name": "Quantity",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0018",
+                "name": "Quantity",
+                "formula": "Sum([Sales/quantity])"
+              }
+            ],
+            "order": [
+              "id0018"
+            ],
+            "value": {
+              "columnId": "id0018"
+            }
+          },
+          {
+            "id": "id0019",
+            "kind": "kpi-chart",
+            "name": "Return quantity",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0020",
+                "name": "Return Quantity",
+                "formula": "Sum([Returned Items/return Quantity])"
+              }
+            ],
+            "order": [
+              "id0020"
+            ],
+            "value": {
+              "columnId": "id0020"
+            }
+          },
+          {
+            "id": "id0021",
+            "kind": "table",
+            "name": "Retailers Sales — Top 10 Country for Sales",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0022"
+            },
+            "columns": [
+              {
+                "id": "id0023",
+                "name": "Retailer Country",
+                "formula": "[Retailers Sales/retailer Country]"
+              },
+              {
+                "id": "id0024",
+                "name": "Revenue",
+                "formula": "Sum([Sales/revenue])"
+              }
+            ],
+            "order": [
+              "id0023",
+              "id0024"
+            ],
+            "groupings": [
+              {
+                "id": "id0025",
+                "groupBy": [
+                  "id0023"
+                ],
+                "calculations": [
+                  "id0024"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "id0026",
+            "kind": "table",
+            "name": "Products Sales — Top 10 Product Table",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0027"
+            },
+            "columns": [
+              {
+                "id": "id0028",
+                "name": "Product",
+                "formula": "[Products Sales/product]"
+              },
+              {
+                "id": "id0029",
+                "name": "Revenue",
+                "formula": "Sum([Sales/revenue])"
+              }
+            ],
+            "order": [
+              "id0028",
+              "id0029"
+            ],
+            "groupings": [
+              {
+                "id": "id0030",
+                "groupBy": [
+                  "id0028"
+                ],
+                "calculations": [
+                  "id0029"
+                ]
+              }
+            ]
+          },
+          {
+            "id": "id0031",
+            "kind": "region-map",
+            "name": "Map1",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0032",
+                "name": "Retailer Country",
+                "formula": "[Retailers Sales/retailer Country]"
+              },
+              {
+                "id": "id0033",
+                "name": "Revenue",
+                "formula": "Sum([Sales/revenue])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2s"
+                }
+              }
+            ],
+            "order": [
+              "id0032",
+              "id0033"
+            ],
+            "region": {
+              "id": "id0032",
+              "regionType": "country"
+            },
+            "color": {
+              "by": "scale",
+              "column": "id0033"
+            }
+          },
+          {
+            "id": "id0034",
+            "kind": "combo-chart",
+            "name": "Clustered combination2",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0035",
+                "name": "Month",
+                "formula": "[Time Sales/month]"
+              }
+            ],
+            "order": [
+              "id0035"
+            ],
+            "xAxis": {
+              "columnId": "id0035"
+            }
+          },
+          {
+            "id": "id0036",
+            "kind": "bar-chart",
+            "name": "Clustered combination3",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0037",
+                "name": "Month",
+                "formula": "[Time Sales/month]"
+              },
+              {
+                "id": "id0038",
+                "name": "Revenue",
+                "formula": "Sum([Sales/revenue])",
+                "format": {
+                  "kind": "number",
+                  "formatString": "$,.2s"
+                }
+              },
+              {
+                "id": "id0039",
+                "name": "Order Method Type",
+                "formula": "[Order Methods Sales/order Method Type]"
+              }
+            ],
+            "order": [
+              "id0037",
+              "id0038",
+              "id0039"
+            ],
+            "xAxis": {
+              "columnId": "id0037"
+            },
+            "yAxis": {
+              "columnIds": [
+                "id0038"
+              ]
+            },
+            "color": {
+              "by": "category",
+              "column": "id0039"
+            },
+            "stacking": "stacked"
+          },
+          {
+            "id": "id0040",
+            "kind": "pie-chart",
+            "name": "Pie1",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0041",
+                "name": "Product Line",
+                "formula": "[Products Sales/product Line]"
+              },
+              {
+                "id": "id0042",
+                "name": "Revenue",
+                "formula": "Sum([Sales/revenue])"
+              }
+            ],
+            "order": [
+              "id0041",
+              "id0042"
+            ],
+            "color": {
+              "id": "id0041"
+            },
+            "value": {
+              "id": "id0042"
+            }
+          },
+          {
+            "id": "id0043",
+            "kind": "bar-chart",
+            "name": "Clustered column",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0044",
+                "name": "Date",
+                "formula": "[Time Returns/date]"
+              },
+              {
+                "id": "id0045",
+                "name": "Quantity",
+                "formula": "Sum([Sales/quantity])"
+              }
+            ],
+            "order": [
+              "id0044",
+              "id0045"
+            ],
+            "xAxis": {
+              "columnId": "id0044",
+              "sort": {
+                "by": "id0044",
+                "direction": "ascending"
+              }
+            },
+            "yAxis": {
+              "columnIds": [
+                "id0045"
+              ]
+            },
+            "stacking": "none"
+          },
+          {
+            "id": "id0046",
+            "kind": "line-chart",
+            "name": "Line",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0047",
+                "name": "Quarter",
+                "formula": "[Time Returns/quarter]"
+              },
+              {
+                "id": "id0048",
+                "name": "Return Quantity",
+                "formula": "Sum([Returned Items/return Quantity])"
+              },
+              {
+                "id": "id0049",
+                "name": "Order Method Type",
+                "formula": "[Order Methods Returns/order Method Type]"
+              }
+            ],
+            "order": [
+              "id0047",
+              "id0048",
+              "id0049"
+            ],
+            "xAxis": {
+              "columnId": "id0047"
+            },
+            "yAxis": {
+              "columnIds": [
+                "id0048"
+              ]
+            },
+            "color": {
+              "by": "category",
+              "column": "id0049"
+            }
+          },
+          {
+            "id": "id0050",
+            "kind": "table",
+            "name": "Tree map (was treemap)",
+            "source": {
+              "kind": "data-model",
+              "dataModelId": "id0003",
+              "elementId": "id0004"
+            },
+            "columns": [
+              {
+                "id": "id0051",
+                "name": "Product Type",
+                "formula": "[Products Returns/product Type]"
+              },
+              {
+                "id": "id0052",
+                "name": "Quantity",
+                "formula": "Sum([Sales/quantity])"
+              }
+            ],
+            "order": [
+              "id0051",
+              "id0052"
+            ]
+          }
+        ]
+      }
+    ],
+    "controls": []
+  },
+  "stats": {
+    "queries": 5,
+    "tables": 3,
+    "pivots": 0,
+    "kpis": 8,
+    "charts": 5,
+    "maps": 1,
+    "columns": 28,
+    "filters": 0,
+    "controls": 0
+  },
+  "warnings": [
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "list \"Top 10 Country for Sales\" sorts by \"Revenue\" (descending) — table sort isn't part of the Sigma workbook spec; apply the sort in the UI.",
+    "filter \"[Rank] < 10\" on query \"Top 10 Country for Sales\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"Top 10 Country for Sales\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "list \"Top 10 Product Table\" sorts by \"Revenue\" (descending) — table sort isn't part of the Sigma workbook spec; apply the sort in the UI.",
+    "list \"Top 10 Product Table\" sorts by \"Rank_Product\" (descending) — table sort isn't part of the Sigma workbook spec; apply the sort in the UI.",
+    "filter \"[Rank_Product] <= 10\" on query \"Top 10 Product Table\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"Top 10 Product Table\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_] = ?Year?\" on query \"Top 10 Product Table\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "chart \"Map1\" → region-map: defaulted regionType to \"country\" — set it to match your data (country / us-state / us-county / us-zipcode / us-cbsa / us-postal-place / ca-province).",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "chart \"Clustered combination2\": Cognos used 2 category levels; Sigma x-axis takes one — bound the first, kept the rest as columns.",
+    "chart \"Clustered combination2\" (combo-chart) resolved no measure for the value axis — add a measure in the workbook.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qRetailerPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "chart \"Tree map\" is a Cognos treemap (com.ibm.vis.treemap) — Sigma has no native equivalent; emitted its data as a table. Re-pick a Sigma chart in the workbook.",
+    "filter \"[C].[C_Fred_Data_Module].[Retailers_Sales].[Retailer_country] = ?Store?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter.",
+    "filter \"[C].[C_Fred_Data_Module].[Time_Sales_Targets].[Year_]  = ?Year?\" on query \"qProductPage\": not a simple =/in filter — re-create as a Sigma element/page filter."
+  ]
+}

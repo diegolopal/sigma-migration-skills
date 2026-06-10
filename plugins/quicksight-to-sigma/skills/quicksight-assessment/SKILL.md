@@ -1,6 +1,7 @@
 ---
 name: quicksight-assessment
 description: Take inventory of an Amazon QuickSight account and produce a migration-readiness readout — environment counts, per-analysis visual-type mix, calc-field complexity (mechanical / restructuring / window-table-calc buckets), parameter + FilterGroup + layout-shape signals, per-dataset source types / custom-sql / joins / RLS, and a value/cost-ranked migration shortlist. Use when a user wants to scope a QuickSight→Sigma migration, audit BI sprawl, or pick which analyses to convert first. READ-ONLY — never writes to QuickSight or posts to Sigma. AWS-CLI auth (no boto3). Enterprise edition required for full complexity. Feeds the quicksight-to-sigma conversion skill.
+user-invocable: true
 ---
 
 # Amazon QuickSight Assessment

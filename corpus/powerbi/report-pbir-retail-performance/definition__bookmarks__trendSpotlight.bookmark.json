@@ -1,0 +1,22 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/item/report/definition/bookmark/1.0.0/schema.json",
+  "name": "trendSpotlight",
+  "displayName": "Trend Spotlight",
+  "explorationState": {
+    "version": "1.0",
+    "activeSection": "page1",
+    "sections": {
+      "page1": {
+        "visualContainers": {
+          "d3ch0000000002": {
+            "singleVisual": {
+              "display": {
+                "mode": "spotlight"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
