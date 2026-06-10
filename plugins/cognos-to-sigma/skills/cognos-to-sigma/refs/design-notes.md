@@ -1,10 +1,12 @@
 # Cognos → Sigma — converter design notes
 
-Design sketch for a future `cognos-to-sigma` skill, parallel to the existing
-`tableau-to-sigma` converter. Not yet built. Captures the translation
-surface, hard problems, MVP scope, and what would be reusable.
+The original design sketch for the `cognos-to-sigma` skill. The converter is now
+BUILT and live-validated (`converter/` — Data Module JSON → Sigma DM, report-spec
+XML → Sigma workbook incl. crosstabs/charts/maps/KPIs/macros/filters); this doc is
+kept for the translation surface, hard problems, and reuse notes. Where it
+disagrees with `format-shapes.md` or the code, trust those.
 
-> Status: research / design only. No code yet. Last touched 2026-05-28.
+> Status: HISTORICAL design doc (converter shipped). Last touched 2026-06-10.
 
 ---
 
@@ -27,13 +29,14 @@ Schema reference: [Cognos SDK v10.2.1 Report Specification Schema Reference v10.
 
 ## API access
 
-CA 11.1+ exposes REST at `/api/v1/...`. Same surface on-prem and Cognos
-Analytics on Cloud (SaaS).
+CA 11.1+ exposes REST at **`/bi/v1/...`** (NOT `/api/v1` — that base path only serves
+`PUT /api/v1/session` for login; content sub-resources 403 on it). Same surface
+on-prem and Cognos Analytics on Cloud (SaaS).
 
-- Auth: session cookie + `X-XSRF-Token`; namespace/CAM credentials posted to `/api/v1/session`.
-- Discovery: `GET /content/{searchPath}` to list; `GET /content/{id}/items`.
-- Report spec download: `GET /content/{id}?fields=specification` — returns the report-spec XML as a string property.
-- Data module: `GET /modules/{id}` — returns the data module JSON.
+- Auth: session cookie + `X-XSRF-Token` (CAM credentials / API key via `PUT /api/v1/session`).
+- Discovery: `GET /bi/v1/objects/{id}/items?fields=defaultName,type,id`.
+- Report spec download: `GET /bi/v1/objects/{id}?fields=specification` — returns the report-spec XML as a string property.
+- Data module: `GET /bi/v1/metadata/modules/{id}` — returns the data module JSON (the plain `/modules/{id}` returns EMPTY).
 
 Working REST wrappers (use as reference, don't depend on them):
 - Python: [ykud/cognosanalyticspy](https://github.com/ykud/cognosanalyticspy) — real auth + content-tree traversal

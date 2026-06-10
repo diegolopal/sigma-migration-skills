@@ -17,7 +17,7 @@ cleanly; **flag what doesn't** (runtime macros, running-totals, localization) in
 of emitting wrong logic.
 
 > Read `refs/` before relying on shapes: `design-notes.md` (translation surface + scope),
-> `data-module-shape.md` + `report-spec-shape.md` (the real CA JSON/XML structures),
+> `format-shapes.md` (the real CA Data-Module JSON + report-spec XML structures),
 > `expression-dsl.md` (the Cognos-expression → Sigma-formula mapping table).
 > For the canonical Sigma data-model + workbook spec shapes, defer to the companion
 > `sigma-data-models` / `sigma-workbooks` skills.
@@ -115,19 +115,59 @@ report's numbers match the migrated Sigma workbook to the cent.
 
 ---
 
-## What's flagged, never faked
+## What converts, what's flagged (never faked)
 
-The converter emits a warning (and a readable placeholder) instead of wrong logic for:
-runtime **macros** (`#…# prompt(…,'token',…)` — dynamic column/SQL building, e.g. a
-"swap measure" picker → model as a control + `Switch`), **running-total / moving-* /
-rank / lag / lead** (window funcs with no clean single-column analog), **GetResourceString**
-(localization), composite/non-equi **joins**, and **detail/summary filters** (surfaced
-to re-create as Sigma filters). **Crosstabs → Sigma pivot-tables** (rows/columns edges →
-rowsBy/columnsBy, measure → values) and **charts (RAVE2 `<vizControl>`) → Sigma chart elements**
-(bar/column/line/area/pie/donut/combo/scatter via the slot model — see `refs/format-shapes.md`)
-and **maps (`tiledmap`) → Sigma region-map / point-map** ARE converted and live-validated.
-Only Cognos viz types with no native Sigma element (network, word-cloud, packed-bubble, treemap)
-fall back to a flagged table. Drill-through→actions and Framework Manager `.cpf` remain roadmap.
+**Converted and live-validated:**
+- **Runtime macros** (`#…# prompt(…,'token',…)` — dynamic column building, e.g. a "swap
+  measure" picker) → a Sigma **`segmented` control** (values + default recovered from the
+  report's `<selectValue>` options and `customControl` button configs) + a
+  `Switch([promptId], …)` **wired by `controlId`** (Sigma resolves control refs by
+  controlId, not display name). Both macro shapes convert: token-swap with a default
+  column AND string-concat column-ref building (`'[…CY_' + prompt('pQuarter','token') + '_Revenue]'`).
+- **Singletons → Sigma kpi-charts** (`value: {columnId}`, number format from the Cognos
+  `dataFormat`; sibling dataItem refs materialize as supporting columns). Conditional
+  up/down icon styling is NOT portable — the value is preserved and a warning names it.
+- **Detail filters → element filters**: `[Col] = literal` / `[Col] in (…)` → a `list`
+  filter; `[Col] = ?prompt?` → segmented control + hidden boolean match column +
+  `values:[true]` filter. Filter columns are added hidden when the layout didn't show them.
+- **Auto-aggregated lists → grouped tables** (`groupings: groupBy dims / calculations
+  measures`); footer `Total(...)` columns are skipped with a warning (the group already
+  aggregates — re-add via Sigma totals).
+- **Scaled currency** (`$###.#M`-style patterns) → the nearest Sigma d3 format (SI-suffix
+  `$,.3s`); percent formats → `,.N%`. **Numeric dims on a category axis** (e.g. Year) are
+  Text-cast so they bind categorically, and slot `dsSort` becomes `xAxis.sort`.
+- **Crosstabs → Sigma pivot-tables** (rows/columns edges → rowsBy/columnsBy, measure → values),
+  **charts (RAVE2 `<vizControl>`) → Sigma chart elements** (bar/column/line/area/pie/donut/
+  combo/scatter via the slot model — see `refs/format-shapes.md`) and **maps (`tiledmap`) →
+  Sigma region-map / point-map**.
+
+**Flagged with a warning (and a readable placeholder), never faked:** macros whose prompt
+value set isn't recoverable from the report, **running-total / moving-* / rank / lag / lead**
+(window funcs with no clean single-column analog), **GetResourceString** (localization),
+composite/non-equi **joins**, **summary filters** (post-aggregation), table **sort order**
+(not part of the workbook spec — apply in the UI), and Cognos viz types with no native Sigma
+element (network, word-cloud, packed-bubble, treemap → flagged table). Drill-through→actions
+and Framework Manager `.cpf` remain roadmap.
+
+## Security: Row- & Column-Level Security (RLS/CLS)
+
+Row/column security is **never silently dropped and never silently ported** — and it is handled by the **skill**, not baked into the converted model. The converter only **detects and reports** security in `result.security[]` (the CLI writes it to `security.json` and prints a loud `SECURITY:` line); it does **not** inject it into the data-model spec (a stateless converter can't create Sigma user attributes or assign members, so an injected `CurrentUserAttributeText` filter would fail-closed to 0 rows). This skill provisions + applies it after the model is posted.
+
+**What is detected for Cognos:** Data-Module **security filters** (`securityFilter` entries — top-level or per-query-subject — holding a filter expression + the CAM groups/roles they apply to). Detection is best-effort across the shape variants; **also check manually**: in the Cognos UI a data module's security filters live under the query subject's *Security filters* tab (`Properties → Security`), and Framework Manager packages carry object/data security in the `.cpf` (not parsed — inventory those by hand). Report-level security (CAM object policies on the report itself) maps to Sigma document permissions, not RLS.
+
+**Flow (only runs when security was detected or found manually — zero overhead otherwise):**
+1. **Convert + post** the data model as usual. Capture the `dataModelId` and `security.json` (write entries found manually in the same shape: `[{ "type": "row-filter", "name": …, "expression": …, "groups": […] }]`).
+2. **Gate (opt-in/out, default _Port_).** Show a plain-English summary of each detected rule + recommended Sigma mapping, then ask: **Port** (recommended) / **Customize** (review per-rule attribute/team mapping + CAM-group-to-email reconciliation) / **Skip** (migrated model shows ALL rows to everyone). Reuse-first: existing Sigma user attributes/teams are matched before creating new ones.
+3. **Provision + apply** with the shared engine:
+   ```bash
+   eval "$(scripts/get-token.sh)"
+   python3 scripts/apply_sigma_rls.py --from-security security.json --dm-id <dataModelId>            # plan only (default)
+   python3 scripts/apply_sigma_rls.py --from-security security.json --dm-id <dataModelId> --provision --apply
+   ```
+   `--provision` creates missing user attributes / teams; `--apply` PATCHes the boolean RLS calc column + fail-closed `filters` entry and the `columnSecurities` (CLS) onto the matching element.
+4. **Assign membership.** Assign per-user attribute values / team membership from the Cognos CAM group/role membership (the rule's `groups` name them; the values come from the customer's user mapping — CAM ids are usually not emails, reconcile them).
+
+**Skip is loud:** opting out leaves the migrated model with NO RLS — all rows visible to everyone. Confirm before skipping.
 
 ## Gap scout — close a flagged expression
 

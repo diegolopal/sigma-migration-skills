@@ -18,7 +18,8 @@ const postPath = a.type === 'datamodel' ? '/v2/dataModels/spec' : '/v2/workbooks
 const colsPath = (id) => a.type === 'datamodel' ? `/v2/dataModels/${id}/columns` : `/v2/workbooks/${id}/columns`;
 
 const spec = JSON.parse(readFileSync(a.spec, 'utf8'));
-const body = { folderId: a.folder, name: a.name || spec.name || `cognos ${a.type} ${Date.now()}`, ...spec };
+// name AFTER the spread — `{name, ...spec}` let spec.name silently override --name (beads-sigma-unff).
+const body = { folderId: a.folder, ...spec, name: a.name || spec.name || `cognos ${a.type} ${Date.now()}` };
 const post = await api('POST', postPath, body);
 const id = extractId(post, idField);
 if (!id) { console.error(`POST failed (HTTP ${post.status}): ${post.text.slice(0, 500)}`); process.exit(1); }

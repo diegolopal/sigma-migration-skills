@@ -11,13 +11,18 @@
  *   detail/summary filter                  → element filter (expression translated)
  *   aggregate / if / date DSL              → reuses translateCognosExpr (cognos.ts)
  *
- * FLAG-don't-fake: Cognos report MACROS (`# … prompt('x','token',…) … #` that build
- * SQL/column refs at runtime — e.g. a "swap measure" picker) have no clean static
- * Sigma analog; they're emitted as a Switch placeholder + a loud warning.
+ * Cognos report MACROS (`# … prompt('x','token',…) … #` that build SQL/column refs
+ * at runtime — e.g. a "swap measure" picker) ARE translated when the prompt's value
+ * set is recoverable from the report (a `<selectValue parameter=…>` and/or
+ * `customControl` button configs): they become a Sigma `segmented` control + a
+ * `Switch([promptId], value, [col], …, defaultCol)` wired by controlId. Macros whose
+ * value set can't be recovered still degrade to a flagged placeholder (never faked).
  *
- * Crosstabs → pivot-tables and charts (RAVE2 `<vizControl>`) → Sigma chart
- * elements are supported. NOT yet: drill-through→actions, conditional render
- * blocks, master-detail. Those are the research long-tail.
+ * Also converted: singletons → kpi-charts, detail filters → element filters
+ * (`?prompt?` filters → control + boolean match column), auto-aggregated lists →
+ * grouped tables (`groupings`), crosstabs → pivot-tables, charts (RAVE2
+ * `<vizControl>`) → Sigma chart elements. NOT yet: drill-through→actions,
+ * conditional render blocks, master-detail. Those are the research long-tail.
  */
 
 import { XMLParser } from 'fast-xml-parser';
@@ -35,14 +40,20 @@ const arr = (v: any): any[] => (Array.isArray(v) ? v : v == null ? [] : [v]);
 const txt = (v: any): string => (v == null ? '' : typeof v === 'object' ? (v['#text'] ?? '') : String(v));
 
 // ── workbook spec types (minimal) ────────────────────────────────────────────
-interface WbColumn { id: string; name: string; formula: string; }
-interface WbControl { id: string; kind: 'control'; controlId: string; name: string; controlType: string; }
+interface WbColumn { id: string; name: string; formula: string; format?: Record<string, any>; hidden?: boolean; }
+interface WbControl {
+  id: string; kind: 'control'; controlId: string; name: string; controlType: string;
+  source?: Record<string, any>; value?: string | null;                                     // segmented (parameter)
+}
 interface WbElement {
   id: string; kind: string; name: string; source: Record<string, any>;
   columns?: WbColumn[]; order?: string[]; filters?: any[];
+  groupings?: Array<{ id: string; groupBy: string[]; calculations: string[] }>;            // grouped table
   rowsBy?: Array<{ id: string }>; columnsBy?: Array<{ id: string }>; values?: string[];   // pivot
-  xAxis?: { columnId: string; sort?: any }; yAxis?: { columnIds: string[] };               // cartesian charts
-  value?: { id: string }; color?: any; stacking?: string; orientation?: string;            // pie/donut + bar styling
+  xAxis?: { columnId: string; sort?: { by: string; direction: string } };                  // cartesian charts
+  yAxis?: { columnIds: string[] };
+  value?: { id?: string; columnId?: string };                                              // pie/donut {id} · kpi {columnId}
+  color?: any; stacking?: string; orientation?: string;                                    // bar styling
   latitude?: { id: string }; longitude?: { id: string }; size?: { id: string };            // point-map
   region?: { id: string; regionType: string }; geography?: { id: string };                 // region-map / geography-map
 }
@@ -55,8 +66,9 @@ export interface CognosReportResult {
 export interface CognosReportOptions { dataModelId?: string; workbookName?: string; }
 
 // ── ingest ────────────────────────────────────────────────────────────────────
-interface DataItem { name: string; expression: string; }
-interface Query { name: string; subject: string; items: Map<string, DataItem>; }
+interface DataItem { name: string; expression: string; aggregate?: string; dataType?: string; }
+interface Query { name: string; subject: string; items: Map<string, DataItem>; filters: string[]; }
+interface PromptMeta { options: string[]; def?: string; valueRefs: Record<string, string>; }
 
 function findAll(node: any, tag: string, out: any[] = []): any[] {
   if (node && typeof node === 'object') {
@@ -85,17 +97,72 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     for (const di of findAll(q, 'dataItem')) {
       const dn = di['@_name']; if (!dn) continue;
       const expr = txt(di.expression);
-      items.set(dn, { name: dn, expression: expr });
+      // RS_dataType XMLAttribute (1=int, 2=decimal, 3=string …) — used to detect
+      // numeric dimensions that need a categorical (Text) axis binding.
+      const dataType = findAll(di, 'XMLAttribute').find((x: any) => x['@_name'] === 'RS_dataType')?.['@_value'];
+      items.set(dn, { name: dn, expression: expr, aggregate: di['@_aggregate'], dataType });
       const m = expr.match(/\[[^\]]+\]\.\[[^\]]+\]\.\[([^\]]+)\]\.\[[^\]]+\]/); // [C].[Module].[Subject].[Col]
       if (m && !subject) subject = m[1];
     }
-    queries.set(name, { name, subject, items });
+    const filters = findAll(q, 'detailFilter').map((f: any) => txt(f.filterExpression || f.expression)).filter(Boolean);
+    queries.set(name, { name, subject, items, filters });
   }
 
+  // 1b) prompt metadata — value set + default from the report's own widgets:
+  // <selectValue parameter="pX"> gives the option list + default selection;
+  // customControl button configs ("Parameter"/"Button label"/"Button value") give
+  // an explicit option→model-column mapping for swap-measure macros.
+  const prompts = new Map<string, PromptMeta>();
+  for (const sv of findAll(report, 'selectValue')) {
+    const p = sv['@_parameter']; if (!p) continue;
+    const meta = prompts.get(p) || { options: [], valueRefs: {} };
+    for (const o of findAll(sv, 'selectOption')) {
+      const v = o['@_useValue'];
+      if (v && !meta.options.includes(v)) meta.options.push(v);
+    }
+    const d = txt(findAll(sv, 'defaultSimpleSelection')[0]);
+    if (d && meta.def == null) meta.def = d;
+    prompts.set(p, meta);
+  }
+  for (const cc of findAll(report, 'customControl')) {
+    try {
+      const cfg = JSON.parse(txt(cc.configuration));
+      const p = cfg?.['Parameter'];
+      if (p && cfg['Button label'] && cfg['Button value']) {
+        const meta = prompts.get(p) || { options: [], valueRefs: {} };
+        meta.valueRefs[cfg['Button label']] = String(cfg['Button value']);
+        if (!meta.options.includes(cfg['Button label'])) meta.options.push(cfg['Button label']);
+        prompts.set(p, meta);
+      }
+    } catch { /* non-JSON customControl config — ignore */ }
+  }
+
+  // Prompts → Sigma SEGMENTED controls (parameters). Wired by controlId — element
+  // formulas reference `[<promptName>]`, which Sigma resolves against `controlId`
+  // (NOT the display name). A bare `list` control with no value source is unusable
+  // as a scalar (beads-sigma-fh4u) — segmented + explicit manual values is the
+  // verified working shape.
   const controls = new Map<string, WbControl>();
   const registerPrompt = (p: string) => {
-    if (!controls.has(p)) controls.set(p, { id: sigmaShortId(), kind: 'control', controlId: p, name: sigmaDisplayName(p), controlType: 'list' });
+    if (controls.has(p)) return;
+    const meta = prompts.get(p);
+    const ctrl: WbControl = {
+      id: sigmaShortId(), kind: 'control', controlId: p, name: sigmaDisplayName(p),
+      controlType: 'segmented',
+      source: { kind: 'manual', valueType: 'text', values: [...(meta?.options || [])], labels: (meta?.options || []).map(() => null) },
+      value: meta?.def ?? meta?.options?.[0] ?? null,
+    };
+    if (!meta?.options?.length) {
+      warnings.push(`prompt '${p}': no <selectValue> options found in the report — emitted an empty segmented control; add its values in Sigma.`);
+    }
+    controls.set(p, ctrl);
   };
+
+  // Translate a bare Cognos model ref string ([C].[Module].[Subject].[Col] or
+  // [Subject].[Col]) to a Sigma [Subject/Col] ref — used by the macro expansion.
+  const translateModelRef = (ref: string): string => ref
+    .replace(/\[[^\]]+\]\.\[[^\]]+\]\.\[([^\]]+)\]\.\[([^\]]+)\]/g, (_m, subj, col) => `[${sigmaDisplayName(subj)}/${sigmaDisplayName(col)}]`)
+    .replace(/\[([^\]/]+)\]\.\[([^\]]+)\]/g, (_m, subj, col) => `[${sigmaDisplayName(subj)}/${sigmaDisplayName(col)}]`);
 
   // expression translation: model refs + dataItem cross-refs + prompts + macros, then the DSL.
   const translate = (expr: string, q: Query): { formula: string; warns: string[] } => {
@@ -103,12 +170,62 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     let f = (expr || '').trim();
 
     // Cognos report MACRO ( # … # ) — dynamic SQL/column building (e.g. prompt-driven
-    // measure swap). No static Sigma analog.
+    // measure swap). Translated to control + Switch when the prompt's value set is
+    // recoverable from the report; otherwise flagged (never faked).
     if (f.startsWith('#') || /#\s*sql\s*\(|'token'/.test(f)) {
+      const norm = (s: string) => s.replace(/[\s'"]+/g, '');
+      // Pattern A — token swap with a default column:  # prompt('p','token','<colRef>') #
+      const mA = f.match(/^#\s*prompt\(\s*'([^']+)'\s*,\s*'token'\s*(?:,\s*'([^']*)')?\s*\)\s*#$/s);
+      if (mA) {
+        const [, p, defRef] = mA;
+        registerPrompt(p);
+        const meta = prompts.get(p);
+        const defaultFormula = defRef ? translateModelRef(defRef) : undefined;
+        // Which option IS the macro default? (its branch becomes the Switch fallback)
+        const defaultOption = defRef && meta
+          ? Object.keys(meta.valueRefs).find((k) => norm(meta.valueRefs[k]) === norm(defRef))
+          : undefined;
+        const branches: string[] = [];
+        for (const opt of meta?.options || []) {
+          if (opt === defaultOption) continue;
+          // option → column ref: explicit customControl mapping first, then a
+          // same-named dataItem in this query (its expression is the model ref).
+          let refFormula = meta!.valueRefs[opt] ? translateModelRef(meta!.valueRefs[opt]) : undefined;
+          if (!refFormula) {
+            const di = q.items.get(opt) || [...q.items.values()].find((d) => d.name.toLowerCase() === opt.toLowerCase());
+            if (di && !di.expression.trim().startsWith('#')) refFormula = translateModelRef(di.expression.trim());
+          }
+          if (refFormula) branches.push(`"${opt}", ${refFormula}`);
+          else warns.push(`prompt '${p}' option "${opt}" could not be mapped to a model column — left out of the Switch; add the branch manually.`);
+        }
+        if (defaultFormula && branches.length) {
+          return { formula: `Switch([${p}], ${branches.join(', ')}, ${defaultFormula})`, warns };
+        }
+        if (defaultFormula) {
+          warns.push(`prompt '${p}': no swap options resolved — emitted only the macro's default column.`);
+          return { formula: defaultFormula, warns };
+        }
+      }
+      // Pattern B — column ref built by string concat:  # '<prefix' + prompt('p','token') + 'suffix]' #
+      const mB = f.match(/^#\s*'([^']*)'\s*\+\s*prompt\(\s*'([^']+)'\s*,\s*'token'\s*\)\s*\+\s*'([^']*)'\s*#$/s);
+      if (mB) {
+        const [, pre, p, suf] = mB;
+        registerPrompt(p);
+        const meta = prompts.get(p);
+        if (meta?.options?.length) {
+          const def = meta.def && meta.options.includes(meta.def) ? meta.def : meta.options[meta.options.length - 1];
+          const branches = meta.options.filter((o) => o !== def).map((o) => `"${o}", ${translateModelRef(pre + o + suf)}`);
+          const defaultFormula = translateModelRef(pre + def + suf);
+          return { formula: branches.length ? `Switch([${p}], ${branches.join(', ')}, ${defaultFormula})` : defaultFormula, warns };
+        }
+        warns.push(`dataItem builds a column ref from prompt '${p}' but the report carries no option list for it — emitted a placeholder.`);
+        return { formula: `/* MACRO — manual: ${f.slice(0, 60)} */`, warns };
+      }
+      // Anything else (#sql(), multi-prompt concat, …) — flag, never fake.
       const promptName = (f.match(/prompt\(\s*'([^']+)'/) || [])[1];
       if (promptName) registerPrompt(promptName);
       warns.push(`dataItem uses a Cognos macro (#…#${promptName ? `, prompt '${promptName}'` : ''}) that builds the column/SQL at runtime — model it in Sigma as a control + Switch([Control], …). Emitted a placeholder.`);
-      return { formula: promptName ? `Switch([${sigmaDisplayName(promptName)}] /* map prompt tokens to columns */)` : `/* MACRO — manual: ${f.slice(0, 60)} */`, warns };
+      return { formula: promptName ? `Switch([${promptName}] /* map prompt tokens to columns */)` : `/* MACRO — manual: ${f.slice(0, 60)} */`, warns };
     }
 
     // model column ref → [Subject/Col]   (resolves against the migrated DM element)
@@ -118,8 +235,9 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     f = f.replace(/\[([^\]]+)\]\.\[([^\]]+)\]/g, (_m, subj, col) => `[${sigmaDisplayName(subj)}/${sigmaDisplayName(col)}]`);
     // dataItem cross-refs [Other Item] → [Other Item] (sibling column; keep display name)
     f = f.replace(/\[([^\]\/]+)\]/g, (whole, nm) => (q.items.has(nm) ? `[${sigmaDisplayName(nm)}]` : whole));
-    // prompt('p') standalone → control ref
-    f = f.replace(/prompt\(\s*'([^']+)'[^)]*\)/g, (_m, p) => { registerPrompt(p); return `[${sigmaDisplayName(p)}]`; });
+    // prompt('p') standalone → control ref. Sigma resolves control refs by
+    // controlId, so emit the raw prompt name (the controlId), NOT the display name.
+    f = f.replace(/prompt\(\s*'([^']+)'[^)]*\)/g, (_m, p) => { registerPrompt(p); return `[${p}]`; });
 
     // hand off arithmetic / aggregate / if / date DSL to the shared translator
     const dsl = translateCognosExpr(f, { identifier: q.subject || 'Q', items: [] } as unknown as CognosQuerySubject,
@@ -128,11 +246,136 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     return { formula: dsl.formula, warns };
   };
 
-  // 2) layout lists → table elements
+  // Cognos dataFormat → nearest Sigma column format. Scaled currency patterns
+  // ($###.#M, scale -6 etc.) map to d3 SI-prefix ('s') strings — the value renders
+  // with the magnitude suffix Sigma picks (k/M/B), the closest native analog.
+  const formatFromNode = (node: any): Record<string, any> | undefined => {
+    const cf = findAll(node, 'currencyFormat')[0];
+    const pf = findAll(node, 'percentFormat')[0];
+    const nf = findAll(node, 'numberFormat')[0];
+    const dec = (x: any, d: number) => (x?.['@_decimalSize'] != null ? Number(x['@_decimalSize']) : d);
+    const scaled = (x: any) => x?.['@_scale'] != null || /[KMB]/.test(String(x?.['@_pattern'] || ''));
+    if (cf) return { kind: 'number', formatString: scaled(cf) ? `$,.${dec(cf, 1) + 2}s` : `$,.${dec(cf, 2)}f` };
+    if (pf) return { kind: 'number', formatString: `,.${dec(pf, 0)}%` };
+    if (nf) return { kind: 'number', formatString: scaled(nf) ? `$,.${dec(nf, 1) + 2}s` : `,.${dec(nf, 2)}f` };
+    return undefined;
+  };
+
   const pages: WbPage[] = [];
   const reportPages = findAll(report.layouts || report, 'reportPage').concat(findAll(report.layouts || report, 'page'));
   const lists = findAll(report, 'list');
   const pageEls: WbElement[] = [];
+
+  // Every element sources the migrated DM element. The converter emits the query
+  // SUBJECT display name as the elementId placeholder — remap-wb-to-dm-ids.mjs
+  // rewrites it to the real posted element id.
+  const dmSource = (q: Query) => ({ kind: 'data-model', dataModelId: options.dataModelId || '<DM_ID — wire after posting the data model>', elementId: q.subject ? sigmaDisplayName(q.subject) : '<element>' });
+
+  // Per-query detail filters → Sigma element filters, applied to every element built
+  // on that query (never silently dropped). Handles:
+  //   [Col] = <literal>      → list filter, values:[literal]
+  //   [Col] in (a, b, …)     → list filter, values:[a, b, …]
+  //   [Col] = ?prompt?       → segmented control + boolean match column + list filter on [true]
+  // Anything else stays a loud warning to re-create manually.
+  const ensureFilterCol = (el: WbElement, q: Query, itemName: string): string | undefined => {
+    const di = q.items.get(itemName);
+    if (!di) return undefined;
+    const want = sigmaDisplayName(di.name);
+    const existing = (el.columns || []).find((c) => c.name === want);
+    if (existing) return existing.id;
+    const { formula, warns } = translate(di.expression, q);
+    warns.forEach((w) => warnings.push(`"${q.name}.${itemName}": ${w}`));
+    const id = sigmaShortId();
+    // hidden + not in `order` — filter plumbing, not a display column
+    (el.columns ||= []).push({ id, name: want, formula, hidden: true });
+    return id;
+  };
+  const applyQueryFilters = (el: WbElement, q: Query) => {
+    for (const fx of q.filters) {
+      const m = fx.match(/^\s*\[([^\]]+)\]\s+(in)\s*\(([^)]*)\)\s*$/i) || fx.match(/^\s*\[([^\]]+)\]\s*(=)\s*(.+?)\s*$/);
+      const fail = (why: string) => warnings.push(`filter "${fx.slice(0, 80)}" on query "${q.name}": ${why} — re-create as a Sigma element/page filter.`);
+      if (!m) { fail('not a simple =/in filter'); continue; }
+      const [, nm, op, rhs] = m;
+      if (!q.items.has(nm)) { fail(`[${nm}] is not a dataItem in the query`); continue; }
+      const colId = ensureFilterCol(el, q, nm);
+      if (!colId) { fail('filter column could not be added'); continue; }
+      const col = el.columns!.find((c) => c.id === colId)!;
+      const textCol = /^Text\(/.test(col.formula);
+      const lit = (s: string): string | number => {
+        const t = s.trim().replace(/^['"](.*)['"]$/, '$1');
+        // numeric literal → number, UNLESS the target column was Text-cast for a
+        // categorical axis — then the filter compares strings.
+        return t !== '' && /^-?[\d.]+$/.test(t) && !Number.isNaN(Number(t)) && !textCol ? Number(t) : t;
+      };
+      const prompt = rhs.trim().match(/^\?(\w+)\?$/);
+      if (prompt && op === '=') {
+        const p = prompt[1];
+        registerPrompt(p);
+        const boolId = sigmaShortId();
+        el.columns!.push({ id: boolId, name: `${col.name} = ${p}`, formula: `[${col.name}] = [${p}]`, hidden: true });
+        (el.filters ||= []).push({ id: sigmaShortId(), columnId: boolId, kind: 'list', mode: 'include', values: [true] });
+      } else if (op.toLowerCase() === 'in') {
+        const values = rhs.split(',').map((s) => lit(s)).filter((v) => v !== '');
+        (el.filters ||= []).push({ id: sigmaShortId(), columnId: colId, kind: 'list', mode: 'include', values });
+      } else if (rhs.trim().startsWith('?')) {
+        fail('unsupported prompt comparison');
+      } else {
+        (el.filters ||= []).push({ id: sigmaShortId(), columnId: colId, kind: 'list', mode: 'include', values: [lit(rhs)] });
+      }
+    }
+  };
+
+  // 2a) singletons → kpi-chart elements (beads-sigma-ir3z: these are the KPI panel —
+  // never drop them). Each <singleton refQuery><dataItemValue refDataItem> becomes a
+  // Sigma kpi-chart whose value column is the dataItem's translated formula
+  // (Sum-wrapped when row-level); sibling dataItems it references ([CYQRev]-[PYQRev])
+  // are materialized as supporting columns on the same element.
+  for (const sg of findAll(report, 'singleton')) {
+    const qName = sg['@_refQuery'];
+    const q = queries.get(qName);
+    if (!q) { warnings.push(`<singleton> "${sg['@_name']}" refQuery="${qName}" has no matching query — skipped.`); continue; }
+    const ref = findAll(sg, 'dataItemValue').map((d: any) => d['@_refDataItem']).find(Boolean);
+    const di = ref ? q.items.get(ref) : undefined;
+    if (!di) { warnings.push(`<singleton> "${sg['@_name']}" has no resolvable dataItem ("${ref}") — skipped.`); continue; }
+
+    const cols: WbColumn[] = [];
+    const idByName = new Map<string, string>();
+    const addKpiCol = (nm: string): string | undefined => {
+      if (idByName.has(nm)) return idByName.get(nm);
+      const d = q.items.get(nm);
+      if (!d) return undefined;
+      // sibling dataItems referenced by this expression first (so [X] refs resolve)
+      for (const sm of d.expression.matchAll(/\[([^\]/.]+)\]/g)) {
+        if (sm[1] !== nm && q.items.has(sm[1])) addKpiCol(sm[1]);
+      }
+      const { formula, warns } = translate(d.expression, q);
+      warns.forEach((w) => warnings.push(`"${qName}.${nm}": ${w}`));
+      // case-INSENSITIVE: translateCognosExpr re-derives bracket refs, which can
+      // lowercase non-first words ([Cyq Rev] → [Cyq rev]); Sigma resolves refs
+      // case-insensitively, but a case-sensitive check here would miss the sibling
+      // and double-aggregate (Sum over a Sum column → error column).
+      const referencesSibling = [...q.items.keys()].some((k) => k !== nm && formula.toLowerCase().includes(`[${sigmaDisplayName(k).toLowerCase()}]`));
+      const hasAgg = /\b(Sum|Avg|Min|Max|Count|CountDistinct|Median)\s*\(/.test(formula);
+      const id = sigmaShortId();
+      // a row-level formula must aggregate to render as a single KPI value;
+      // formulas over already-aggregated sibling columns stay as-is.
+      cols.push({ id, name: sigmaDisplayName(nm), formula: referencesSibling || hasAgg ? formula : `Sum(${formula})` });
+      idByName.set(nm, id);
+      return id;
+    };
+    const valId = addKpiCol(ref)!;
+    const fmt = formatFromNode(sg);
+    if (fmt) cols.find((c) => c.id === valId)!.format = fmt;
+    if (findAll(sg, 'conditionalStyleRef').length) {
+      warnings.push(`singleton "${sg['@_name']}" (${ref}) uses conditional styling (e.g. up/down KPI icons) — not portable to a Sigma kpi-chart spec; the VALUE is preserved, re-create the icon rule manually.`);
+    }
+    const el: WbElement = {
+      id: sigmaShortId(), kind: 'kpi-chart', name: di.name, source: dmSource(q),
+      columns: cols, order: cols.map((c) => c.id), value: { columnId: valId },
+    };
+    applyQueryFilters(el, q);
+    pageEls.push(el);
+  }
 
   for (const L of lists) {
     const qName = L['@_refQuery'];
@@ -141,13 +384,24 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     const colRefs: string[] = findAll(L, 'dataItemValue').map((d) => d['@_refDataItem']).filter(Boolean);
     const refs = colRefs.length ? colRefs : [...q.items.keys()];
     const columns: WbColumn[] = [];
-    const AGG: Record<string, string> = { total: 'Sum', summary: 'Sum', aggregate: 'Sum', average: 'Avg', count: 'Count', maximum: 'Max', minimum: 'Min' };
+    const AGG: Record<string, string> = { total: 'Sum', summary: 'Sum', aggregate: 'Sum', calculated: 'Sum', average: 'Avg', count: 'Count', maximum: 'Max', minimum: 'Min' };
+    // Cognos lists auto-group: non-aggregate dataItems are the grain, aggregate
+    // ('total'/'calculated'/…) dataItems are rolled up per group. Mirror that with a
+    // Sigma grouped table (beads-sigma-0xlz): dims → groupBy, measures (Agg-wrapped)
+    // → grouping calculations.
+    const isMeasureItem = (d: DataItem) => !!d.aggregate && d.aggregate !== 'none';
+    const grouped = refs.some((r) => { const d = q.items.get(r); return d && isMeasureItem(d); })
+      && refs.some((r) => { const d = q.items.get(r); return d && !isMeasureItem(d); });
+    const dimIds: string[] = [];
+    const measureIds: string[] = [];
+    const footerRefs: string[] = [];
     for (const r of refs) {
       const di = q.items.get(r);
       if (!di) {
         // layout aggregate/footer column, e.g. "Total(Revenue)" / "Summary(Revenue)" / "Average(Revenue)1"
         const m = r.match(/^(Total|Summary|Aggregate|Average|Count|Maximum|Minimum)\((.+?)\)\d*$/i);
         if (m && q.items.get(m[2])) {
+          if (grouped) { footerRefs.push(r); continue; } // grand-total footer — see warning below
           columns.push({ id: sigmaShortId(), name: sigmaDisplayName(r), formula: `${AGG[m[1].toLowerCase()]}([${sigmaDisplayName(m[2])}])` });
           continue;
         }
@@ -155,13 +409,36 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
       }
       const { formula, warns } = translate(di.expression, q);
       warns.forEach((w) => warnings.push(`"${qName}.${r}": ${w}`));
-      columns.push({ id: sigmaShortId(), name: sigmaDisplayName(di.name), formula });
+      const id = sigmaShortId();
+      if (grouped && isMeasureItem(di)) {
+        const fn = AGG[di.aggregate!.toLowerCase()] || 'Sum';
+        columns.push({ id, name: sigmaDisplayName(di.name), formula: /^\s*(Sum|Avg|Min|Max|Count|CountDistinct)\s*\(/.test(formula) ? formula : `${fn}(${formula})` });
+        measureIds.push(id);
+      } else {
+        columns.push({ id, name: sigmaDisplayName(di.name), formula });
+        if (grouped) dimIds.push(id);
+      }
     }
-    pageEls.push({
+    if (footerRefs.length) {
+      warnings.push(`list "${qName}": footer total(s) ${footerRefs.join(', ')} — the grouped Sigma table already aggregates per group; add a grand-total via the table's totals UI (a duplicate Sum column would double-aggregate).`);
+    }
+    for (const si of findAll(L, 'sortItem')) {
+      if (si['@_refDataItem']) warnings.push(`list "${qName}" sorts by "${si['@_refDataItem']}" (${si['@_sortOrder'] || 'ascending'}) — table sort isn't part of the Sigma workbook spec; apply the sort in the UI.`);
+    }
+    // conditional styles on list columns (e.g. threshold-driven $K/$M/$B data formats)
+    // have no spec analog — never drop them silently.
+    const condRefs = [...new Set(findAll(L, 'conditionalStyleRef').map((c: any) => c['@_refConditionalStyle']).filter(Boolean))];
+    if (condRefs.length) warnings.push(`list "${qName}" uses conditional style(s) ${condRefs.map((r) => `"${r}"`).join(', ')} — threshold-driven formats/styles aren't portable to the Sigma spec; set a column format (e.g. $,.3s) or conditional formatting in the UI.`);
+    const el: WbElement = {
       id: sigmaShortId(), kind: 'table', name: `${q.subject ? sigmaDisplayName(q.subject) + ' — ' : ''}${qName}`,
-      source: { kind: 'data-model', dataModelId: options.dataModelId || '<DM_ID — wire after posting the data model>', elementId: q.subject ? sigmaDisplayName(q.subject) : '<element>' },
+      source: dmSource(q),
       columns, order: columns.map((c) => c.id),
-    });
+    };
+    if (grouped && dimIds.length && measureIds.length) {
+      el.groupings = [{ id: sigmaShortId(), groupBy: dimIds, calculations: measureIds }];
+    }
+    applyQueryFilters(el, q);
+    pageEls.push(el);
   }
 
   // 2b) crosstabs → pivot-table elements (rows edge → rowsBy, columns edge → columnsBy, measure → values)
@@ -188,11 +465,13 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     // Sigma pivot: rowsBy/columnsBy are {id} objects, values are bare column-id strings.
     const values = (measRefs.map((m) => mk(m, true)).filter(Boolean) as Array<{ id: string }>).map((o) => o.id);
     if (!values.length || (!rowsBy.length && !columnsBy.length)) warnings.push(`crosstab "${qName}" missing a measure or both edges — review the pivot.`);
-    pageEls.push({
+    const el: WbElement = {
       id: sigmaShortId(), kind: 'pivot-table', name: `${q.subject ? sigmaDisplayName(q.subject) + ' — ' : ''}${qName} (crosstab)`,
-      source: { kind: 'data-model', dataModelId: options.dataModelId || '<DM_ID — wire after posting the data model>', elementId: q.subject ? sigmaDisplayName(q.subject) : '<element>' },
+      source: dmSource(q),
       columns: cols, order: cols.map((c) => c.id), rowsBy, columnsBy, values,
-    });
+    };
+    applyQueryFilters(el, q);
+    pageEls.push(el);
   }
 
   // 2c) charts (RAVE2 <vizControl>) → Sigma chart elements
@@ -220,7 +499,7 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     'com.ibm.vis.packedbubble': 'packed bubble', 'com.ibm.vis.treemap': 'treemap',
   };
   const isMapViz = (t: string) => /tiledmap|choropleth|\bmap\b/.test(t);
-  const chartSource = (q: Query) => ({ kind: 'data-model', dataModelId: options.dataModelId || '<DM_ID — wire after posting the data model>', elementId: q.subject ? sigmaDisplayName(q.subject) : '<element>' });
+  const chartSource = dmSource;
 
   for (const V of findAll(report, 'vizControl')) {
     const vizType = String(V['@_type'] || '').toLowerCase();
@@ -231,26 +510,33 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     if (!q) { warnings.push(`<vizControl> "${vizName}" (${vizType}): no resolvable query (dataStore "${dsName}") — chart skipped.`); continue; }
 
     // slot entries by id (categories / series / values / size / x / y / color)
-    const slot = (id: string): Array<{ ref: string; rollup?: string }> => {
-      const out: Array<{ ref: string; rollup?: string }> = [];
+    const slot = (id: string): Array<{ ref: string; rollup?: string; sort?: string; format?: Record<string, any> }> => {
+      const out: Array<{ ref: string; rollup?: string; sort?: string; format?: Record<string, any> }> = [];
       for (const sd of findAll(V, 'vcSlotData')) {
         if (String(sd['@_idSlot'] || '').toLowerCase() !== id) continue;
-        for (const c of findAll(sd, 'vcSlotDsColumn')) if (c['@_refDsColumn']) out.push({ ref: c['@_refDsColumn'], rollup: c['@_rollupMethod'] });
+        for (const c of findAll(sd, 'vcSlotDsColumn')) if (c['@_refDsColumn']) {
+          out.push({ ref: c['@_refDsColumn'], rollup: c['@_rollupMethod'], sort: c['@_dsSort'], format: formatFromNode(c) });
+        }
       }
       return out;
     };
     const cols: WbColumn[] = [];
     const seen = new Map<string, string>();
-    const addCol = (e: { ref: string; rollup?: string } | undefined, measure: boolean): string | undefined => {
+    const addCol = (e: { ref: string; rollup?: string; format?: Record<string, any> } | undefined, measure: boolean, categorical = false): string | undefined => {
       if (!e) return undefined;
       const di = q.items.get(e.ref);
       if (!di) { warnings.push(`chart "${vizName}" column "${e.ref}" not in query "${qName}" — skipped.`); return undefined; }
       const nm = sigmaDisplayName(di.name);
       if (seen.has(nm)) return seen.get(nm);
-      const { formula, warns } = translate(di.expression, q); warns.forEach((w) => warnings.push(`"${vizName}.${e.ref}": ${w}`));
+      let { formula, warns } = translate(di.expression, q); warns.forEach((w) => warnings.push(`"${vizName}.${e.ref}": ${w}`));
+      // A numeric dimension (e.g. Year, RS_dataType 1/2) bound to a category axis
+      // renders as a continuous axis in Sigma — cast to Text so it binds categorically.
+      if (categorical && !measure && (di.dataType === '1' || di.dataType === '2')) formula = `Text(${formula})`;
       const id = sigmaShortId();
       const fn = measure ? (ROLLUP_AGG[String(e.rollup || '').toLowerCase()] || 'Sum') : '';
-      cols.push({ id, name: nm, formula: measure ? `${fn}(${formula})` : formula });
+      const col: WbColumn = { id, name: nm, formula: measure ? `${fn}(${formula})` : formula };
+      if (e.format) col.format = e.format;
+      cols.push(col);
       seen.set(nm, id); return id;
     };
 
@@ -274,6 +560,7 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
         if (colorId) el.color = { by: 'scale', column: colorId };
         el.order = cols.map((c) => c.id);
         if (!cols.length) { warnings.push(`<vizControl> map "${vizName}" had no resolvable lat/long columns — skipped.`); continue; }
+        applyQueryFilters(el, q);
         pageEls.push(el);
       } else if (region) {
         const regId = addCol(region, false);
@@ -282,13 +569,16 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
         const el: WbElement = { id: sigmaShortId(), kind: 'region-map', name: vizName, source: chartSource(q), columns: cols, order: cols.map((c) => c.id), region: { id: regId, regionType: 'country' } };
         if (colorId) el.color = { by: 'scale', column: colorId };
         warnings.push(`chart "${vizName}" → region-map: defaulted regionType to "country" — set it to match your data (country / us-state / us-county / us-zipcode / us-cbsa / us-postal-place / ca-province).`);
+        applyQueryFilters(el, q);
         pageEls.push(el);
       } else {
         // a map with neither coordinate nor named-location slots → table fallback
         for (const c of findAll(V, 'vcSlotDsColumn')) if (c['@_refDsColumn']) addCol({ ref: c['@_refDsColumn'], rollup: c['@_rollupMethod'] }, !!c['@_rollupMethod']);
         if (!cols.length) { warnings.push(`<vizControl> map "${vizName}" (${vizType}) had no resolvable columns — skipped.`); continue; }
         warnings.push(`chart "${vizName}" is a Cognos map (${vizType}) with no lat/long or named-location slot — emitted its data as a table; add geographic columns + a map in the workbook.`);
-        pageEls.push({ id: sigmaShortId(), kind: 'table', name: `${vizName} (was map)`, source: chartSource(q), columns: cols, order: cols.map((c) => c.id) });
+        const fb: WbElement = { id: sigmaShortId(), kind: 'table', name: `${vizName} (was map)`, source: chartSource(q), columns: cols, order: cols.map((c) => c.id) };
+        applyQueryFilters(fb, q);
+        pageEls.push(fb);
       }
       continue;
     }
@@ -299,7 +589,9 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
       for (const c of findAll(V, 'vcSlotDsColumn')) if (c['@_refDsColumn']) addCol({ ref: c['@_refDsColumn'], rollup: c['@_rollupMethod'] }, !!c['@_rollupMethod']);
       if (!cols.length) { warnings.push(`<vizControl> "${vizName}" (${vizType}) had no resolvable columns — skipped.`); continue; }
       warnings.push(`chart "${vizName}" is a Cognos ${label} (${vizType}) — Sigma has no native equivalent; emitted its data as a table. Re-pick a Sigma chart in the workbook.`);
-      pageEls.push({ id: sigmaShortId(), kind: 'table', name: `${vizName} (was ${label})`, source: chartSource(q), columns: cols, order: cols.map((c) => c.id) });
+      const fb: WbElement = { id: sigmaShortId(), kind: 'table', name: `${vizName} (was ${label})`, source: chartSource(q), columns: cols, order: cols.map((c) => c.id) };
+      applyQueryFilters(fb, q);
+      pageEls.push(fb);
       continue;
     }
 
@@ -319,9 +611,12 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
       if (cId) el.color = { by: 'category', column: cId };
     } else {
       // cartesian: bar / line / area / combo
-      const xId = addCol(cats[0], false);
-      if (xId) el.xAxis = { columnId: xId };
-      if (cats.length > 1) { warnings.push(`chart "${vizName}": Cognos used ${cats.length} category levels; Sigma x-axis takes one — bound the first, kept the rest as columns.`); cats.slice(1).forEach((c) => addCol(c, false)); }
+      const xId = addCol(cats[0], false, true);
+      if (xId) {
+        el.xAxis = { columnId: xId };
+        if (cats[0]?.sort) el.xAxis.sort = { by: xId, direction: /desc/i.test(cats[0].sort) ? 'descending' : 'ascending' };
+      }
+      if (cats.length > 1) { warnings.push(`chart "${vizName}": Cognos used ${cats.length} category levels; Sigma x-axis takes one — bound the first, kept the rest as columns.`); cats.slice(1).forEach((c) => addCol(c, false, true)); }
       const yIds = [...vals, ...sizes].map((v) => addCol(v, true)).filter(Boolean) as string[];
       if (yIds.length) el.yAxis = { columnIds: yIds };
       else warnings.push(`chart "${vizName}" (${kind}) resolved no measure for the value axis — add a measure in the workbook.`);
@@ -336,6 +631,7 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
 
     el.columns = cols; el.order = cols.map((c) => c.id);
     if (!cols.length) { warnings.push(`<vizControl> "${vizName}" (${vizType}) had no resolvable slot columns — skipped.`); continue; }
+    applyQueryFilters(el, q);
     pageEls.push(el);
   }
 
@@ -343,19 +639,22 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
   const controlEls = [...controls.values()];
   pages.push({ id: sigmaShortId(), name: reportPages[0]?.['@_name'] || 'Report', elements: [...controlEls as any, ...pageEls] });
 
-  // filters → warnings (translate for reference)
-  for (const fnode of findAll(report, 'detailFilter').concat(findAll(report, 'summaryFilter'))) {
+  // detail filters are converted per element (applyQueryFilters); summary filters
+  // (post-aggregation HAVING-style) still surface as warnings to re-create.
+  for (const fnode of findAll(report, 'summaryFilter')) {
     const fexpr = txt(fnode.filterExpression || fnode.expression);
-    if (fexpr) warnings.push(`filter: "${fexpr.slice(0, 80)}" — re-create as a Sigma element/page filter.`);
+    if (fexpr) warnings.push(`summary filter: "${fexpr.slice(0, 80)}" — post-aggregation filter; re-create as a Sigma filter on the aggregated column.`);
   }
 
   const stats = {
     queries: queries.size,
     tables: pageEls.filter((e) => e.kind === 'table').length,
     pivots: pageEls.filter((e) => e.kind === 'pivot-table').length,
-    charts: pageEls.filter((e) => e.kind.endsWith('-chart')).length,
+    kpis: pageEls.filter((e) => e.kind === 'kpi-chart').length,
+    charts: pageEls.filter((e) => e.kind.endsWith('-chart') && e.kind !== 'kpi-chart').length,
     maps: pageEls.filter((e) => e.kind.endsWith('-map')).length,
     columns: pageEls.reduce((n, e) => n + (e.columns?.length || 0), 0),
+    filters: pageEls.reduce((n, e) => n + (e.filters?.length || 0), 0),
     controls: controls.size,
   };
   return {

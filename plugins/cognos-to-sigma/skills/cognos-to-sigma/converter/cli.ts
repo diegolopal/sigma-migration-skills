@@ -8,7 +8,7 @@
  *
  * Options: --connection <id> --database <DB> --schema <S> --dm <dataModelId> --pretty
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { convertCognosToSigma } from './cognos.js';
@@ -41,6 +41,13 @@ const res = isReport
 const payload = isReport ? (res as any).workbook : (res as any).model;
 process.stdout.write(JSON.stringify(payload, null, 2) + '\n');
 console.error(`\n[${isReport ? 'report→workbook' : 'module→data-model'}] stats: ${JSON.stringify(res.stats)}`);
+// Detected security (RLS) — detect-only; the skill's apply_sigma_rls.py ports it.
+const security = (res as any).security;
+if (security?.length) {
+  const out = opt('security-out', 'security.json');
+  writeFileSync(out, JSON.stringify(security, null, 2));
+  console.error(`SECURITY: ${security.length} rule(s) detected → ${out} — run scripts/apply_sigma_rls.py after posting the model (see SKILL.md "Security").`);
+}
 if (res.warnings.length) {
   console.error(`warnings (${res.warnings.length}) — translated where possible, flagged where not:`);
   res.warnings.forEach((w) => console.error('  ! ' + w));
