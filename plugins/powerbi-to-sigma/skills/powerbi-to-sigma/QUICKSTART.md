@@ -124,8 +124,9 @@ inspect or hand-tune each stage. The phases:
 
 1. **Extract** (`fabric-extract.py`) — device-code → Fabric `getDefinition` →
    **TMSL** (tables, measures, calc columns, RLS, M sources) + **PBIR** (pages, visuals,
-   field bindings). Classic single-`report.json` reports are handled too
-   (`extract-report-classic.py`).
+   field bindings). Classic single-`report.json` reports are handled too:
+   `run.sh` auto-detects the legacy shape (no `definition/` folder) and branches to
+   `extract-report-classic.py`.
 2. **Translate** — `convert_powerbi_to_sigma` maps the model + DAX to a Sigma spec.
    Apply the required POST fixups (`schemaVersion`, folderId, element name).
 3. **Build the data model** — POST to `/v2/dataModels/spec`; verify every column has a
@@ -157,7 +158,7 @@ Duration: 3
 Duration: 3
 
 - **Extraction with no Entra app** — device-code + well-known client + `truststore`; works on *My workspace*.
-- **PBIR vs classic report.json** — newer reports are exploded PBIR; older ones are a single `report.json` with `sections[]` — detect and branch.
+- **PBIR vs classic report.json** — newer reports are exploded PBIR; older ones are a single `report.json` with `sections[]` — `run.sh` detects and branches automatically (`extract-report-classic.py`).
 - **Spec fixups** — three required edits before POST (`schemaVersion: 1`, real `folderId`, element `name`).
 - **Time-intelligence DAX** is translatable (not part of the (c) tail) via `DateLookback`/`CumulativeSum` on a date-grouped workbook element.
 - **Hard DAX → gap-scout sub-agent** — measures the converter buckets `b`/`c` (`RANKX`, `ALLEXCEPT`, `SUMMARIZE`, `USERELATIONSHIP`, …) are handed to a gap-scout (`scripts/gap-scout.md`): it proposes a Sigma translation, **validates it against the live Sigma API** (`scout-validate.py`), and persists the rule to `~/.powerbi-to-sigma/learned-rules.yaml` so future runs auto-apply it. When the scout hits a genuine converter gap it can **(opt-in) file a GitHub issue** so the gap gets fixed upstream — it always confirms before filing.

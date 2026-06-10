@@ -41,21 +41,35 @@ HBAR_TYPES = {"barChart", "clusteredBarChart", "stackedBarChart",
               "hundredPercentStackedBarChart"}
 
 # Geo/map visuals bind Series(=location dim) + Size(=measure). The bar branch of
-# the builder reads Category/Axis/X (dim) and Y/Values (measure), so remap.
+# the builder reads Category/Axis/X (dim) and Y/Values (measure), so remap —
+# but ONLY for map visuals (bead ry0n): on a scatterChart, Size is the real
+# bubble-size role and Series the legend; remapping them corrupts the scatter.
 ROLE_REMAP = {
     "Series": "Category",
     "Size": "Y",
     "Location": "Category",
     "Latitude": "Category",
 }
+MAP_TYPES = {"map", "filledMap", "shapeMap", "azureMap"}
 
 
-def _projections(sv):
+def _projections(sv, vt=None):
+    # bead hjke(c): classic configs record the drilled-to hierarchy level in
+    # singleVisual.activeProjections — prefer it over the full level list so a
+    # day-drilled line binds Day instead of collapsing to Year.
+    act = sv.get("activeProjections", {}) or {}
     out = {}
     for role, items in (sv.get("projections", {}) or {}).items():
+        a = act.get(role) or []
+        arefs = [it.get("queryRef") for it in a if isinstance(it, dict) and it.get("queryRef")]
         refs = [it.get("queryRef") for it in items if isinstance(it, dict) and it.get("queryRef")]
+        if arefs and arefs != refs:
+            print(f"[classic] drill: role {role} -> active projection {arefs} "
+                  f"(of {len(refs)} level(s))", file=sys.stderr)
+            refs = arefs
         if refs:
-            out[ROLE_REMAP.get(role, role)] = refs
+            key = ROLE_REMAP.get(role, role) if vt in MAP_TYPES else role
+            out[key] = refs
     return out
 
 
@@ -66,6 +80,16 @@ def _title(sv):
         t = props.get("text", {}).get("expr", {}).get("Literal", {}).get("Value")
         if t and show != "false":
             return t.strip("'")
+    return None
+
+
+def _obj_flag(sv, key):
+    """objects.<key>[0].properties.show.expr.Literal.Value -> True/False/None
+    (bead n9u9 data labels / ry0n legend; same shape as extract-pbir.py)."""
+    for it in sv.get("objects", {}).get(key, []):
+        v = it.get("properties", {}).get("show", {}).get("expr", {}).get("Literal", {}).get("Value")
+        if v is not None:
+            return str(v).strip("'").lower() == "true"
     return None
 
 
@@ -102,8 +126,12 @@ def extract(report):
                 "x": x or 0, "y": y or 0, "w": w or 0, "h": h or 0,
                 "z": vc.get("z", 0),
                 "parent_group": None,
-                "bindings": _projections(sv),
+                "bindings": _projections(sv, vt),
                 "formats": {},
+                # bead n9u9: PBI data-label toggle (objects.labels show) — true/false/None
+                "data_labels": _obj_flag(sv, "labels"),
+                # bead ry0n: PBI legend toggle (objects.legend show) — true/false/None
+                "legend": _obj_flag(sv, "legend"),
             }
             if rec["sigma_kind"] == "text":
                 rec["text"] = _textbox_body(sv)
