@@ -25,9 +25,12 @@ python3 scripts/ts_discover.py <LIVEBOARD_ID> LIVEBOARD   # viz chart types + li
 
 ## 3. Convert the model
 Feed the model's TML to the **`convert_thoughtspot_to_sigma`** MCP tool (or point
-`CONVERTER_PATH` at a `sigma-data-model-mcp` build for the scripted path). It emits
-a Sigma data model with a denormalized **"<root> View"** element that surfaces
-joined-dim columns — the workbook master reads from it.
+`CONVERTER_PATH` at a `sigma-data-model-mcp` build for the one-shot path). With
+neither, `migrate.py` writes `<workdir>/convert-request.json` (the exact MCP
+arguments) and exits 3 — call the tool, save its JSON output, and re-run with
+`--converted <file>`. The converter emits a Sigma data model with a denormalized
+**"<root> View"** element that surfaces joined-dim columns — the workbook master
+reads from it. Rules: `refs/model-conversion-rules.md`.
 
 Before POSTing, run the **DM-reuse check** (SKILL.md step 2.5): `ts-dm-signature.py`
 + `find-or-pick-dm.rb --auto-pick` score the org's existing data models against the
@@ -36,18 +39,28 @@ is skipped.
 
 ## 4. Migrate (model → DM → its Liveboards → layout)
 ```bash
-python3 scripts/migrate.py --model <TS_MODEL_ID>            # all Liveboards on the model
-python3 scripts/migrate.py --model <ID> --liveboard <LB_ID> # just one
+python3 scripts/migrate.py --model <TS_MODEL_ID> --workdir /tmp/ts-run   # all Liveboards on the model
+python3 scripts/migrate.py --model <ID> --liveboard <LB_ID> --workdir /tmp/ts-run  # just one
+# offline (no TS access): --model-tml fixtures/retail-analytics-model.tml \
+#                         --liveboard-tml fixtures/retail-analytics-liveboard.tml
 ```
 This converts + POSTs the DM, discovers the denorm element, derives the column
 resolver from the model TML, rebuilds each Liveboard's visualizations as Sigma
-elements (KPI/bar/line/pie/pivot/table + search-query filters), and applies a grid
-layout. Output ids → `~/thoughtspot-migration/migrate_out.json`.
+elements (KPI/bar/line/pie/pivot/table + search-query filters + sorts), and maps
+the Liveboard's own `layout.tiles` geometry onto Sigma's grid. Workbooks/pages
+take the Liveboard's display name (`--name` adds a prefix to the DM + workbooks).
+Output ids → `<workdir>/migrate_out.json`.
 
-## 5. Verify parity
-Query the model in ThoughtSpot (`ts_lib.searchdata`) and the Sigma workbook
-elements (Sigma v2 query); values match to the cent. Re-apply layout last if you
-edit a workbook spec (a bare PUT wipes `spec.layout`).
+## 5. Verify parity (hard gate)
+```bash
+ruby scripts/phase6-parity-thoughtspot.rb --workdir /tmp/ts-run --workbook-id <wb>  # PASS 1: plan
+# … fetch ACTUAL (mcp__sigma-mcp-v2__query) + EXPECTED (ts_lib.searchdata / warehouse) …
+ruby scripts/phase6-parity-thoughtspot.rb --workdir /tmp/ts-run --finalize          # PASS 2: sentinel
+ruby scripts/assert-phase6-ran.rb --workdir /tmp/ts-run --workbook-id <wb>          # must exit 0
+```
+Re-apply layout last if you edit a workbook spec (a bare PUT wipes `spec.layout`).
+Workbook RENAMES go through `PATCH /v2/files/{id}` — `PATCH /v2/workbooks/{id}`
+silently no-ops.
 
 ## Assess first (optional)
 `thoughtspot-assessment/scripts/scan.py` inventories the instance, ranks a
