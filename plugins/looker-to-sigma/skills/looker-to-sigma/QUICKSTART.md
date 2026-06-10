@@ -34,7 +34,16 @@ python3 scripts/looker_api.py raw GET /dashboards      # list dashboards (UDD + 
 python3 scripts/fetch_looker_dashboard.py <dashboard_id> /tmp/look/<dash>.contract.json
 # offline (dev/test only — cannot see UDDs):
 python3 scripts/parse_lookml_dashboard.py <file.dashboard.lookml> --out /tmp/look/<dash>.contract.json
+
+# scan for row-level security (silent + exit 0 if none; if found → ONE decision gate before Phase 3)
+python3 scripts/detect_rls.py /path/to/lookml
 ```
+
+If `detect_rls.py` reports RLS (`access_filter` / `sql_always_where` / `access_grant`), stop ONCE
+before building: reuse any existing Sigma user attribute / DM, pre-fill the recommended mapping
+(`access_filter` → user-attribute row filter via `LookupUserAttributeText`/`CurrentUserAttributeText`;
+`sql_always_where` → DM/element filter; `access_grant` → note), then confirm/edit/skip in a single
+decision — and record ported/reused/skipped in the summary (never silently drop RLS).
 
 ## 3. Convert the semantic model
 
