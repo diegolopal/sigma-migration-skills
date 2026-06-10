@@ -24,6 +24,49 @@ of emitting wrong logic.
 
 ---
 
+## One command (orchestrated path)
+
+```bash
+node scripts/migrate-cognos.mjs \
+  --module <module.json> --report <report.xml> \
+  --connection <SIGMA_CONNECTION_ID> --folder <SIGMA_FOLDER_ID> \
+  [--database CSA --schema TJ] [--name '<prefix>'] \
+  [--reuse-dm [ID]] [--expected expected.json] [--yes]
+```
+
+Chains every phase below in one process: module convert → DM-reuse scan
+(candidates printed; default BUILD NEW, `--reuse-dm` opts in) → DM
+post-and-readback (hard gate) → report convert `--dm` → remap → workbook
+post-and-readback (hard gate) → apply-layout (readback-verified) → parity.
+Inputs are the exported module JSON + report XML (Phase 0 / `cognos-discover.sh`
+gets them from a live CA). `--name` prefixes both the DM and workbook names.
+
+Parity is two-pass when `--expected` isn't supplied up front: pass 1 auto-exports
+every element to CSV via the Sigma REST export API → `<workdir>/sigma-actuals.json`
+(keys `"<Element>/<Column>" = sum`, `"<Element>/rows" = count`), prints the
+`assert-parity --plan` mcp-v2 query list, then exits 10 with resume instructions.
+Build `expected.json` from the **Cognos** report's numbers (same keys, subset ok)
+and resume:
+
+```bash
+node scripts/migrate-cognos.mjs --resume --out <workdir> --expected expected.json
+```
+
+Exit codes: `0` = PARITY GREEN (`assert-parity --check` passed — the only green
+exit); `10` = stopped for human input (OPEN QUESTIONS or expected values needed;
+state saved); `3` = built but parity RED; anything else = a gate failed. A
+freshness banner prints before any side-by-side: Sigma queries the LIVE
+warehouse while `expected.json` is a Cognos snapshot — re-capture before calling
+drift a bug.
+
+**Still manual by design (the orchestrator stops and tells you):** the expected
+parity numbers (they must come from the Cognos report — never invented),
+flagged-expression rework (gap-scout), and RLS porting (`security.json` →
+`apply_sigma_rls.py`, see "Security" — detected rules are surfaced at the
+checkpoint, never silently ported or dropped).
+
+---
+
 ## Prerequisites
 
 - **Cognos Analytics 11.1+** REST access (on-prem or CA on Cloud). Base path is

@@ -33,15 +33,32 @@
 #     Tableau->Sigma translator) and the workbook via the skill's own
 #     build-charts-from-signals.rb + build-workbook-spec.rb.
 #
-# Usage:
+# Usage (PASS 1 — discover → gates → DM → workbook → layout → parity plan):
 #   ruby scripts/migrate-tableau.rb \
 #     --workbook "<name>" | --workbook-id <luid> \
 #     --connection <SIGMA_CONNECTION_ID> --folder <SIGMA_FOLDER_ID> \
 #     [--db CSA --schema TJ] [--specs <path/to/specs.rb>] \
+#     [--name '<prefix for DM/workbook names>'] [--row-scale 1.5] \
+#     [--force]               # proceed past ❌-unhandled gap-scan features
+#     [--reuse-dm [ID]]       # opt IN to DM reuse (default: build new; bare
+#                             # flag = use find-or-pick-dm's recommendation)
+#     [--skip-reuse-scan]     # don't scan existing DMs at all
 #     [--out DIR] [--answers '<json>'] [--yes]
 #
-# Exit codes: 0 = done (PARITY pass); 10 = decisions needed (OPEN QUESTIONS
-# printed, NO Sigma objects created); 3 = parity/guard fail; other = error.
+# Phase 6 parity is TWO-PASS (Sigma has no synchronous chart-data REST endpoint;
+# actuals come from mcp-v2 queries). Pass 1 ends by emitting the per-chart MCP
+# query list + exit 12. Collect the actuals, then resume (PASS 2 — finalize +
+# cleanup-orphans + the census-aware assert-phase6-ran hard gate):
+#   ruby scripts/migrate-tableau.rb --workbook "<name>" [--out DIR] \
+#     --finalize --actuals <WORKDIR>/parity-actuals.json \
+#     [--allow-missing-tiles N]   # explain legitimately unbuildable zones
+#
+# Exit codes: 0 = done (ALL gates green — only possible via --finalize);
+# 10 = decisions needed (OPEN QUESTIONS printed, NO Sigma objects created);
+# 11 = gap scan found ❌-unhandled features (re-run with --force to accept);
+# 12 = pass 1 complete, parity PENDING (run the printed MCP queries, then
+#      re-run with --finalize --actuals);
+# 3 = parity/guard fail; 4 = workbook layer needs the agent path; other = error.
 require 'json'
 require 'csv'
 require 'yaml'
@@ -66,10 +83,25 @@ OptionParser.new do |o|
   o.on('--out DIR')          { |v| opts[:out]     = File.expand_path(v) }
   o.on('--answers JSON')     { |v| opts[:answers] = v }
   o.on('--yes')              {     opts[:yes]     = true }
+  o.on('--name PREFIX')      { |v| opts[:name]    = v }
+  o.on('--force')            {     opts[:force]   = true }
+  o.on('--reuse-dm [ID]')    { |v| opts[:reuse_dm] = v || :recommended }
+  o.on('--skip-reuse-scan')  {     opts[:skip_reuse] = true }
+  o.on('--row-scale F', Float) { |v| opts[:row_scale] = v }
+  o.on('--master-col PAIR', "'Name=<Sigma formula>' — extra master column (repeatable). The resume path " \
+                            'for the exit-4 handoff when a chart dim is a master-level calc the mechanical ' \
+                            'map cannot derive (e.g. a binned/categorized dimension).') do |v|
+    nm, fx = v.split('=', 2)
+    abort "--master-col expects 'Name=<Sigma formula>', got #{v.inspect}" if nm.to_s.empty? || fx.to_s.empty?
+    (opts[:master_cols] ||= []) << [nm, fx]
+  end
+  o.on('--finalize')         {     opts[:finalize] = true }
+  o.on('--actuals PATH')     { |v| opts[:actuals] = File.expand_path(v) }
+  o.on('--allow-missing-tiles N', Integer) { |v| opts[:allow_missing_tiles] = v }
 end.parse!
 
 abort 'missing --workbook or --workbook-id' unless opts[:wb_name] || opts[:wb_id]
-abort 'missing --connection' unless opts[:conn]
+abort 'missing --connection' unless opts[:conn] || opts[:finalize]
 
 slug = (opts[:wb_name] || opts[:wb_id]).gsub(/[^A-Za-z0-9_-]/, '-').squeeze('-')
 WORK = opts[:out] || File.expand_path("~/tableau-migration/#{slug}")
@@ -134,6 +166,71 @@ def cull_failed_fields(*logs)
 end
 
 def yp(s) YAML.safe_load(s, permitted_classes: [Date, Time]) rescue {} end
+
+# ---------------------------------------------------------------------------
+# PASS 2 (--finalize) — phase6 finalize + cleanup-orphans + the census-aware
+# assert-phase6-ran hard gate. Resumes from <WORK>/migrate-state.json; phases
+# 1–5 are NOT re-run. Exit 0 here is the ONLY green exit of the orchestrator.
+# ---------------------------------------------------------------------------
+if opts[:finalize]
+  abort '--actuals required with --finalize (the parity-actuals.json you built from the MCP queries)' unless opts[:actuals]
+  state_path = File.join(WORK, 'migrate-state.json')
+  abort "FATAL: no #{state_path} — run pass 1 first (same --workbook/--out)" unless File.exist?(state_path)
+  state = JSON.parse(File.read(state_path))
+  wb_id = state['workbook_id'] or abort 'FATAL: state has no workbook_id (pass 1 never completed Phase 4)'
+
+  hdr(6, 'Parity (pass 2 — finalize)')
+  p6 = ['ruby', File.join(HERE, 'phase6-parity.rb'), '--tableau', WORK,
+        '--finalize', '--actuals', opts[:actuals]]
+  p6 += ['--extract-mode', '--extract-tol', '0.30'] if state['extract_mode']
+  _, p6st = sigma_run!(p6, allow_fail: true)
+  line "phase6-parity finalize: #{p6st.success? ? 'PASS' : "FAIL (exit #{p6st.exitstatus})"}"
+
+  # Cleanup: delete orphan workbooks from spec-iteration retries (keep the live one).
+  _, clst = sigma_run!(['ruby', File.join(HERE, 'cleanup-orphan-workbooks.rb'),
+                        '--workdir', WORK, '--keep', wb_id], allow_fail: true)
+  line 'WARN: orphan cleanup reported failures — assert-phase6-ran will gate on it' unless clst.success?
+
+  # The census-aware hard gate. NEVER bypassed — this command fails when it fails.
+  gate = ['ruby', File.join(HERE, 'assert-phase6-ran.rb'), '--tableau', WORK, '--workbook-id', wb_id]
+  gate += ['--allow-extract'] if state['extract_mode']
+  gate += ['--allow-missing-tiles', opts[:allow_missing_tiles].to_s] if opts[:allow_missing_tiles]
+  _, gst = sigma_run!(gate, allow_fail: true)
+
+  if gst.exitstatus == 7
+    census = (JSON.parse(File.read(File.join(WORK, 'parity-final.json')))['tile_census'] rescue {}) || {}
+    unmatched = census['unmatched_zone_names'] || []
+    puts
+    puts '==================== CENSUS STOP (agent action required) ===================='
+    puts "The Tableau dashboard has #{census['zones_total']} chart zone(s) but only"
+    puts "#{census['charts_built']} made it into the parity plan. Unmatched zone(s):"
+    unmatched.each { |z| puts "  - #{z}" }
+    puts ''
+    puts 'This usually means the Tableau view CSV came back EMPTY (filtered viz /'
+    puts 'export quirk) so the chart was silently dropped, or a chart was renamed.'
+    puts 'Handle each zone, then re-run this exact --finalize command:'
+    puts "  1. Re-export the view CSV (scripts/fetch-view-data.rb / MCP get-view-data"
+    puts '     with filters relaxed) into the workdir and rebuild the missing chart'
+    puts "     against DM #{state['data_model_id']} / workbook #{wb_id} (see SKILL.md),"
+    puts '     then re-run phase6-parity pass 1 + the MCP queries + --finalize; OR'
+    puts "  2. If it was a RENAME, re-run pass 1 with --rename plumbed via phase6-parity; OR"
+    puts "  3. If the zone is legitimately unbuildable, re-run --finalize with"
+    puts "     --allow-missing-tiles #{unmatched.size} and NAME the zone(s) in your report."
+    puts '============================================================================='
+  end
+
+  all_green = p6st.success? && clst.success? && gst.success?
+  pf = (JSON.parse(File.read(File.join(WORK, 'parity-final.json'))) rescue {})
+  puts
+  puts '================ RESULT ================'
+  puts "dataModelId : #{state['data_model_id']}"
+  puts "workbookId  : #{wb_id}"
+  puts "PARITY      : #{pf['status'] || '?'} (#{pf['charts_pass']}/#{pf['charts_total']} charts#{state['extract_mode'] ? ', extract-mode' : ''})"
+  puts "GATES       : phase6=#{p6st.success? ? 'PASS' : 'FAIL'} cleanup=#{clst.success? ? 'PASS' : 'FAIL'} assert-phase6-ran=#{gst.success? ? 'PASS' : "FAIL(#{gst.exitstatus})"}"
+  puts "STATUS      : #{all_green ? 'GREEN' : 'NOT GREEN'}"
+  puts '======================================='
+  exit(all_green ? 0 : 3)
+end
 
 # ---------------------------------------------------------------------------
 # Phase 1 — Discover (Tableau side). Chains tableau-discover + parse-twb-layout
@@ -203,15 +300,47 @@ if wb_luid && have_twb
 end
 
 gaps = []
+gap_report_md = nil
 if have_twb
   run!(['ruby', File.join(HERE, 'scan-workbook-gaps.rb'), twb], allow_fail: true)
   gj = Dir[File.join(WORK, '*gaps*report*.json')].first || Dir[File.join(WORK, '*gaps*.json')].first
   if gj && File.exist?(gj)
+    gap_report_md = gj.sub(/\.json$/, '.md')
     gaps = (JSON.parse(File.read(gj))['detected_features'] || []) rescue []
     bys = gaps.group_by { |g| g['status'] }.transform_values(&:size)
     line "gap scan: #{bys.map { |k, v| "#{v} #{k}" }.join(', ')}"
   end
 end
+
+# GAP-SCAN HARD GATE: ❌-unhandled features mean part of the workbook cannot be
+# migrated by this skill yet. Abort WITH the report unless the human accepts the
+# degradation explicitly via --force. (auto/hint/manual statuses flow into the
+# decisions checkpoint below instead.)
+unhandled_gaps = gaps.select { |g| g['status'].to_s == 'unhandled' }
+if unhandled_gaps.any? && !opts[:force]
+  puts
+  puts '==================== GAP-SCAN STOP ===================='
+  puts "#{unhandled_gaps.size} ❌-unhandled feature(s) detected — these do NOT migrate:"
+  unhandled_gaps.each { |g| puts "  - #{g['name']} (×#{g['count']}): #{g['blurb']}" }
+  puts ''
+  puts "Full report: #{gap_report_md || '(see workdir *gaps-report.md)'}"
+  puts 'Options: close the gap via the gap-scout subagent (scripts/gap-scout.md),'
+  puts 'restructure the workbook in Tableau, or re-run with --force to accept the'
+  puts 'degradation (the features above will be missing from the Sigma workbook).'
+  puts '======================================================='
+  puts 'No Sigma objects were created.'
+  exit 11
+elsif unhandled_gaps.any?
+  line "--force: proceeding past #{unhandled_gaps.size} ❌-unhandled feature(s) — they will NOT migrate"
+end
+
+# EMPTY-VIEW-CSV preflight (honesty stop): a view whose CSV exported 0 data rows
+# produces NO chart — the tile silently drops and the census gate stops the
+# --finalize pass. Surface it NOW as a decision instead of a surprise later.
+empty_csvs = Dir[File.join(WORK, 'views', '*.csv')].select do |c|
+  (File.readlines(c).reject { |l| l.strip.empty? }.size rescue 0) <= 1
+end.map { |c| File.basename(c, '.csv') }
+line "WARN: #{empty_csvs.size} view CSV(s) came back EMPTY: #{empty_csvs.join(', ')}" if empty_csvs.any?
 
 # ---------------------------------------------------------------------------
 # Spec generation. The DEFAULT path is MECHANICAL (no agent hand-authoring):
@@ -414,6 +543,22 @@ chart_zones.each do |z|
   end
 end
 
+# (e2) empty view CSVs — the chart for that view CANNOT be built mechanically
+#      (no headers/rows to derive columns from). Genuine human decision: recover
+#      the data or accept a missing tile (which the census gate will then stop on).
+empty_csvs.each do |v|
+  questions << {
+    'id' => 'empty_view_csv', 'severity' => 'review', 'viz' => v,
+    'detail' => "View '#{v}' exported an EMPTY CSV — its chart cannot be built mechanically and " \
+                'the tile census will stop the --finalize gate. Recover the CSV (re-export with ' \
+                'filters relaxed / MCP get-view-data) before re-running, or proceed and rebuild ' \
+                'the chart manually against the posted DM, then explain via --allow-missing-tiles.',
+    'options' => ['proceed (tile missing; rebuild manually + --allow-missing-tiles at --finalize)',
+                  'abort and recover the view CSV first'],
+    'default' => 'proceed (tile missing; rebuild manually + --allow-missing-tiles at --finalize)'
+  }
+end
+
 # (f) missing folder (DM + workbook land in My Documents).
 unless opts[:folder]
   questions << { 'id' => 'folder', 'severity' => 'required',
@@ -460,7 +605,57 @@ else
   line 'no open questions — running straight through'
 end
 
-
+# ---------------------------------------------------------------------------
+# Phase 1.6 — DM-reuse scan (find-or-pick-dm). Default = BUILD NEW; candidates
+# are printed so a human can opt in with --reuse-dm. Non-destructive.
+# ---------------------------------------------------------------------------
+hdr('1.6', 'DM-reuse scan')
+reuse_dm_id = nil
+dm_match = {}
+src_model = mechanical ? conv['model'] : (have_specs ? Specs.dm_spec : nil)
+if opts[:skip_reuse]
+  line 'skipped (--skip-reuse-scan)'
+elsif src_model.nil?
+  line 'no spec source to derive a signature from — building new'
+else
+  sig_els = (src_model['pages'] || []).flat_map { |p| p['elements'] || [] }
+  sig_tables = sig_els.map do |e|
+    s = e['source'] || {}
+    next 'CUSTOM_SQL' if s['kind'] == 'sql'
+    pth = s['path']
+    pth.is_a?(Array) ? pth.join('.').upcase : nil
+  end.compact.uniq
+  sig_cols = sig_els.flat_map { |e| (e['columns'] || []).map { |c| c['name'] } }.compact.uniq
+  sig_meas = sig_els.flat_map do |e|
+    (e['metrics'] || []).map { |m| { 'col' => m['name'], 'derivation' => m['aggregation'] || m['derivation'] } }
+  end
+  sig_path = File.join(WORK, 'workbook-signature.json')
+  File.write(sig_path, JSON.pretty_generate(
+    'tableau_workbook' => wb_name, 'warehouse_tables' => sig_tables,
+    'referenced_columns' => sig_cols, 'measures' => sig_meas))
+  match_path = File.join(WORK, 'dm-match.json')
+  sigma_run!(['ruby', File.join(HERE, 'find-or-pick-dm.rb'),
+              '--workbook-signature', sig_path, '--out', match_path],
+             allow_fail: true) # exit 1 = no candidate ≥ min-score (normal: build new)
+  dm_match = (JSON.parse(File.read(match_path)) rescue {})
+  cands = (dm_match['candidates'] || []).first(3)
+  if cands.any?
+    line 'top candidate(s) — default is BUILD NEW; pass --reuse-dm to opt in:'
+    cands.each { |c| line "  score #{format('%.2f', c['score'] || 0)}  #{c['dm_id']}  '#{c['dm_name']}'" }
+  else
+    line 'no existing DM covers this workbook — building new'
+  end
+end
+if opts[:reuse_dm]
+  reuse_dm_id = opts[:reuse_dm] == :recommended ? dm_match['recommended_dm_id'] : opts[:reuse_dm]
+  abort 'FATAL: --reuse-dm: the picker found no candidate ≥ min-score; pass an explicit ' \
+        '--reuse-dm <dataModelId> or drop the flag to build new' unless reuse_dm_id
+  line "REUSING data model #{reuse_dm_id} — Phase 3 build+POST will be skipped."
+  line "  #{dm_match['warning']}" if dm_match['warning']
+  line '  NOTE: master-column formulas are derived against the reused DM\'s readback labels;'
+  line '  if its shape differs (separate dim elements), the workbook gate will stop with the'
+  line '  agent-path handoff (exit 4) — run SKILL.md Phase 1.5b (inspect-dm-shape.rb) then.'
+end
 
 # ---------------------------------------------------------------------------
 # Phase 2 — Discover warehouse column names (per table) for the DM build.
@@ -504,13 +699,43 @@ end
 # ---------------------------------------------------------------------------
 hdr(3, 'Build data model')
 dm_spec_path = File.join(WORK, 'dm-spec.json')
-if mechanical
+dm_ids_path = File.join(WORK, 'dm-ids.json')
+if reuse_dm_id
+  # REUSE: no build, no POST. Read the existing DM back into the same id-map
+  # shape post-and-readback.rb emits (incl. per-element columnLabels — Phase 4's
+  # master derivation resolves against them).
+  $LOAD_PATH.unshift File.expand_path('lib', HERE)
+  require 'sigma_rest'
+  dm_spec_rb = Sigma.request(:get, "/v2/dataModels/#{reuse_dm_id}/spec")
+  abort "FATAL: could not read back reused DM #{reuse_dm_id} spec" unless dm_spec_rb.is_a?(Hash) && dm_spec_rb['pages']
+  cols_rb = (Sigma.request(:get, "/v2/dataModels/#{reuse_dm_id}/columns") rescue { 'entries' => [] })
+  labels_by_el = Hash.new { |h, k| h[k] = [] }
+  (cols_rb['entries'] || []).each { |c| labels_by_el[c['elementId']] << c['label'] if c['elementId'] && c['label'] }
+  dm_ids = {
+    'dataModelId' => reuse_dm_id,
+    'pages' => (dm_spec_rb['pages'] || []).map do |p|
+      { 'id' => p['id'], 'name' => p['name'],
+        'elements' => (p['elements'] || []).map do |e|
+          el = { 'id' => e['id'], 'kind' => e['kind'], 'name' => e['name'] }
+          el['columnLabels'] = labels_by_el[e['id']] if labels_by_el.key?(e['id'])
+          el
+        end }
+    end
+  }
+  File.write(dm_ids_path, JSON.pretty_generate(dm_ids))
+  dm_id = reuse_dm_id
+  dm_els = dm_ids['pages'].flat_map { |p| p['elements'] }
+  fact = dm_els.find { |e| e['name'] !~ / Dim$/i } || dm_els.first
+  fact_eid = fact['id']
+  line "REUSED dataModelId = #{dm_id}  (fact element '#{fact['name']}' = #{fact_eid}, name-heuristic pick)"
+elsif mechanical
   # The converter output IS the DM spec (schemaVersion:1 already set). Apply the
   # mechanical fixup (resolve raw-table-name prefixes + GUID sibling refs the
   # converter left unresolved) then stamp the human-supplied folderId. No agent
   # authoring.
   dm = conv['model'] # already fixed up in Phase 1 (prefixes/GUIDs resolved, bad calcs dropped)
   dm['name'] = wb_name if dm['name'].to_s.empty?
+  dm['name'] = "#{opts[:name]} #{dm['name']}" if opts[:name]
   # Phantom-column filter (needs Phase 2's live warehouse columns): Tableau
   # virtual-connection datasources flatten dim columns into the fact and emit
   # base-column refs that don't exist in the real table. Drop them so the POST
@@ -528,41 +753,44 @@ if mechanical
   end
 else
   dm = Specs.dm_spec
+  dm['name'] = "#{opts[:name]} #{dm['name'] || wb_name}".strip if opts[:name]
 end
-dm['folderId'] = opts[:folder] if opts[:folder]
-File.write(dm_spec_path, JSON.pretty_generate(dm))
-# In mechanical mode validate-spec.rb is advisory only: it flags cross-element
-# sibling refs that Sigma actually resolves via relationships (documented
-# false-negative class — see project CLAUDE.md). The authoritative gate is the
-# live POST + readback column-type guard below (post-and-readback exits 2 on any
-# error-typed column). For hand-authored Specs, keep validation hard.
-_, dvst = run!(['ruby', File.join(HERE, 'validate-spec.rb'), '--type', 'datamodel', dm_spec_path],
-               allow_fail: mechanical)
-line 'DM validate-spec flagged issues (advisory in mechanical mode — live POST is the gate)' if mechanical && !dvst.success?
-dm_ids_path = File.join(WORK, 'dm-ids.json')
-sigma_run!(['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'datamodel',
-            '--spec', dm_spec_path, '--out', dm_ids_path, '--workdir', WORK])
-dm_ids = JSON.parse(File.read(dm_ids_path))
-dm_id = dm_ids['dataModelId']
-dm_els = dm_ids['pages'].flat_map { |p| p['elements'] }
-if mechanical
-  # The master must source the SAME chart-ready element pick_fact chose (the
-  # derived "<Fact> View" when present). Match it into the readback by name.
-  cf = MechanicalSpecs.pick_fact(conv['model'])
-  cf_name = cf && (cf['name'] || MechanicalSpecs.elem_name(cf))
-  fact = dm_els.find { |e| e['name'] == cf_name } ||
-         dm_els.find { |e| e['name'] !~ / Dim$/i } || dm_els.first
-else
-  fact = dm_els.find { |e| e['name'] !~ / Dim$/i } || dm_els.first
+unless reuse_dm_id
+  dm['folderId'] = opts[:folder] if opts[:folder]
+  File.write(dm_spec_path, JSON.pretty_generate(dm))
+  # In mechanical mode validate-spec.rb is advisory only: it flags cross-element
+  # sibling refs that Sigma actually resolves via relationships (documented
+  # false-negative class — see project CLAUDE.md). The authoritative gate is the
+  # live POST + readback column-type guard below (post-and-readback exits 2 on any
+  # error-typed column). For hand-authored Specs, keep validation hard.
+  _, dvst = run!(['ruby', File.join(HERE, 'validate-spec.rb'), '--type', 'datamodel', dm_spec_path],
+                 allow_fail: mechanical)
+  line 'DM validate-spec flagged issues (advisory in mechanical mode — live POST is the gate)' if mechanical && !dvst.success?
+  sigma_run!(['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'datamodel',
+              '--spec', dm_spec_path, '--out', dm_ids_path, '--workdir', WORK])
+  dm_ids = JSON.parse(File.read(dm_ids_path))
+  dm_id = dm_ids['dataModelId']
+  dm_els = dm_ids['pages'].flat_map { |p| p['elements'] }
+  if mechanical
+    # The master must source the SAME chart-ready element pick_fact chose (the
+    # derived "<Fact> View" when present). Match it into the readback by name.
+    cf = MechanicalSpecs.pick_fact(conv['model'])
+    cf_name = cf && (cf['name'] || MechanicalSpecs.elem_name(cf))
+    fact = dm_els.find { |e| e['name'] == cf_name } ||
+           dm_els.find { |e| e['name'] !~ / Dim$/i } || dm_els.first
+  else
+    fact = dm_els.find { |e| e['name'] !~ / Dim$/i } || dm_els.first
+  end
+  fact_eid = fact['id']
+  line "dataModelId = #{dm_id}  (fact element '#{fact['name']}' = #{fact_eid})"
 end
-fact_eid = fact['id']
-line "dataModelId = #{dm_id}  (fact element '#{fact['name']}' = #{fact_eid})"
 
 # ---------------------------------------------------------------------------
 # Phase 4 — Build + POST the workbook.
 # ---------------------------------------------------------------------------
 hdr(4, 'Build workbook')
 wb_spec_path = File.join(WORK, 'wb-spec.json')
+display_wb_name = opts[:name] ? "#{opts[:name]} #{wb_name}" : wb_name
 layout_xml = nil
 if mechanical
   # 1) Derive the master-map DETERMINISTICALLY from the converter fact element,
@@ -577,6 +805,14 @@ if mechanical
   derived = MechanicalSpecs.derive_master(conv_fact, fact['name'], conv_base, real_labels)
   master_columns = derived['master_columns']
   mmap = derived['mmap']
+  # Human-supplied master-calc overrides (--master-col): appended verbatim so a
+  # chart ref like [master/Ship Speed Category] resolves on the next run.
+  (opts[:master_cols] || []).each do |(nm, fx)|
+    id = "m-#{nm.downcase.gsub(/[^a-z0-9]+/, '-').gsub(/^-|-$/, '')}"
+    master_columns.reject! { |c| c['name'].casecmp?(nm) }
+    master_columns << { 'id' => id, 'name' => nm, 'formula' => fx }
+    line "master-col override: '#{nm}' = #{fx[0, 80]}"
+  end
   mmap_path = File.join(WORK, 'master-map.json')
   File.write(mmap_path, JSON.pretty_generate(mmap))
   line "master-map: #{master_columns.size} master column(s) (fact element '#{fact['name']}', #{real_labels ? real_labels.size : 0} readback labels)"
@@ -600,11 +836,12 @@ if mechanical
 
   # 3) Assemble the workbook spec (page-data master + dashboard page).
   spec = MechanicalSpecs.build_wb_spec(
-    name: wb_name, dm_id: dm_id, fact_eid: fact_eid,
+    name: display_wb_name, dm_id: dm_id, fact_eid: fact_eid,
     master_columns: master_columns, chart_elements: chart_elements,
     folder_id: opts[:folder])
 else
   spec = Specs.wb_spec(dm_id, fact_eid)
+  spec['name'] = display_wb_name if opts[:name]
   spec['folderId'] = opts[:folder] if opts[:folder]
   layout_xml = (Specs.respond_to?(:layout_xml) ? Specs.layout_xml : nil)
 end
@@ -636,9 +873,14 @@ rescue WorkbookBuildError => e
   puts
   puts "── Mechanical path: data model built OK (dataModelId=#{dm_id}). The WORKBOOK " \
        "layer hit #{n} field(s) the mechanical path can't translate (#{names}). " \
-       "Falling back to the agent path: rebuild the workbook via the skill's " \
-       "agent-authored flow (see SKILL.md) against this DM. The data model is " \
-       "posted and ready to attach."
+       'Two ways forward:'
+  puts "   1. If the field is a MASTER-LEVEL CALC (a binned/categorized dim like 'Ship"
+  puts "      Speed Category'), translate its Tableau formula (see calc-fields.json) to"
+  puts '      a Sigma formula over master columns and re-run this exact command with:'
+  puts "        --master-col '<Name>=<Sigma formula>'   (repeatable)"
+  puts '   2. Otherwise fall back to the agent path: rebuild the workbook via the'
+  puts "      skill's agent-authored flow (see SKILL.md) against this DM."
+  puts '   The data model is posted and ready to attach either way.'
   exit 4
 end
 wb_ids = JSON.parse(File.read(wb_ids_path))
@@ -656,7 +898,8 @@ if layout_xml
   line 'layout from spec generator'
 elsif File.exist?(layout_json)
   _, lst = run!(['ruby', File.join(HERE, 'build-dashboard-layout.rb'),
-                 '--layout', layout_json, '--wb-ids', wb_ids_path, '--out', layout_path],
+                 '--layout', layout_json, '--wb-ids', wb_ids_path, '--out', layout_path,
+                 '--row-scale', (opts[:row_scale] || 1.5).to_s],
                 allow_fail: true)
   line 'WARN: layout build failed — workbook will render in default stacked order' unless lst.success?
 else
@@ -672,18 +915,17 @@ if File.exist?(layout_path)
 end
 
 # ---------------------------------------------------------------------------
-# Phase 6 — Parity. Try the skill's phase6-parity.rb; the hard signal is the
-# post-and-readback column-type guard (already enforced above with exit 2),
-# plus a live re-check of /columns for any type=error introduced by the layout PUT.
+# Phase 6 — Parity, PASS 1 of 2. Structural hard signals first (live /columns
+# type=error re-check after the layout PUT + per-chart compile check), then
+# phase6-parity.rb pass 1 builds the parity plan and emits the per-chart MCP
+# query list. VALUE parity needs the mcp-v2 actuals — this process cannot fetch
+# them (no synchronous chart-data REST endpoint), so it stops HONESTLY at exit
+# 12 with resume instructions instead of declaring a fake PASS.
 # ---------------------------------------------------------------------------
-hdr(6, 'Parity')
+hdr(6, 'Parity (pass 1 of 2)')
 require 'sigma_rest'
-p6 = ['ruby', File.join(HERE, 'phase6-parity.rb'),
-      '--tableau', WORK, '--workbook-id', wb_id]
-p6 += ['--extract-mode', '--extract-tol', '0.30'] if has_extracts
-_, p6st = sigma_run!(p6, allow_fail: true)
 
-# Independent hard signal: no live column resolves to type "error".
+# Structural hard signal: no live column resolves to type "error".
 cols = (Sigma.request(:get, "/v2/workbooks/#{wb_id}/columns") rescue { 'entries' => [] })
 err_cols = (cols['entries'] || []).select { |c| c.dig('type', 'type') == 'error' }
 total_cols = (cols['entries'] || []).size
@@ -696,22 +938,48 @@ chart_els.each do |e|
   b = (Sigma.request(:get, "/v2/workbooks/#{wb_id}/elements/#{e['id']}/query", accept: 'text/plain') rescue '')
   bad << (e['name'] || e['id']) if b.to_s =~ /Unknown column "\[|Circular column reference/
 end
-parity_ok = err_cols.empty? && bad.empty?
-if parity_ok
-  line "PARITY: PASS — #{total_cols} workbook column(s) resolve (0 error-typed); " \
-       "#{chart_els.size} chart element(s) compile clean#{p6st.success? ? '; phase6-parity PASS' : ''}"
+structural_ok = err_cols.empty? && bad.empty?
+if structural_ok
+  line "structural: PASS — #{total_cols} workbook column(s) resolve (0 error-typed); " \
+       "#{chart_els.size} chart element(s) compile clean"
 else
-  line "PARITY: FAIL — #{err_cols.size}/#{total_cols} error-typed column(s)#{bad.any? ? ", #{bad.size} chart(s) with unresolved refs (#{bad.join(', ')})" : ''}"
+  line "structural: FAIL — #{err_cols.size}/#{total_cols} error-typed column(s)#{bad.any? ? ", #{bad.size} chart(s) with unresolved refs (#{bad.join(', ')})" : ''}"
   err_cols.first(8).each { |c| line "  [#{c['elementId']}] #{c['label']}: #{c['formula']}" }
 end
 
-# ---------------------------------------------------------------------------
-# Summary.
-# ---------------------------------------------------------------------------
+# Persist resume state for --finalize (pass 2) BEFORE stopping.
+state = { 'workbook_id' => wb_id, 'data_model_id' => dm_id,
+          'extract_mode' => !!has_extracts, 'workbook_name' => display_wb_name,
+          'reused_dm' => !!reuse_dm_id, 'pass1_at' => Time.now.utc.iso8601 }
+File.write(File.join(WORK, 'migrate-state.json'), JSON.pretty_generate(state))
+
+unless structural_ok
+  puts
+  puts '================ RESULT ================'
+  puts "dataModelId : #{dm_id}"
+  puts "workbookId  : #{wb_id}"
+  puts "PARITY      : FAIL (structural — #{err_cols.size} error column(s); fix before the value pass)"
+  puts '======================================='
+  exit 3
+end
+
+# phase6-parity PASS 1: builds parity-plan.json + prints one mcp-v2 query per chart.
+p6 = ['ruby', File.join(HERE, 'phase6-parity.rb'),
+      '--tableau', WORK, '--workbook-id', wb_id]
+p6 += ['--extract-mode', '--extract-tol', '0.30'] if has_extracts
+sigma_run!(p6)
+
 puts
-puts '================ RESULT ================'
-puts "dataModelId : #{dm_id}"
+puts '================ RESULT (pass 1 — parity PENDING) ================'
+puts "dataModelId : #{dm_id}#{reuse_dm_id ? '  (REUSED existing DM)' : ''}"
 puts "workbookId  : #{wb_id}"
-puts "PARITY      : #{parity_ok ? 'PASS' : 'FAIL'} (#{total_cols} cols resolve, #{err_cols.size} error)"
-puts '======================================='
-exit(parity_ok ? 0 : 3)
+puts "structural  : PASS (#{total_cols} cols resolve, #{chart_els.size} charts compile)"
+puts 'PARITY      : PENDING — run the mcp-v2 queries printed above, save the'
+puts "              results to #{File.join(WORK, 'parity-actuals.json')}, then:"
+finalize_cmd = "  ruby scripts/migrate-tableau.rb #{opts[:wb_id] ? "--workbook-id #{opts[:wb_id]}" : "--workbook \"#{opts[:wb_name]}\""}" \
+               "#{opts[:out] ? " --out #{WORK}" : ''} \\\n    --finalize --actuals #{File.join(WORK, 'parity-actuals.json')}"
+puts finalize_cmd
+puts '(--finalize runs phase6 finalize + orphan cleanup + the census-aware'
+puts ' assert-phase6-ran hard gate; exit 0 there is the ONLY green exit.)'
+puts '=================================================================='
+exit 12

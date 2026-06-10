@@ -23,6 +23,56 @@ that mirrors the Tableau dashboard layout as closely as possible.
 
 ---
 
+## One command (orchestrated path)
+
+```bash
+eval "$(scripts/get-token.sh)"
+# PASS 1 — discover → gap gate → DM-reuse scan → DM → workbook → layout → parity plan
+ruby scripts/migrate-tableau.rb \
+  --workbook "<name>" --connection <SIGMA_CONNECTION_ID> --folder <SIGMA_FOLDER_ID> \
+  [--db CSA --schema TJ] [--name '<prefix>'] [--row-scale 1.5] \
+  [--reuse-dm [ID]] [--force] [--yes]
+# … run the printed mcp-v2 queries → <workdir>/parity-actuals.json …
+# PASS 2 — finalize: phase6 verify + cleanup-orphans + census-aware hard gate
+ruby scripts/migrate-tableau.rb --workbook "<name>" \
+  --finalize --actuals <workdir>/parity-actuals.json [--allow-missing-tiles N]
+```
+
+Chains the scripted spine (discover → scan-workbook-gaps → discover-columns →
+find-or-pick-dm → DM build/validate/post → build-charts-from-signals → workbook
+post-and-readback → build-dashboard-layout + put-layout → phase6-parity →
+cleanup-orphan-workbooks + assert-phase6-ran) and STOPS with exact instructions
+wherever agent judgment is genuinely required. Exit codes: `10` = OPEN QUESTIONS
+(re-run with `--yes`/`--answers`), `11` = ❌-unhandled gap-scan features (close via
+gap-scout or `--force`), `12` = pass 1 done, parity PENDING (collect mcp-v2 actuals,
+then `--finalize`), `4` = DM posted but the workbook layer needs the agent path,
+`3` = a gate failed, `0` = ALL gates green (only reachable via `--finalize`).
+DM-reuse defaults to BUILD NEW — candidates are printed; `--reuse-dm` opts in.
+
+**Still manual by design (the orchestrator stops and tells you):**
+- **Parity actuals** — Sigma has no synchronous chart-data REST endpoint; the
+  per-chart values come from `mcp__sigma-mcp-v2__query` calls the agent runs
+  between pass 1 and `--finalize`.
+- **Empty-view-CSV recovery** — a view that exports an empty CSV produces no
+  chart; surfaced at the OPEN-QUESTIONS checkpoint AND by the tile census at
+  `--finalize` (exit 7 → rebuild the chart manually or explain with
+  `--allow-missing-tiles`, naming the zones in your report).
+- **Master-level calc overrides** — when the workbook layer exits 4 naming a
+  field like `master/ship speed category`, translate the Tableau calc (see
+  `calc-fields.json`) and re-run the same command with
+  `--master-col 'Name=<Sigma formula>'`.
+- **Shared relative-date filters** — a dashboard-wide filter like
+  `'Order Date ' = this year` only surfaces as a uniform parity DIVERGE (every
+  Sigma value too big). Fix: expose the date key on the DM if the converter
+  consumed it, add a master boolean (e.g. `[Order Year] = Year(Today())`) plus a
+  master `filters: [{id, columnId, kind: list, mode: include, values: [true]}]`
+  entry — it propagates to every chart sourcing the master — then re-query and
+  re-`--finalize`. (Validated live on Orders Conversion Test, 2026-06-10.)
+- **❌-unhandled gap features** — gap-scout subagent or `--force` (degraded).
+- **DM-reuse shape preflight** — when `--reuse-dm` hits a differently-shaped DM
+  the workbook gate exits 4; run Phase 1.5b (`inspect-dm-shape.rb`) and the
+  agent path against the reused DM.
+
 ## Scripts
 
 The conversion is driven by `scripts/*.rb`. Each script encapsulates one mechanical
@@ -31,6 +81,7 @@ which calc translation, which layout) — not orchestration.
 
 | Script | Purpose |
 |---|---|
+| `scripts/migrate-tableau.rb` | **The one command** — chains the whole scripted spine (gap gate → DM-reuse scan → DM → workbook → layout → two-pass parity → cleanup + census gate) and stops with exact instructions where agent judgment is required. See "One command" above. |
 | `scripts/setup.rb` | One-time Sigma credential setup |
 | `scripts/get-token.sh` | Exchange `SIGMA_CLIENT_ID`/`SIGMA_CLIENT_SECRET` for `SIGMA_API_TOKEN` (~1h TTL) |
 | `scripts/setup-tableau.rb` | One-time Tableau PAT setup (only needed for PAT mode — see `refs/tableau-rest.md`) |
