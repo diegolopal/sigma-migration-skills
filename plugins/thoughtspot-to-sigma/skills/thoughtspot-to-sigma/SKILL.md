@@ -23,10 +23,36 @@ context (curl uses the system store and works).
 ```
 export TS_HOST TS_TOKEN SIGMA_BASE_URL SIGMA_API_TOKEN \
        SIGMA_CONNECTION_ID SIGMA_FOLDER_ID TS_DB TS_SCHEMA
-python3 scripts/migrate.py --model <TS_MODEL_ID> [--liveboard <ID> ...] [--name PREFIX]
+python3 scripts/migrate.py --model <TS_MODEL_ID> [--liveboard <ID> ...] \
+       [--name PREFIX] [--workdir DIR]
 ```
-`migrate.py` runs the whole pipeline with **no hardcoded ids** and migrates every
-Liveboard that reads the model (or just the `--liveboard` ones).
+`migrate.py` runs the whole pipeline with **no hardcoded ids or paths** and
+migrates every Liveboard that reads the model (or just the `--liveboard` ones).
+All artifacts (manifest, TML, parity files) land in `--workdir`
+(default `$TS_WORKDIR` or `./ts-migration`, created if missing). `--name` is a
+prefix applied to BOTH the data model and every workbook; workbooks and pages
+are named after the Liveboard's **display name** (resolved from its TML, never
+the UUID).
+
+**Converter paths** (no unvendored build required):
+- `CONVERTER_PATH` set (a local `sigma-data-model-mcp` `build/thoughtspot.js`)
+  → fully scripted one-shot via `convert_model.mjs`.
+- `CONVERTER_PATH` unset → **MCP fallback**: migrate.py writes
+  `<workdir>/model.tml` + `<workdir>/convert-request.json` (the exact
+  `mcp__sigma-data-model__convert_thoughtspot_to_sigma` arguments), prints the
+  instructions, and exits 3. Call the MCP tool, save its JSON output to
+  `<workdir>/converted.json`, and re-run the same command with
+  `--converted <workdir>/converted.json` to continue the pipeline.
+
+**Offline mode** (no live ThoughtSpot needed): `--model-tml <file>` +
+`--liveboard-tml <file>` read exported TML from disk — `fixtures/` ships a real
+exported pair (`retail-analytics-model.tml` + `retail-analytics-liveboard.tml`,
+the CSA.TJ retail star) so the full convert→post→build→layout path can be
+exercised end-to-end without a TS trial:
+```
+python3 scripts/migrate.py --model-tml fixtures/retail-analytics-model.tml \
+  --liveboard-tml fixtures/retail-analytics-liveboard.tml --workdir /tmp/ts-offline
+```
 
 ## Pipeline (what migrate.py does)
 1. **Discover** — `ts_discover.py [<id> <type>]` lists models + Liveboards or
@@ -53,15 +79,27 @@ Liveboard that reads the model (or just the `--liveboard` ones).
    name; Sigma auto-colors from the measure). No native Sigma kind for funnel /
    waterfall / treemap / heat-map / sankey → those fall back to bar-chart (flagged
    in the assessment). All chart kinds verified live (POST→readback) 2026-06-07.
-   Search-query filters (`[Col]='v'`) → element list-filters.
+   Search-query filters (`[Col]='v'`) → element list-filters. TML **sorts**
+   (`sort by [Col]` tokens + `client_state` sortInfo) carry into the specs, and
+   table column ORDER follows the answer's `ordered_column_ids` (never the
+   alphabetical `answer_columns` or the chart's `chart_columns`).
    Aggregate formulas (`sum(x)/sum(y)`, `sqrt(sum())`) become DM **metrics**; column
    formats come from the TML `format_pattern`/`currency_type`. KPI value uses
    `{"columnId": c}`; donut `value`/`color` use `{"id": c}`; grouped tables need
-   `groupings:[{groupBy, calculations}]`.
-5. **Layout** — `apply_layouts.py` applies a clean grid (KPIs top row, charts
-   2-wide) as the **LAST** write (a bare spec PUT wipes layout).
-6. **Parity** — query the model via `ts_lib.searchdata` (ground truth) vs the
-   Sigma workbook elements (v2 query MCP); values match to the cent.
+   `groupings:[{groupBy, calculations}]`. Full spec shapes:
+   **`refs/liveboard-to-workbook.md`** (charts) + **`refs/model-conversion-rules.md`** (DM).
+5. **Layout** — `apply_layouts.py` maps the Liveboard's OWN `layout.tiles`
+   geometry (x/y/w/h on ThoughtSpot's 12-col grid) onto Sigma's 24-col grid
+   (cols ×2, rows ×ROW_SCALE min 2 so axis/KPI labels render), as the **LAST**
+   write (a bare spec PUT wipes layout). Falls back to a clean auto grid when
+   the TML has no tiles.
+6. **Parity (HARD GATE)** — `phase6-parity-thoughtspot.rb` two-pass: PASS 1
+   reads the workbook spec and emits per-chart fetch instructions (Sigma ACTUAL
+   via `mcp__sigma-mcp-v2__query`; EXPECTED via `ts_lib.searchdata` ground
+   truth, or warehouse SQL when offline); PASS 2 `--finalize` runs
+   `verify-parity.rb` and writes the `parity-final.json` sentinel. Then run
+   `ruby scripts/assert-phase6-ran.rb --workdir <dir> --workbook-id <wb>` —
+   it must **exit 0** before declaring the migration GREEN.
 
 ## Step 2.5 — Reuse an existing DM? (between convert and POST — mirrors tableau Phase 1.5 / powerbi Phase 3.5)
 
@@ -89,8 +127,17 @@ you export for `migrate.py`). Decision:
 - **Score < 0.6** → POST new and TELL the user no reusable DM was found.
 
 ## Scripts
-- `migrate.py` — **canonical entry**: model → DM → migrate its Liveboards (parameterized)
-- `convert_model.mjs` — model TML → Sigma DM spec (imports the built converter)
+- `migrate.py` — **canonical entry**: model → DM → migrate its Liveboards
+  (parameterized: `--workdir`, `--name` prefix, `--converted` MCP output,
+  offline `--model-tml`/`--liveboard-tml`)
+- `convert_model.mjs` — model TML → Sigma DM spec (imports a local converter
+  build via `CONVERTER_PATH`; without one, migrate.py emits the MCP request instead)
+- `phase6-parity-thoughtspot.rb` — parity orchestrator (two-pass; writes the
+  `parity-final.json` sentinel) + `verify-parity.rb` (comparator)
+- `assert-phase6-ran.rb` — **hard gate** (vendored byte-identical from
+  quicksight-to-sigma): parity ran + PASS, no orphan workbooks, no `type=error`
+  columns, layout applied. Run with `--workdir <dir> --workbook-id <wb>`; exit 0
+  required before GREEN
 - `ts-dm-signature.py` — step 2.5: model TML → DM-reuse signature for `find-or-pick-dm.rb`
 - `find-or-pick-dm.rb` — step 2.5: scan existing Sigma DMs, recommend reuse (0.7·column +
   0.2·table + 0.1·metric overlap; `--auto-pick` w/ tie-window). Shared vendor-neutral copy
@@ -98,9 +145,12 @@ you export for `migrate.py`). Decision:
 - `ts_lib.py` — ThoughtSpot REST v2 (whoami/search/export_tml/import_tml/searchdata)
 - `ts_discover.py` — inventory / per-object summary
 - `ts_common.py` — `build_resolver` (from model TML), viz↔element mappers, format/currency mapping
-- `apply_layouts.py` — grid layout pass (run last)
+- `apply_layouts.py` — layout pass (run LAST): TML tile geometry → Sigma 24-col
+  grid, auto-grid fallback; `--workdir` reads the manifest
 - `compare.py` — visual + structural compare (TS viz PNG vs Sigma element PNG → HTML)
-- `ts_screenshot.py` — per-viz PNG export from ThoughtSpot (report/liveboard)
+- `ts_screenshot.py` — per-viz PNG export from ThoughtSpot; detects blank /
+  connection-error placeholder renders (near-uniform image or non-PNG error
+  body) and reports them as ✗ failures, never ✓
 - `gap-scout.md` + `scout-validate.py` + `learned-rules.py` — formula gap-scout (validate + persist unhandled-TML translations)
 - `get-token.sh` — Sigma token; `get-ts-token.sh` — ThoughtSpot Trusted-Auth service token
 
@@ -108,11 +158,25 @@ you export for `migrate.py`). Decision:
 The CSA.TJ retail star (ORDER_FACT + 5 dims) → ThoughtSpot model "Retail Analytics"
 → converted Sigma DM (6-table star + Order Fact View) → 11 themed Liveboards
 migrated to 11 Sigma workbooks, parity exact (Net Revenue 108,797.85; by-category,
-region, quarter all match to the cent). See `~/thoughtspot-migration/migration_manifest.json`.
+region, quarter all match to the cent). Per-run ids land in `<workdir>/migrate_out.json`.
+
+## Reference docs & fixtures
+- `refs/model-conversion-rules.md` — model TML → DM rules (joins/formulas/display
+  names/formats, TS_DB/TS_SCHEMA fqn gotcha, MCP request shape)
+- `refs/liveboard-to-workbook.md` — workbook spec shapes (KPI `{columnId}` vs
+  donut `{id}`, groupings, pivot rowsBy/columnsBy, sorts, layout geometry math,
+  rename gotcha)
+- `fixtures/` — real exported TML pair from the team2 trial
+  (`retail-analytics-model.tml` 6-table star + `retail-analytics-liveboard.tml`
+  5-viz Liveboard with layout.tiles) — drives the offline mode above and the
+  converter's regression diet.
 
 ## Notes
 - `convert_thoughtspot_to_sigma` is the converter (MCP github.com/twells89/sigma-data-model-mcp
   + browser sigma-data-model-manager) — keep both in lockstep.
+- **Rename gotcha**: `PATCH /v2/workbooks/{id}` silently no-ops for renames
+  (200, name unchanged) — rename via `PATCH /v2/files/{id} {"name": …}`
+  (delete and unarchive are files-side too).
 - TML export embeds raw control chars in JSON → parse with `json.loads(..., strict=False)`.
 - System/sample objects are FORBIDDEN to export (only own content).
 

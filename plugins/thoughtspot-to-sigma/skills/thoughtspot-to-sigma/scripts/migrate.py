@@ -1,50 +1,116 @@
 #!/usr/bin/env python3
 """Generalized ThoughtSpot → Sigma migration — works on ANY model, no baked ids.
 
-  python3 migrate.py --model <TS_MODEL_ID> [--liveboard <ID> ...] [--name PREFIX]
+  python3 migrate.py --model <TS_MODEL_ID> [--liveboard <ID> ...] [--name PREFIX] \
+                     [--workdir DIR] [--converted FILE]
 
-Steps: export the model's TML → convert to a Sigma data model (convert_model.mjs)
-→ POST it → discover the denormalized "<root> View" element → build a column
-resolver from the model TML → for each Liveboard that reads the model, rebuild
-its visualizations as a Sigma workbook off that element → apply a grid layout.
+Steps: export the model's TML → convert to a Sigma data model → POST it →
+discover the denormalized "<root> View" element → build a column resolver from
+the model TML → for each Liveboard that reads the model, rebuild its
+visualizations as a Sigma workbook off that element → apply the Liveboard's own
+tile geometry (layout.tiles) as the Sigma grid layout.
 
-Env (all required, no hardcoded ids):
-  TS_HOST, TS_TOKEN                         ThoughtSpot
+Converter paths (in priority order):
+  1. --converted <file>   JSON output of the `convert_thoughtspot_to_sigma`
+                          MCP tool (or a bare Sigma DM spec) — continues the
+                          pipeline without any local converter build.
+  2. CONVERTER_PATH       one-shot: a local sigma-data-model-mcp
+                          build/thoughtspot.js, run via convert_model.mjs.
+  3. neither              MCP fallback: writes <workdir>/model.tml +
+                          <workdir>/convert-request.json and prints the exact
+                          mcp__sigma-data-model__convert_thoughtspot_to_sigma
+                          call to make; save the tool's JSON output and re-run
+                          with --converted <file>. Exits 3 (not an error).
+
+Offline mode: --model-tml FILE and --liveboard-tml FILE (repeatable) read TML
+from disk instead of the live ThoughtSpot API — see fixtures/ for a real
+exported pair. No TS_HOST/TS_TOKEN needed.
+
+Env:
+  TS_HOST, TS_TOKEN                         ThoughtSpot (live mode only)
   SIGMA_BASE_URL, SIGMA_API_TOKEN           Sigma
   SIGMA_CONNECTION_ID                       warehouse connection in Sigma
   SIGMA_FOLDER_ID                           destination folder
   TS_DB, TS_SCHEMA                          warehouse db/schema for the model's tables
+  TS_WORKDIR                                default for --workdir (else ./ts-migration)
 """
-import argparse, json, os, ssl, subprocess, sys, urllib.request, urllib.error
+import argparse, json, os, re, ssl, subprocess, sys, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import yaml, ts_lib, ts_common, apply_layouts
+import yaml, ts_common, apply_layouts
 yaml.SafeLoader.add_constructor("tag:yaml.org,2002:value", lambda l, n: l.construct_scalar(n))
 
-SBASE = os.environ["SIGMA_BASE_URL"]; STOK = os.environ["SIGMA_API_TOKEN"]
-CONN = os.environ["SIGMA_CONNECTION_ID"]; FOLDER = os.environ["SIGMA_FOLDER_ID"]
 HERE = os.path.dirname(os.path.abspath(__file__))
 _SSL = ssl._create_unverified_context()
+MCP_TOOL = "mcp__sigma-data-model__convert_thoughtspot_to_sigma"
+
+def need_env(*names):
+    missing = [n for n in names if not os.environ.get(n)]
+    if missing:
+        sys.exit("missing env: " + ", ".join(missing))
+    return [os.environ[n] for n in names]
 
 def sigma(method, path, body=None):
-    r = urllib.request.Request(SBASE + path, data=(json.dumps(body).encode() if body else None),
-        method=method, headers={"Authorization": "Bearer " + STOK, "Accept": "application/json",
+    base, tok = need_env("SIGMA_BASE_URL", "SIGMA_API_TOKEN")
+    r = urllib.request.Request(base + path, data=(json.dumps(body).encode() if body else None),
+        method=method, headers={"Authorization": "Bearer " + tok, "Accept": "application/json",
         **({"Content-Type": "application/json"} if body else {})})
     try:
         return urllib.request.urlopen(r, context=_SSL).read().decode()
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"Sigma {method} {path} -> {e.code}: {e.read().decode()[:300]}")
 
-def build_dm(model_tml, name):
-    """Convert the model TML and POST a Sigma data model. Returns (dmId, denormElemId, denormName)."""
-    open("/tmp/_ts_model.tml", "w").write(model_tml)
-    env = {**os.environ, "TS_DB": os.environ.get("TS_DB", ""), "TS_SCHEMA": os.environ.get("TS_SCHEMA", "")}
-    out = subprocess.run(["node", os.path.join(HERE, "convert_model.mjs"), "/tmp/_ts_model.tml"],
-                         capture_output=True, text=True, env=env)
-    if out.returncode:
-        raise RuntimeError("convert failed: " + out.stderr[-300:])
-    conv = json.loads(out.stdout)
+def resolve_workdir(arg):
+    wd = arg or os.environ.get("TS_WORKDIR") or os.path.join(os.getcwd(), "ts-migration")
+    wd = os.path.abspath(os.path.expanduser(wd))
+    os.makedirs(wd, exist_ok=True)
+    return wd
+
+def convert_model(model_tml, wd, converted_path):
+    """Return the converter output dict {model, stats?, warnings?} via one of the
+    three converter paths (see module docstring). Exits 3 on the MCP-fallback
+    pass-1 (request emitted, awaiting --converted)."""
+    if converted_path:                                   # path 1: MCP tool output
+        conv = json.load(open(converted_path))
+        if "sigmaDataModel" in conv:                     # MCP tool wraps under sigmaDataModel
+            conv = {**conv, "model": conv["sigmaDataModel"]}
+        elif "model" not in conv:                        # bare DM spec → wrap
+            conv = {"model": conv, "stats": {}, "warnings": []}
+        return conv
+    if os.environ.get("CONVERTER_PATH"):                 # path 2: local one-shot
+        tml_path = os.path.join(wd, "model.tml")
+        open(tml_path, "w").write(model_tml)
+        out = subprocess.run(["node", os.path.join(HERE, "convert_model.mjs"), tml_path],
+                             capture_output=True, text=True, env=dict(os.environ))
+        if out.returncode:
+            raise RuntimeError("convert failed: " + out.stderr[-300:])
+        return json.loads(out.stdout)
+    # path 3: MCP fallback — emit the exact conversion request and stop.
+    tml_path = os.path.join(wd, "model.tml")
+    open(tml_path, "w").write(model_tml)
+    req = {"tool": MCP_TOOL,
+           "arguments": {"tml_yaml": model_tml,
+                         "connection_id": os.environ.get("SIGMA_CONNECTION_ID", ""),
+                         "database": os.environ.get("TS_DB", ""),
+                         "schema": os.environ.get("TS_SCHEMA", "")}}
+    req_path = os.path.join(wd, "convert-request.json")
+    json.dump(req, open(req_path, "w"), indent=2)
+    print(f"""
+No local converter build (CONVERTER_PATH unset) — use the MCP converter:
+
+  1. Call the `{MCP_TOOL}` MCP tool with the arguments in
+       {req_path}
+     (tml_yaml = contents of {tml_path},
+      connection_id = $SIGMA_CONNECTION_ID, database = $TS_DB, schema = $TS_SCHEMA).
+  2. Save the tool's JSON output (the {{sigmaDataModel, stats, warnings}} object,
+     or just the model spec) to {wd}/converted.json
+  3. Re-run this command with:  --converted {wd}/converted.json
+""")
+    sys.exit(3)
+
+def build_dm(conv, name, folder):
+    """POST the converted Sigma data model. Returns (dmId, denormElemId, denormName)."""
     spec = conv["model"]; spec["name"] = name
-    res = json.loads(sigma("POST", "/v2/dataModels/spec", {"folderId": FOLDER, **spec}))
+    res = json.loads(sigma("POST", "/v2/dataModels/spec", {"folderId": folder, **spec}))
     dm = res["dataModelId"]
     # discover the denormalized "<root> View" element from the posted DM spec
     dmspec = yaml.safe_load(sigma("GET", f"/v2/dataModels/{dm}/spec"))
@@ -53,102 +119,148 @@ def build_dm(model_tml, name):
     if not denorm:
         # no joins → no denormalized view; use the base fact element (most columns).
         denorm = max(els, key=lambda e: len(e.get("columns", [])))
+    stats = conv.get("stats") or {}
     print(f"  DM {dm}  ·  denorm '{denorm['name']}' ({denorm['id']})  ·  "
-          f"{conv['stats']['relationships']} rels, {conv['stats']['elements']} elements")
+          f"{stats.get('relationships', '?')} rels, {stats.get('elements', '?')} elements")
     return dm, denorm["id"], denorm["name"]
 
-def migrate_liveboard(lb_id, dm, denorm_id, denorm_name, resolver, name):
-    edoc, err = ts_lib.export_tml(lb_id, "LIVEBOARD")
-    if err:
-        raise RuntimeError("export failed: " + err)
-    lb = yaml.safe_load(edoc)["liveboard"]
-    specs = [ps for v in lb["visualizations"] if (ps := ts_common.parse_ts_viz(v))]
-    master = ts_common.master_element(specs, resolver, dm, denorm_id, denorm_name)
-    elements = [ts_common.sigma_element(s, resolver) for s in specs]
-    spec = {"name": f"{name} (from ThoughtSpot)", "folderId": FOLDER, "schemaVersion": 1,
-            "pages": [{"id": "p-data", "name": "Data", "elements": [master]},
-                      {"id": "p-main", "name": name[:40], "elements": elements}]}
-    import re
+def post_workbook(spec, wd):
     resp = sigma("POST", "/v2/workbooks/spec", spec)
     m = re.search(r'workbookId["\s:]+([0-9a-f-]{36})', resp)
-    wb = m.group(1) if m else None
-    if not wb:
+    if not m:
         raise RuntimeError("workbook POST: " + resp[:300])
-    if wb:
-        apply_layouts.apply(wb)
-    return wb, len(specs)
+    wb = m.group(1)
+    with open(os.path.join(wd, "posted-workbooks.jsonl"), "a") as f:
+        f.write(json.dumps({"id": wb, "name": spec.get("name")}) + "\n")
+    return wb
 
-def migrate_answer(ans_id, dm, denorm_id, denorm_name, resolver, name):
+def lb_tiles(lb, viz_specs, elements):
+    """Map the Liveboard's layout.tiles (ThoughtSpot 12-col grid) to the built
+    Sigma elements, in viz order. Returns None when geometry is incomplete
+    (apply_layouts falls back to its auto grid)."""
+    by_viz = {t.get("visualization_id"): t for t in ((lb.get("layout") or {}).get("tiles") or [])}
+    tiles = []
+    for (viz_id, _), el in zip(viz_specs, elements):
+        t = by_viz.get(viz_id)
+        if not t:
+            return None
+        tiles.append({"element_id": el["id"], "x": t.get("x", 0), "y": t.get("y", 0),
+                      "width": t.get("width", 6), "height": t.get("height", 6)})
+    return tiles or None
+
+def migrate_liveboard(lb_doc, dm, denorm_id, denorm_name, resolver, prefix, fallback_name, folder, wd):
+    lb = yaml.safe_load(lb_doc)["liveboard"]
+    display = lb.get("name") or fallback_name          # never name a workbook after a UUID
+    viz_specs = [(v.get("id"), ps) for v in lb["visualizations"] if (ps := ts_common.parse_ts_viz(v))]
+    specs = [ps for _, ps in viz_specs]
+    master = ts_common.master_element(specs, resolver, dm, denorm_id, denorm_name)
+    elements = [ts_common.sigma_element(s, resolver) for s in specs]
+    spec = {"name": f"{prefix}{display} (from ThoughtSpot)", "folderId": folder, "schemaVersion": 1,
+            "pages": [{"id": "p-data", "name": "Data", "elements": [master]},
+                      {"id": "p-main", "name": display[:40], "elements": elements}]}
+    wb = post_workbook(spec, wd)
+    tiles = lb_tiles(lb, viz_specs, elements)
+    apply_layouts.apply(wb, tiles=tiles)
+    return wb, display, len(specs), tiles
+
+def migrate_answer(ans_id, dm, denorm_id, denorm_name, resolver, prefix, folder, wd):
     """A standalone Answer is a single viz — build a one-element workbook."""
+    import ts_lib
     edoc, err = ts_lib.export_tml(ans_id, "ANSWER")
     if err:
         raise RuntimeError("export failed: " + err)
-    spec_v = ts_common.parse_ts_viz({"answer": yaml.safe_load(edoc)["answer"]})
+    ans = yaml.safe_load(edoc)["answer"]
+    display = ans.get("name") or ("Answer " + ans_id[:8])
+    spec_v = ts_common.parse_ts_viz({"answer": ans})
     master = ts_common.master_element([spec_v], resolver, dm, denorm_id, denorm_name)
-    spec = {"name": f"{name} (from ThoughtSpot)", "folderId": FOLDER, "schemaVersion": 1,
+    spec = {"name": f"{prefix}{display} (from ThoughtSpot)", "folderId": folder, "schemaVersion": 1,
             "pages": [{"id": "p-data", "name": "Data", "elements": [master]},
-                      {"id": "p-main", "name": name[:40], "elements": [ts_common.sigma_element(spec_v, resolver)]}]}
-    import re
-    resp = sigma("POST", "/v2/workbooks/spec", spec)
-    m = re.search(r'workbookId["\s:]+([0-9a-f-]{36})', resp)
-    wb = m.group(1) if m else None
-    if not wb:
-        raise RuntimeError("workbook POST: " + resp[:300])
+                      {"id": "p-main", "name": display[:40], "elements": [ts_common.sigma_element(spec_v, resolver)]}]}
+    wb = post_workbook(spec, wd)
     apply_layouts.apply(wb)
-    return wb
+    return wb, display
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, help="ThoughtSpot model (LOGICAL_TABLE) id")
+    ap.add_argument("--model", help="ThoughtSpot model (LOGICAL_TABLE) id")
+    ap.add_argument("--model-tml", help="offline: read the model TML from a file (see fixtures/)")
     ap.add_argument("--liveboard", action="append", help="specific Liveboard id(s); default = all that read the model")
+    ap.add_argument("--liveboard-tml", action="append", help="offline: read Liveboard TML from file(s)")
     ap.add_argument("--answer", action="append", help="standalone Answer id(s) to migrate as one-element workbooks")
-    ap.add_argument("--name", default=None, help="name prefix (default: the model name)")
+    ap.add_argument("--name", default=None, help="name PREFIX applied to BOTH the data model and every workbook")
+    ap.add_argument("--workdir", default=None, help="working dir for artifacts (default $TS_WORKDIR or ./ts-migration)")
+    ap.add_argument("--converted", default=None, help="JSON output of the convert_thoughtspot_to_sigma MCP tool")
     a = ap.parse_args()
+    wd = resolve_workdir(a.workdir)
+    offline = bool(a.model_tml)
+    if not a.model and not a.model_tml:
+        ap.error("--model or --model-tml required")
 
-    model_tml, err = ts_lib.export_tml(a.model, "LOGICAL_TABLE")
-    if err:
-        sys.exit("model export failed: " + err)
+    if offline:
+        model_tml = open(a.model_tml).read()
+    else:
+        import ts_lib
+        model_tml, err = ts_lib.export_tml(a.model, "LOGICAL_TABLE")
+        if err:
+            sys.exit("model export failed: " + err)
     root = yaml.safe_load(model_tml)
     root = root.get("model") or root.get("worksheet") or root
-    model_name = a.name or root.get("name", "Migrated Model")
+    model_name = root.get("name", "Migrated Model")
+    prefix = (a.name.strip() + " ") if a.name else ""
     resolver = ts_common.build_resolver(root)
-    print(f"Model '{model_name}': {len(resolver)} resolvable columns")
+    print(f"Model '{model_name}': {len(resolver)} resolvable columns  ·  workdir {wd}")
 
-    dm, denorm_id, denorm_name = build_dm(model_tml, f"{model_name} (from ThoughtSpot)")
+    conv = convert_model(model_tml, wd, a.converted)
+    folder = need_env("SIGMA_FOLDER_ID")[0]
+    dm, denorm_id, denorm_name = build_dm(conv, f"{prefix}{model_name} (from ThoughtSpot)", folder)
 
-    # pick Liveboards: explicit, or every Liveboard that references this model name
-    if a.liveboard:
-        targets = [(x, x) for x in a.liveboard]
+    # pick Liveboards: offline TML files, explicit ids, or every Liveboard that references the model
+    targets = []                                       # (lb_doc, fallback_name)
+    if a.liveboard_tml:
+        targets = [(open(p).read(), os.path.basename(p)) for p in a.liveboard_tml]
+    elif offline:
+        pass                                           # offline with no liveboard TML → DM only
     else:
-        targets = []
-        for lb in ts_lib.search("LIVEBOARD"):
-            edoc, e = ts_lib.export_tml(lb["metadata_id"], "LIVEBOARD")
-            if e:
-                continue
-            if model_name in edoc:
-                targets.append((lb["metadata_id"], lb["metadata_name"]))
+        import ts_lib
+        if a.liveboard:
+            for lb_id in a.liveboard:
+                edoc, e = ts_lib.export_tml(lb_id, "LIVEBOARD")
+                if e:
+                    print(f"  ✗ liveboard {lb_id}: export failed: {e}"); continue
+                targets.append((edoc, lb_id))
+        else:
+            for lb in ts_lib.search("LIVEBOARD"):
+                edoc, e = ts_lib.export_tml(lb["metadata_id"], "LIVEBOARD")
+                if e:
+                    continue
+                if model_name in edoc:
+                    targets.append((edoc, lb["metadata_name"]))
     print(f"Migrating {len(targets)} Liveboard(s)…")
 
     results = {}
-    for lb_id, lb_name in targets:
+    for lb_doc, fallback in targets:
         try:
-            wb, n = migrate_liveboard(lb_id, dm, denorm_id, denorm_name, resolver, lb_name)
-            results[lb_name] = {"liveboard": lb_id, "workbook": wb, "viz": n}
-            print(f"  ✓ {lb_name[:34]:34s} WB {wb} ({n} viz)")
+            wb, display, n, tiles = migrate_liveboard(lb_doc, dm, denorm_id, denorm_name,
+                                                      resolver, prefix, fallback, folder, wd)
+            results[display] = {"workbook": wb, "viz": n, "tiles": tiles}
+            print(f"  ✓ {display[:34]:34s} WB {wb} ({n} viz, layout={'TML tiles' if tiles else 'auto grid'})")
         except Exception as ex:
-            results[lb_name] = {"error": str(ex)}
-            print(f"  ✗ {lb_name[:34]:34s} {ex}")
+            results[fallback] = {"error": str(ex)}
+            print(f"  ✗ {fallback[:34]:34s} {ex}")
     for ans_id in (a.answer or []):
         try:
-            wb = migrate_answer(ans_id, dm, denorm_id, denorm_name, resolver, "Answer " + ans_id[:8])
-            results["answer:" + ans_id] = {"answer": ans_id, "workbook": wb}
-            print(f"  ✓ answer {ans_id[:8]}  WB {wb}")
+            wb, display = migrate_answer(ans_id, dm, denorm_id, denorm_name, resolver, prefix, folder, wd)
+            results[display] = {"answer": ans_id, "workbook": wb}
+            print(f"  ✓ answer {display[:26]:26s} WB {wb}")
         except Exception as ex:
             results["answer:" + ans_id] = {"error": str(ex)}
             print(f"  ✗ answer {ans_id[:8]}  {ex}")
-    json.dump({"model": a.model, "dataModel": dm, "results": results},
-              open(os.path.expanduser("~/thoughtspot-migration/migrate_out.json"), "w"), indent=2)
-    print(f"\nDM: {dm}  ·  {sum(1 for r in results.values() if r.get('workbook'))}/{len(targets)} workbooks")
+    wbs = [r["workbook"] for r in results.values() if r.get("workbook")]
+    json.dump({"model": a.model or a.model_tml, "dataModel": dm, "results": results},
+              open(os.path.join(wd, "migrate_out.json"), "w"), indent=2)
+    if len(wbs) == 1:        # convenience for the parity gate (assert-phase6-ran.rb)
+        json.dump({"workbookId": wbs[0]}, open(os.path.join(wd, "wb-ids.json"), "w"))
+    print(f"\nDM: {dm}  ·  {len(wbs)}/{len(targets)} workbooks  ·  manifest {wd}/migrate_out.json")
 
 if __name__ == "__main__":
     main()

@@ -10,7 +10,7 @@ Sigma denorm element suffixes joined-table columns with the relationship name
 (e.g. "Category (PRODUCT_DIM)"). Rather than hardcode that mapping, `build_resolver`
 derives it from the model TML itself, so it works for ANY model.
 """
-import re, secrets, string
+import json, re, secrets, string
 
 SIGMA_LOWERCASE_WORDS = {'a','an','the','and','but','or','for','nor','so','yet',
                          'at','by','in','of','on','to','up','as','into','via','per'}
@@ -101,18 +101,61 @@ def ts_viz(idx, spec):
     return {"id": f"Viz_{idx}", "answer": a}
 
 # ── Migration side: parse a Liveboard viz -> {name, chart, dims, measures} ────
+def _strip_total(c):
+    return c[len("Total "):] if c.startswith("Total ") else c
+
 def parse_ts_viz(v):
     a = v.get("answer")
     if not a:
         return None
     cols = [c["name"] for c in a.get("answer_columns", [])]
-    measures = [c[len("Total "):] for c in cols if c.startswith("Total ")]
+    # Column ORDER must follow the TML's table.ordered_column_ids (the order the
+    # user arranged) — answer_columns is alphabetical, which scrambles multi-
+    # measure tables (e.g. Region Performance: Gross Profit before Net Revenue).
+    ordered = (a.get("table") or {}).get("ordered_column_ids") or []
+    if ordered:
+        known = set(cols)
+        cols = [c for c in ordered if c in known] + [c for c in cols if c not in set(ordered)]
+    measures = [_strip_total(c) for c in cols if c.startswith("Total ")]
     dims = [c for c in cols if not c.startswith("Total ")]
     ctype = (a.get("chart") or {}).get("type", "TABLE")
     if a.get("display_mode") == "TABLE_MODE":
         ctype = "TABLE"
     return {"name": a.get("name", "Viz"), "chart": ctype, "dims": dims, "measures": measures,
-            "filters": parse_filters(a.get("search_query", ""))}
+            "filters": parse_filters(a.get("search_query", "")), "sorts": parse_sorts(a)}
+
+def parse_sorts(a):
+    """Carry the answer's sorts: (1) `sort by [Col] descending` tokens in the
+    search query; (2) sortInfo entries in the table/chart client_state(_v2)
+    JSON. Returns [{"col": <model column name>, "direction": asc|desc}],
+    deduped (first wins). 'Total X' columns resolve to the measure name X."""
+    out = []
+    for m in re.finditer(r"sort\s+by\s+\[([^\]]+)\]\s*(descending|ascending)?",
+                         a.get("search_query", ""), re.I):
+        out.append({"col": _strip_total(m.group(1)),
+                    "direction": (m.group(2) or "ascending").lower()})
+    for holder in (a.get("table") or {}), (a.get("chart") or {}):
+        for key in ("client_state_v2", "client_state"):
+            raw = holder.get(key) or ""
+            if not raw.strip():
+                continue
+            try:
+                cs = json.loads(raw, strict=False)
+            except (ValueError, TypeError):
+                continue
+            for si in (cs.get("sortInfo") or []) if isinstance(cs, dict) else []:
+                col = si.get("columnId") or si.get("columnName") or si.get("name")
+                if not col:
+                    continue
+                asc = si.get("isAscending", si.get("ascending", si.get("sortAscending", True)))
+                out.append({"col": _strip_total(col),
+                            "direction": "ascending" if asc else "descending"})
+    seen, res = set(), []
+    for s in out:
+        if s["col"] in seen:
+            continue
+        seen.add(s["col"]); res.append(s)
+    return res
 
 def parse_filters(search_query):
     """Extract simple filter clauses from a ThoughtSpot search query:
@@ -170,7 +213,35 @@ def sigma_element(spec, resolver, master="OFV"):
             col_id = nid("f"); el["columns"].append({"id": col_id, "formula": f"[{master}/{e['friendly']}]", "name": f["col"]})
         el.setdefault("filters", []).append({"id": nid(), "columnId": col_id, "kind": "list",
                                              "mode": f["mode"], "values": f["values"]})
+    _apply_sorts(el, spec)
     return el
+
+def _apply_sorts(el, spec):
+    """TML sorts → Sigma. Verified shapes (looker-to-sigma build_workbook.py,
+    live POST + readback + render, 2026-06-10):
+      bar/line/area/scatter/combo : xAxis.sort  = {by: <colId>, direction}
+      pie/donut                   : color.sort  = {by: <colId>, direction}
+      UNGROUPED table             : element sort = [{columnId, direction}]
+      GROUPED table               : groupings[0].sort = [{columnId, direction}]
+        (element-level sort on a grouped table 400s with "Sort column not found")
+    """
+    for si, s in enumerate(spec.get("sorts") or []):
+        col = next((c for c in el.get("columns", [])
+                    if c.get("name") in (s["col"], "Total " + s["col"])), None)
+        if not col:
+            continue
+        d = s["direction"]; k = el.get("kind")
+        if k in ("bar-chart", "line-chart", "area-chart", "scatter-chart", "combo-chart"):
+            if si == 0 and "xAxis" in el:
+                el["xAxis"]["sort"] = {"by": col["id"], "direction": d}
+        elif k in ("pie-chart", "donut-chart"):
+            if si == 0 and "color" in el:
+                el["color"]["sort"] = {"by": col["id"], "direction": d}
+        elif k == "table":
+            if el.get("groupings"):
+                el["groupings"][0].setdefault("sort", []).append({"columnId": col["id"], "direction": d})
+            else:
+                el.setdefault("sort", []).append({"columnId": col["id"], "direction": d})
 
 def _element_core(spec, resolver, master="OFV"):
     name, chart, dims, meas = spec["name"], spec["chart"], spec["dims"], spec["measures"]

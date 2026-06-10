@@ -5,9 +5,9 @@
 
 set -euo pipefail
 
-: "${SIGMA_BASE_URL:?Run scripts/setup.rb to configure credentials}"
-: "${SIGMA_CLIENT_ID:?Run scripts/setup.rb to configure credentials}"
-: "${SIGMA_CLIENT_SECRET:?Run scripts/setup.rb to configure credentials}"
+: "${SIGMA_BASE_URL:?Set SIGMA_BASE_URL (e.g. source ~/.sigma-migration/env)}"
+: "${SIGMA_CLIENT_ID:?Set SIGMA_CLIENT_ID (e.g. source ~/.sigma-migration/env)}"
+: "${SIGMA_CLIENT_SECRET:?Set SIGMA_CLIENT_SECRET (e.g. source ~/.sigma-migration/env)}"
 
 CREDENTIALS=$(printf '%s:%s' "$SIGMA_CLIENT_ID" "$SIGMA_CLIENT_SECRET" | base64)
 
