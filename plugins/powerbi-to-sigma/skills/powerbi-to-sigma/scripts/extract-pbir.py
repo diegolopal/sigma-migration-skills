@@ -178,6 +178,56 @@ def _visual_title(visual):
     return None
 
 
+# bead f972: PBI aggregation function codes (query OrderBy / sortDefinition
+# Aggregation.Function) -> the function name PBI uses in aggregated queryRefs
+# ("Sum(ABSENCE_RECORDS.HOURS)").
+AGG_FUNC = {0: "Sum", 1: "Avg", 2: "Min", 3: "Max", 4: "Count", 5: "CountNonNull"}
+
+
+def _expr_queryref(expr):
+    """Best-effort queryRef string from a PBI field expression (Measure/Column/
+    Aggregation shapes). Returns None for shapes we don't model (hierarchies)."""
+    if not isinstance(expr, dict):
+        return None
+    if "Aggregation" in expr:
+        inner = _expr_queryref(expr["Aggregation"].get("Expression"))
+        fn = AGG_FUNC.get(expr["Aggregation"].get("Function"), "Sum")
+        return f"{fn}({inner})" if inner else None
+    for k in ("Measure", "Column"):
+        if k in expr:
+            ent = (expr[k].get("Expression") or {}).get("SourceRef", {}).get("Entity")
+            prop = expr[k].get("Property")
+            if prop:
+                return f"{ent}.{prop}" if ent else prop
+    return None
+
+
+def _sort_signal(visual):
+    """bead f972: visual.query.sortDefinition.sort[0] -> {queryRef, direction}.
+
+    PBIR carries the visual's sort as query.sortDefinition.sort[]: each entry is
+    {field: <field expr>, direction: "Ascending"|"Descending"}. Resolve the sorted
+    field back to a bound projection's queryRef (exact field-expression match
+    first — projections carry the same `field` object — then a derived
+    Entity.Property fallback) so the builder can map it to a Sigma column id."""
+    sd = (visual.get("query") or {}).get("sortDefinition") or {}
+    entries = sd.get("sort") or []
+    if not entries:
+        return None
+    first = entries[0]
+    direction = "desc" if str(first.get("direction", "")).lower().startswith("desc") else "asc"
+    fld = first.get("field")
+    qs = (visual.get("query") or {}).get("queryState") or {}
+    for _role, blk in qs.items():
+        for p in blk.get("projections", []):
+            if isinstance(p, dict) and p.get("field") == fld:
+                qr = p.get("queryRef") or p.get("nativeQueryRef")
+                if qr:
+                    return {"queryRef": qr, "direction": direction}
+    qr = _expr_queryref(fld)
+    return {"queryRef": qr, "direction": direction} if qr else None
+
+
 def _proj_format(proj):
     """Best-effort numeric format carried on a projection (PBIR rarely inlines it,
     but newer exports may). Returns a Sigma-ish format hint string or None."""
@@ -227,6 +277,8 @@ def extract(pbir_dir):
                 "z": pos.get("z", 0),
                 "parent_group": v.get("parentGroupName"),
                 "bindings": _role_bindings(qs),
+                # bead f972: visual sort ({queryRef, direction asc|desc}) or None
+                "sort": _sort_signal(visual),
                 "formats": formats,
                 # bead n9u9: PBI data-label toggle (objects.labels show) — true/false/None
                 "data_labels": _obj_flag(visual, "labels"),

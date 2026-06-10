@@ -115,8 +115,10 @@ if opts[:emit]
   %i[ws ds cdax wb out].each { |k| abort("missing --#{k}") unless opts[k] }
   write_harness
   chart_dax = JSON.parse(File.read(opts[:cdax]))
-  # Find python: prefer the /tmp/pbiauth venv (has truststore+msal), else python3.
-  py = File.exist?('/tmp/pbiauth/bin/python') ? '/tmp/pbiauth/bin/python' : 'python3'
+  # Find python (needs truststore+msal): $PBI_PY, else the legacy /tmp/pbiauth
+  # venv, else python3 (bead 7o01 — see scripts/requirements.txt / run.sh bootstrap).
+  py = ENV['PBI_PY'] ||
+       (File.exist?('/tmp/pbiauth/bin/python') ? '/tmp/pbiauth/bin/python' : 'python3')
   out, err, st = Open3.capture3(py, HARNESS, opts[:ws], opts[:ds], stdin_data: JSON.dump(chart_dax))
   warn err unless err.empty?
   abort('executeQueries harness failed') unless st.success?

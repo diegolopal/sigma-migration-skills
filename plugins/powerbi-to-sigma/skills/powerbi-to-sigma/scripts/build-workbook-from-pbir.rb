@@ -212,6 +212,50 @@ def visual_master(rec, fields)
   best && best[0]
 end
 
+# bead f972: PBI sort carry. rec['sort'] = {queryRef, direction asc|desc} from the
+# extractors (PBIR query.sortDefinition / classic prototypeQuery.OrderBy). Resolve
+# the sorted queryRef to the element column built for it (qr_cids, recorded as each
+# branch builds its columns) and emit the VERIFIED Sigma sort shapes:
+#   bar/line/area/combo : xAxis.sort = { by: <colId>, direction }
+#   pie/donut           : color.sort = { by: <colId>, direction }
+#   table (grouped)     : groupings[0].sort = [{ columnId, direction }] — element-
+#                         level sort is REJECTED ("Sort column not found") on a
+#                         grouped table; the sort must nest INSIDE the grouping
+#                         (qlik-to-sigma refs/sigma-build-gotchas.md, verified 2026-06-10)
+#   table (ungrouped)   : sort = [{ columnId, direction }]
+# direction must be the full word "ascending"/"descending" — the API rejects
+# "asc"/"desc" (validate-spec.rb guards this too).
+def apply_sort(el, kind, rec, qr_cids, name)
+  srt = rec['sort']
+  return unless srt.is_a?(Hash) && srt['queryRef']
+  dir = srt['direction'].to_s.start_with?('desc') ? 'descending' : 'ascending'
+  norm = ->(s) { s.to_s.downcase.gsub(/[_\s]+/, ' ').strip }
+  pair = qr_cids.find { |qr, _| norm.call(qr) == norm.call(srt['queryRef']) }
+  cid = qr_cids[srt['queryRef']] || (pair && pair[1])
+  case kind
+  when 'bar-chart', 'line-chart', 'area-chart', 'combo-chart'
+    return warn_sort_miss(name, srt) unless cid
+    (el['xAxis'] ||= {})['sort'] = { 'by' => cid, 'direction' => dir }
+  when 'pie-chart', 'donut-chart'
+    return warn_sort_miss(name, srt) unless cid
+    (el['color'] ||= {})['sort'] = { 'by' => cid, 'direction' => dir }
+  when 'table'
+    return warn_sort_miss(name, srt) unless cid
+    if el['groupings'].is_a?(Array) && !el['groupings'].empty?
+      el['groupings'][0]['sort'] = [{ 'columnId' => cid, 'direction' => dir }]
+    else
+      el['sort'] = [{ 'columnId' => cid, 'direction' => dir }]
+    end
+  when 'pivot-table'
+    warn "[build-workbook] WARN visual '#{name}': pivot-table sort is not spec-expressible in Sigma — set it in the UI."
+  end
+end
+
+def warn_sort_miss(name, srt)
+  warn "[build-workbook] WARN visual '#{name}': sort field '#{srt['queryRef']}' is not among " \
+       'the built columns — sort skipped.'
+end
+
 # Build chart element from a normalized visual record. `extra_data` is an
 # accumulator array: branches that need a HIDDEN helper element on the Data page
 # (bead ry0n: the scatter grouped-source table) push it there; the page assembly
@@ -250,6 +294,7 @@ def build_element(rec, fields, masters, extra_data = [])
   el = { 'id' => eid, 'kind' => kind, 'name' => name }
   el['source'] = { 'elementId' => master_id, 'kind' => 'table' } if master_id
   cols = []
+  qr_cids = {} # bead f972: queryRef -> built column id (for sort resolution)
   b = rec['bindings']
 
   case kind
@@ -324,6 +369,7 @@ def build_element(rec, fields, masters, extra_data = [])
     dfs = field_spec(dim, fields, master)
     dcid = "#{eid}-x"
     cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => qr_leaf(dim, 'Dim') }
+    qr_cids[dim] = dcid if dim
     ycids = []
     meas.each_with_index do |qr, i|
       fs = field_spec(qr, fields, master)
@@ -332,6 +378,7 @@ def build_element(rec, fields, masters, extra_data = [])
       apply_fmt(col, qr, fields, vfmts)
       cols << col
       ycids << cid
+      qr_cids[qr] = cid
     end
     el['xAxis'] = { 'columnId' => dcid }
     el['yAxis'] = { 'columnIds' => ycids }
@@ -359,6 +406,7 @@ def build_element(rec, fields, masters, extra_data = [])
       sfs = field_spec(series, fields, master)
       scid = "#{eid}-c"
       cols << { 'id' => scid, 'formula' => sfs['ref'], 'name' => qr_leaf(series, 'Series') }
+      qr_cids[series] = scid
       el['color'] = { 'by' => 'category', 'column' => scid }
     end
   when 'combo-chart'
@@ -373,6 +421,7 @@ def build_element(rec, fields, masters, extra_data = [])
     dfs = field_spec(dim, fields, master)
     dcid = "#{eid}-x"
     cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => qr_leaf(dim, 'Dim') }
+    qr_cids[dim] = dcid if dim
     ycids = []
     col_meas.each_with_index do |qr, i|
       fs = field_spec(qr, fields, master)
@@ -381,6 +430,7 @@ def build_element(rec, fields, masters, extra_data = [])
       apply_fmt(col, qr, fields, vfmts)
       cols << col
       ycids << cid                                   # bare string -> primary (left) bars
+      qr_cids[qr] = cid
     end
     line_meas.each_with_index do |qr, i|
       fs = field_spec(qr, fields, master)
@@ -389,6 +439,7 @@ def build_element(rec, fields, masters, extra_data = [])
       apply_fmt(col, qr, fields, vfmts)
       cols << col
       ycids << { 'columnId' => cid, 'type' => 'line' } # object -> secondary (right) line
+      qr_cids[qr] = cid
     end
     el['xAxis'] = { 'columnId' => dcid }
     el['yAxis'] = { 'columnIds' => ycids }
@@ -483,6 +534,8 @@ def build_element(rec, fields, masters, extra_data = [])
     cv = { 'id' => vcid, 'formula' => measure_formula(vfs), 'name' => qr_leaf(val, 'Value') }
     apply_fmt(cv, val, fields, vfmts)
     cols << cv
+    qr_cids[dim] = dcid if dim
+    qr_cids[val] = vcid if val
     el['color'] = { 'id' => dcid }
     el['value'] = { 'id' => vcid }
     # value labels on pie/donut slices — honor an explicit PBI labels-off signal
@@ -505,6 +558,7 @@ def build_element(rec, fields, masters, extra_data = [])
               'name' => qr_leaf(qr) }
       apply_fmt(col, qr, fields, vfmts) unless is_dim
       cols << col
+      qr_cids[qr] = cid
       if is_dim
         group_ids << cid
       else
@@ -545,6 +599,10 @@ def build_element(rec, fields, masters, extra_data = [])
     el['columnsBy'] = colids.map { |id| { 'id' => id } } unless colids.empty?
     el['values'] = valids
   end
+
+  # bead f972: carry the PBI visual's sort onto the built element (runs AFTER the
+  # case so a grouped table's sort can nest inside its grouping entry).
+  apply_sort(el, kind, rec, qr_cids, name)
 
   # Controls reference a master column; they carry no columns array of their own.
   el['columns'] = cols unless el['kind'] == 'control'

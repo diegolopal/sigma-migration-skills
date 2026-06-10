@@ -41,7 +41,14 @@ model queries (import or DirectQuery).
 Duration: 2
 
 - **A coding agent that runs skills** — Claude Code (CLI or desktop), Cursor, Cortex Code, etc.
-- **Python** with `msal` + `truststore` (for Microsoft auth over corporate TLS)
+- **Python 3** — the Microsoft-auth scripts need `msal`, `requests`, and `truststore`
+  (pinned in `scripts/requirements.txt`). You don't have to install them by hand:
+  `scripts/run.sh` bootstraps a virtualenv at `<work-dir>/.venv` automatically when no
+  suitable interpreter is found. To set one up yourself (or point at an existing one):
+  ```bash
+  python3 -m venv .venv && .venv/bin/pip install -r scripts/requirements.txt
+  export PBI_PY=$PWD/.venv/bin/python   # every script honors $PBI_PY
+  ```
 - **Power BI / Fabric access** — you do **not** need to register an Entra app. The skill uses **device-code auth** with the well-known Power BI Desktop public client, which works against *My workspace* and any workspace you can access.
 - **Sigma API credentials** (`SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET`)
 - A **Sigma connection to the same warehouse** the model uses (for parity)
@@ -79,9 +86,10 @@ Duration: 5
      ```
    The two skills live at `plugins/powerbi-to-sigma/skills/{powerbi-to-sigma,powerbi-assessment}/`. Run each skill's scripts **from its own skill directory** — script paths are relative (e.g. `scripts/fabric-auth-check.py`).
 2. **Sigma credentials** — run `ruby scripts/setup.rb` (in the tableau-to-sigma skill) once. It writes both `~/.claude/settings.json` and a neutral, sourceable `~/.sigma-migration/env` (mode 0600), which every script auto-loads under any agent. (Or just `export SIGMA_BASE_URL` / `SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET` yourself.) `scripts/get-token.sh` exchanges them for a ~1h `SIGMA_API_TOKEN`.
-3. **Power BI auth** — from the `powerbi-to-sigma` skill dir, run the device-code flow:
+3. **Power BI auth** — from the `powerbi-to-sigma` skill dir, run the device-code flow
+   (use the venv interpreter from the Prerequisites step — it has `msal`/`truststore`):
    ```bash
-   python3 scripts/fabric-auth-check.py   # opens device-code login, caches token at /tmp/pbiauth/cache.bin
+   ${PBI_PY:-python3} scripts/fabric-auth-check.py   # opens device-code login, caches token at /tmp/pbiauth/cache.bin
    ```
    Sign in with an account that can see the target workspace.
 4. **Verify:** from the `powerbi-assessment` skill dir, `python3 scripts/fabric-inventory.py` lists your workspaces + items (reuses the cached token — no second login).
