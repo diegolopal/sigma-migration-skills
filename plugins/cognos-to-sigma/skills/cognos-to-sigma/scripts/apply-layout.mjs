@@ -40,8 +40,27 @@ function pageLayout(page) {
     lines.push(`  <LayoutElement elementId="${c.id}" gridColumn="${col0} / ${col1}" gridRow="${r} / ${r + H('control')}"/>`);
   });
   if (controls.length) row += Math.ceil(controls.length / 4) * H('control');
-  // content: stacked full-width, per-kind heights (clean, no overlap, right proportions)
-  for (const e of content) {
+  // content: stacked full-width, per-kind heights (clean, no overlap, right proportions).
+  // Exception: RUNS of consecutive kpi-charts lay out as rows of up to 3 TALL tiles
+  // (a KPI panel) — full-width singles waste a page and Sigma hides the KPI title
+  // below ~5 grid rows, so never shrink them either.
+  for (let i = 0; i < content.length; i++) {
+    const e = content[i];
+    if (e.kind === 'kpi-chart') {
+      let j = i; while (j < content.length && content[j].kind === 'kpi-chart') j++;
+      const run = content.slice(i, j);
+      const perRow = Math.min(run.length, 3);
+      const span = Math.floor(24 / perRow);
+      run.forEach((k, n) => {
+        const col0 = 1 + (n % perRow) * span;
+        const col1 = (n % perRow === perRow - 1) ? 25 : col0 + span;
+        const r = row + Math.floor(n / perRow) * H('kpi-chart');
+        lines.push(`  <LayoutElement elementId="${k.id}" gridColumn="${col0} / ${col1}" gridRow="${r} / ${r + H('kpi-chart')}"/>`);
+      });
+      row += Math.ceil(run.length / perRow) * H('kpi-chart');
+      i = j - 1;
+      continue;
+    }
     const h = H(e.kind);
     lines.push(`  <LayoutElement elementId="${e.id}" gridColumn="1 / 25" gridRow="${row} / ${row + h}"/>`);
     row += h;
