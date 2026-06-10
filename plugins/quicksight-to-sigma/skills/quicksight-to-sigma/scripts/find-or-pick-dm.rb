@@ -123,10 +123,13 @@ loop do
 end
 
 # Deterministic ranking: updatedAt desc, then name asc.
+# NOTE: require 'time' MUST come before the sort — without it Time.parse raises,
+# every timestamp rescues to 0, and the sort silently degrades to name-ascending
+# (recently-updated DMs past the --limit window are never scanned).
+require 'time'
 all_dms = all_dms.sort_by do |dm|
   [-(Time.parse(dm['updatedAt'].to_s).to_i rescue 0), dm['name'].to_s]
 end
-require 'time'   # ensure Time.parse loaded (rescue covers if not)
 
 warn "found #{all_dms.size} total DMs; scoring top #{[all_dms.size, opts[:limit]].min} by updatedAt"
 
@@ -203,8 +206,11 @@ all_dms.take(opts[:limit]).each do |dm|
     src = el['source'] || {}
     case src['kind']
     when 'warehouse-table', 'table'
-      # source like { kind: warehouse-table, connectionId, path: "DB.SCHEMA.TABLE" }
-      fqn = src['path'] || [src['database'], src['schema'], src['name']].compact.join('.')
+      # source like { kind: warehouse-table, connectionId, path: "DB.SCHEMA.TABLE" }.
+      # Live API specs return path as an ARRAY (["DB","SCHEMA","TABLE"]) — join it,
+      # else normalize_fqn sees the array's to_s and table-match never fires.
+      raw = src['path']
+      fqn = raw.is_a?(Array) ? raw.join('.') : (raw || [src['database'], src['schema'], src['name']].compact.join('.'))
       tables << normalize_fqn(fqn) if fqn && !fqn.empty?
     when 'sql'
       # Custom SQL — surface a sentinel so the agent knows; not directly comparable

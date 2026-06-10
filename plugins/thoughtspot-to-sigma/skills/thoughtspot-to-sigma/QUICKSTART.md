@@ -29,6 +29,11 @@ Feed the model's TML to the **`convert_thoughtspot_to_sigma`** MCP tool (or poin
 a Sigma data model with a denormalized **"<root> View"** element that surfaces
 joined-dim columns — the workbook master reads from it.
 
+Before POSTing, run the **DM-reuse check** (SKILL.md step 2.5): `ts-dm-signature.py`
++ `find-or-pick-dm.rb --auto-pick` score the org's existing data models against the
+model's tables/columns — on a strong match the skill asks reuse-vs-new and the POST
+is skipped.
+
 ## 4. Migrate (model → DM → its Liveboards → layout)
 ```bash
 python3 scripts/migrate.py --model <TS_MODEL_ID>            # all Liveboards on the model

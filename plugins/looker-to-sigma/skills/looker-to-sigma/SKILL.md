@@ -55,6 +55,8 @@ offline-only path that normalizes into the same contract.
 | `scripts/detect_rls.py` | **Phase 1 (RLS scan):** dependency-free regex scan of a LookML dir/file (and/or model JSON) for row-level-security constructs (`access_filter`, `sql_always_where`, `access_grant`, `user_attribute`). Prints a structured summary + recommended Sigma mapping per finding (or `--json`). **Prints nothing / exits 0 when there's no RLS** (zero-overhead). `python3 detect_rls.py <lookml_dir> [--json]` |
 | `scripts/apply_sigma_rls.py` | **Phase 1.5 (apply RLS):** scripted, API-driven RLS port. Reuse-first `GET /v2/user-attributes` (prints a match before creating); `--create` → `POST /v2/user-attributes`; `--assign` (+`--member-id`,`--value`) → `POST /v2/user-attributes/{id}/users`; `--field`/`--element-id` → print the verified RLS calc-col + element-filter snippet, `--apply --dm-id` → PATCH it into the DM element spec. **Read-only / plan-only by default — mutates only on an explicit `--create`/`--assign`/`--apply` flag.** Reads `$SIGMA_BASE_URL`/`$SIGMA_API_TOKEN` like `post_dm.py`. |
 | `scripts/convert_dm.mjs` | **Phase 2:** run `convertLookMLToSigma` against a directory of `.lkml` files for one explore → a Sigma DM spec JSON. Bypasses the deployed MCP build (see the converter-build gotcha below). Env: `LOOKML_DIR`, `CONVERTER_SRC`; args `<exploreName> <out.json>`. |
+| `scripts/lookml-dm-signature.py` | **Phase 2.5:** LookML view files → DM-reuse signature (`{warehouse_tables, referenced_columns, measures}`) for `find-or-pick-dm.rb`. Pure, no network. |
+| `scripts/find-or-pick-dm.rb` | **Phase 2.5:** scan existing Sigma DMs and recommend reuse (score = 0.7·column + 0.2·table + 0.1·metric overlap; `--auto-pick` with tie-window safety). Shared vendor-neutral copy (canonical: tableau-to-sigma; needs `scripts/lib/sigma_rest.rb`). Non-destructive. |
 | `scripts/post_dm.py` | **Phase 2:** POST a DM spec to `/v2/dataModels/spec` (auto-finds a writable folder, swaps in the full connection UUID). Env: `SIGMA_API_TOKEN`, `SIGMA_BASE_URL`, `SIGMA_CONNECTION_ID`; args `<spec.json>`. |
 | `scripts/build_workbook.py` | **Phase 3:** dashboard contract + the explore's view `.lkml` files → a Sigma `/v2/workbooks/spec` body (hidden Data page + master table, one element per tile, controls from filters, newspaper→24-col layout XML). Generates locally; does **not** POST. Handles ratio measures, joined-col `Field (alias)` naming, table calcs, pivot-flatten + warn. Layout: a top control bar (row 0), a full-width strip of **tall** KPI tiles (height ≥ 6 so titles render), then the remaining tiles shifted down. |
 | `scripts/looker-render-dashboard.py` | **Phase 4 (visual QA — SOURCE side):** render a LIVE Looker dashboard to PNG via the Looker render API (`POST /render_tasks/dashboards/{id}/png` → poll `GET /render_tasks/{task_id}` until `success` → `GET .../results`). Pairs with `sigma-export-png.py` for source-vs-migrated side-by-side. Reuses `looker_api.py` `~/.looker/looker.ini` auth. `python3 looker-render-dashboard.py <dashboard_id> [out.png] [--w 1200 --h 1600]`. |
@@ -370,6 +372,32 @@ shapes so you recognize a regression:
 > **`metric()` returns "Missing Metric" in MCP SQL** — a known Sigma quirk, not a conversion
 > bug. Verify metric values via the **raw aggregate** (`Sum(...)`, `CountDistinct(...)`), not via
 > `metric()`.
+
+### Phase 2.5 — Reuse an existing DM? (run BEFORE 2c — avoid sprawl, mirrors tableau Phase 1.5 / powerbi Phase 3.5)
+
+Before POSTing a NEW data model, check whether an existing Sigma DM already covers the
+same warehouse tables (don't add a 4th near-identical "Orders" DM):
+
+```bash
+python3 scripts/lookml-dm-signature.py --lookml-dir /path/to/lookml \
+  --label "<explore label>" --out /tmp/<name>/dm-signature.json
+bash -c 'eval "$(scripts/get-token.sh)" && \
+  ruby scripts/find-or-pick-dm.rb --workbook-signature /tmp/<name>/dm-signature.json \
+    --out /tmp/<name>/dm-match.json --auto-pick'     # exit 0 = candidate ≥ min-score
+```
+
+`lookml-dm-signature.py` derives `{warehouse_tables (sql_table_name FQNs),
+referenced_columns (dimension/measure names), measures}` straight from the LookML view
+files — the same files you fed `convert_dm.mjs`. Decision:
+- **Score ≥ 0.6** → **ASK the user** reuse-vs-new: surface the candidate name, matched
+  cols (N/M), and the inherited-extras warning from `dm-match.json`. If they reuse, run a
+  **shape preflight** first — read the candidate DM's spec back and confirm every column
+  the dashboards reference resolves on the element you'll wire to (no `type=error`
+  columns; fact vs separate-dim location) — then **skip 2c/2d** and point Phase 3's
+  workbook masters at the matched `recommended_dm_id` + its element ids. With
+  `--auto-pick` a clear winner (no tie within 0.05) skips the prompt — still WARN about
+  inherited columns/RLS/metrics.
+- **Score < 0.6** → POST new (2c) and TELL the user no reusable DM was found.
 
 ### 2c. POST the data model
 

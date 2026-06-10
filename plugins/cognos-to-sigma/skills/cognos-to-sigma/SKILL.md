@@ -67,6 +67,30 @@ Emits the Sigma data-model JSON on stdout; stats + warnings on stderr. Read the
 warnings aloud to the user — they are the parts that need manual authoring
 (running-totals, cross-element metrics, FIXED-LOD-style calcs, localization).
 
+## Phase 1.5 — Reuse an existing DM? (avoid sprawl — mirrors tableau Phase 1.5 / powerbi Phase 3.5)
+
+Before POSTing a NEW data model in Phase 2, check whether an existing Sigma DM already
+covers the same warehouse tables (don't add a 4th near-identical DM for the same module):
+
+```bash
+python3 scripts/cognos-dm-signature.py --dm-spec dm.json --out dm-signature.json
+eval "$(scripts/get-token.sh)"
+ruby scripts/find-or-pick-dm.rb --workbook-signature dm-signature.json \
+  --out dm-match.json --auto-pick           # exit 0 = candidate ≥ min-score
+```
+
+`cognos-dm-signature.py` derives `{warehouse_tables, referenced_columns, measures}` from
+the Phase-1 converter output (`dm.json` — the Sigma DM JSON, BEFORE it is POSTed). Decision:
+- **Score ≥ 0.6** → **ASK the user** reuse-vs-new: surface the candidate name, matched cols
+  (N/M), and the inherited-extras warning from `dm-match.json`. If they reuse, run a
+  **shape preflight** first — read the candidate DM's spec back and confirm every column
+  the report references resolves on the element you'll wire to (no `type=error` columns;
+  fact vs separate-dim location) — then **skip Phase 2** and run Phase 3 against the
+  matched `recommended_dm_id` (remap to ITS element ids/names in `remap-wb-to-dm-ids.mjs`).
+  With `--auto-pick` a clear winner (no tie within 0.05) skips the prompt — still WARN
+  about inherited columns/RLS/metrics.
+- **Score < 0.6** → POST new (Phase 2) and TELL the user no reusable DM was found.
+
 ## Phase 2 — POST the data model + read back ids (hard gate)
 
 ```bash

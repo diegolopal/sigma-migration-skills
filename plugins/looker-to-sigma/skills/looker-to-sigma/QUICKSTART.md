@@ -61,7 +61,10 @@ LOOKML_DIR=/path/to/lookml \
 CONVERTER_SRC=/path/to/sigma-data-model-mcp/src/lookml.ts \
   node --import tsx/esm scripts/convert_dm.mjs <explore> /tmp/look/dm-spec.json
 ```
-Read the printed warnings. Then POST + register:
+Read the printed warnings. Before POSTing, run the **DM-reuse check** (SKILL.md Phase 2.5):
+`lookml-dm-signature.py` + `find-or-pick-dm.rb --auto-pick` score the org's existing data
+models against the explore's tables/columns — on a strong match the skill asks reuse-vs-new
+and the POST is skipped. Otherwise POST + register:
 ```bash
 bash -c 'eval "$(scripts/get-token.sh)" && \
   SIGMA_CONNECTION_ID=$SIGMA_CONNECTION_ID python3 scripts/post_dm.py /tmp/look/dm-spec.json'
