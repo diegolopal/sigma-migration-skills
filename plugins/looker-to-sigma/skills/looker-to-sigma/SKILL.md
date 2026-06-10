@@ -57,9 +57,14 @@ offline-only path that normalizes into the same contract.
 | `scripts/convert_dm.mjs` | **Phase 2:** run `convertLookMLToSigma` against a directory of `.lkml` files for one explore → a Sigma DM spec JSON. Bypasses the deployed MCP build (see the converter-build gotcha below). Env: `LOOKML_DIR`, `CONVERTER_SRC`; args `<exploreName> <out.json>`. |
 | `scripts/post_dm.py` | **Phase 2:** POST a DM spec to `/v2/dataModels/spec` (auto-finds a writable folder, swaps in the full connection UUID). Env: `SIGMA_API_TOKEN`, `SIGMA_BASE_URL`, `SIGMA_CONNECTION_ID`; args `<spec.json>`. |
 | `scripts/build_workbook.py` | **Phase 3:** dashboard contract + the explore's view `.lkml` files → a Sigma `/v2/workbooks/spec` body (hidden Data page + master table, one element per tile, controls from filters, newspaper→24-col layout XML). Generates locally; does **not** POST. Handles ratio measures, joined-col `Field (alias)` naming, table calcs, pivot-flatten + warn. Layout: a top control bar (row 0), a full-width strip of **tall** KPI tiles (height ≥ 6 so titles render), then the remaining tiles shifted down. |
-| `scripts/sigma-export-png.py` | **Phase 4 (visual QA):** render a posted workbook page or element to PNG via `POST /v2/workbooks/{id}/export` → poll `GET /v2/query/{queryId}/download`. For side-by-side layout/render checks against the source Looker dashboard (catches hidden KPI titles, orphaned filters, overlaps that a numeric parity check can't). Reads `$SIGMA_BASE_URL`/`$SIGMA_API_TOKEN`. `python3 sigma-export-png.py --workbook <id> --page <pageId> --out /tmp/x.png` (or `--element <id>`). |
+| `scripts/looker-render-dashboard.py` | **Phase 4 (visual QA — SOURCE side):** render a LIVE Looker dashboard to PNG via the Looker render API (`POST /render_tasks/dashboards/{id}/png` → poll `GET /render_tasks/{task_id}` until `success` → `GET .../results`). Pairs with `sigma-export-png.py` for source-vs-migrated side-by-side. Reuses `looker_api.py` `~/.looker/looker.ini` auth. `python3 looker-render-dashboard.py <dashboard_id> [out.png] [--w 1200 --h 1600]`. |
+| `scripts/sigma-export-png.py` | **Phase 4 (visual QA — MIGRATED side):** render a posted workbook page or element to PNG via `POST /v2/workbooks/{id}/export` → poll `GET /v2/query/{queryId}/download`. For side-by-side layout/render checks against the source Looker dashboard render (catches hidden KPI titles, orphaned filters, overlaps, bare-number vs `$`/`%` formats that a numeric parity check can't). Reads `$SIGMA_BASE_URL`/`$SIGMA_API_TOKEN`. `python3 sigma-export-png.py --workbook <id> --page <pageId> --out /tmp/x.png` (or `--element <id>`). |
 | `scripts/build_looker_dashboard.py` | **TEST-FIXTURE BUILDER (not a migration step).** Builds the "Orders Overview" UDD on `csa_thelook` via the Looker API (4 KPIs + line/column/bar/pie + grid, 3 filters wired via `result_maker.filterables.listen`). |
 | `scripts/build_looker_dashboard2.py` | **TEST-FIXTURE BUILDER (not a migration step).** Builds the "Orders Deep Dive" UDD — area, pivot, table-calcs, scatter, donut, text tile — the harder dashboard surface for the converter. |
+| `scripts/gap-scout.md` | **Gap scout (converter gaps):** runbook for the main agent — when/how to spawn a scout subagent for a LookML construct the converter can't translate, the LookML→Sigma candidate table, and the opt-in issue-filing flow. Read before spawning. |
+| `scripts/scout-validate.py` | **Gap scout:** validate a candidate Sigma formula against a real DM element (throwaway test workbook → check column type ≠ `error` → delete), persist a win to `~/.looker-to-sigma/learned-rules.yaml`, or return an opt-in `escalation` block on failure. Also a quick "does this formula resolve?" check for Phase-4 validation. Reads `$SIGMA_BASE_URL`/`$SIGMA_API_TOKEN`. |
+| `scripts/learned-rules.py` | **Gap scout:** loader for the customer-local `learned-rules.yaml` (`load()`/`apply()`); applied to LookML measure expressions before the converter/WARN fallback. Home = `~/.looker-to-sigma` (override `LOOKER_TO_SIGMA_HOME`). |
+| `scripts/escalate-gap.py` | **Gap scout (shared, identical across all migration skills):** opt-in GitHub-issue filer — category→repo routing, dedupe (open issues + beads), converter-repo mirroring, bead cross-link. **Dry-run by default; files only with `--yes`.** Requires `gh`. |
 
 > **Test-fixture builders vs migration scripts.** `build_looker_dashboard.py` /
 > `build_looker_dashboard2.py` **author** Looker dashboards (migration *targets*); they are
@@ -483,6 +488,15 @@ Newspaper layout math (a single arithmetic transform, no spatial heuristic):
   these; `dynamic_fields` arrives JSON-parsed from discovery.)
 - **count on a joined view** → `CountDistinct` using that view's primary key (base-view counts
   stay `Count()`).
+- **Number formats carry through.** A LookML measure's `value_format_name` (`usd`, `usd_0`,
+  `percent_0/1/2`, `decimal_0/1/2`, …) or custom `value_format` mask becomes the Sigma column
+  `format` object — `{kind: "number", formatString: "<d3-format>"}` — on the tile's value /
+  KPI-value / chart-measure / measure-table column. So a `usd` measure renders `$110,342.75`
+  (not bare `110,342.75`) and a `percent_1` measure renders `12.3%`. `build_workbook.py`'s
+  `build_field_index` captures each measure's format and `apply_fmt` attaches it; custom masks are
+  best-effort (currency symbol / thousands separator / decimals / percent). Counts and dimensions
+  get no format (raw). Without this the side-by-side render (Phase 4a) shows bare numbers where
+  Looker showed `$`/`%`.
 
 ### 3c. POST the workbook + verify
 
@@ -509,23 +523,29 @@ GREEN only when all three match. The validated run produced **exact** parity to 
 region revenue (West 38906.82 / South 31650.98 / NE 21587.52 / MW 14966.20 / null 3231.23 =
 $109,765.89) and the ratio metrics (AOV / margin / return) identical across Looker and Sigma.
 
-### 4a. Visual QA — render the workbook to PNG and eyeball it
+### 4a. Visual QA — render BOTH dashboards to PNG and eyeball them side-by-side
 
 Numbers tying out is necessary but not sufficient — a workbook can be GREEN on parity yet look
-broken (hidden KPI titles, orphaned filters, overlapping tiles, the wrong chart kind). After
-POSTing, render the dashboard page to a PNG and inspect it side-by-side against the source Looker
-dashboard:
+broken (hidden KPI titles, orphaned filters, overlapping tiles, the wrong chart kind, bare numbers
+where Looker showed `$`/`%`). After POSTing, render **both** the Looker source dashboard and the
+migrated Sigma workbook to PNG and inspect them side-by-side:
 
 ```bash
+# (1) SOURCE — render the live Looker dashboard (reads ~/.looker/looker.ini)
+python3 scripts/looker-render-dashboard.py <dashboardId> /tmp/<name>/looker-<dash>.png
+
+# (2) MIGRATED — render the Sigma workbook page
 bash -c 'eval "$(scripts/get-token.sh)" && python3 scripts/sigma-export-png.py \
-  --workbook <workbookId> --page page-dash --out /tmp/<name>/<dash>.png'
+  --workbook <workbookId> --page page-dash --out /tmp/<name>/sigma-<dash>.png'
 ```
 
-Confirm visually: **KPI tile titles show** (the builder lays KPIs ≥ 6 rows tall — a `kpi-chart`
-hides its title below ~5 rows / ~150px; see `feedback_sigma_kpi_label_height.md`), the **filters
-sit in a top control bar** (not orphaned at the bottom), tiles are aligned with no large empty
-regions, and each chart kind matches Looker. Iterate on `build_workbook.py` + re-`PUT` the spec
-until the render is clean.
+Read both PNGs and compare tile-for-tile. Confirm: **KPI tile titles show** (the builder lays KPIs
+≥ 6 rows tall — a `kpi-chart` hides its title below ~5 rows / ~150px; see
+`feedback_sigma_kpi_label_height.md`), the **filters sit in a top control bar** (not orphaned at
+the bottom), tiles are aligned with no large empty regions, each chart kind matches Looker, and
+**number formats match** — if Looker shows `$176.85` the Sigma KPI must too (the builder carries
+LookML `value_format_name` / `value_format` into the tile column `format`; see Phase 3). Iterate on
+`build_workbook.py` + re-`PUT` the spec until the side-by-side render is clean.
 
 **Record the RLS outcome here.** If Phase 1d found RLS, the migration summary MUST list, per
 finding, whether it was **ported / reused / skipped** (and the Sigma user attribute + filter used)
@@ -553,6 +573,29 @@ Set expectations up front (they appear as warnings from `build_workbook.py`):
 - **KPI comparison** (`show_comparison`) → add a 2nd KPI tile or a UI delta.
 - **Pivot cross-tab** → rebuild the flattened table as a Sigma `pivot-table` in the UI.
 - **Per-tile refresh intervals** → Sigma has workbook-level scheduled refresh only — drop + warn.
+
+---
+
+## Gap scout — when the converter can't translate a LookML construct
+
+When `convert_lookml_to_sigma` only approximates or drops a LookML measure/construct (a ratio /
+`${measure}`-ref measure, a `type: percentile`, a filtered count, a Liquid `{% parameter %}`
+measure), spawn the **gap scout** subagent to find a Sigma formula that resolves on the live site,
+then persist it so the next dashboard reuses it. The full runbook (when to spawn, the spawn
+prompt, the LookML→Sigma candidate table, opt-in issue filing) is in **`scripts/gap-scout.md`** —
+read it before spawning.
+
+- `scripts/scout-validate.py` validates a candidate against a real DM element (builds a throwaway
+  test workbook, checks the column's resolved type, deletes it) and persists a win to
+  `~/.looker-to-sigma/learned-rules.yaml` (`scripts/learned-rules.py` loads + applies it).
+- On failure it returns an `escalation` block. Filing a GitHub issue is **opt-in /
+  confirm-before-file** — run `escalation.dry_run_cmd` (files nothing; drafts the issue + dedupes),
+  show the user, and only run `escalation.file_cmd` (`escalate-gap.py … --yes`) if they accept.
+  LookML construct gaps are **converter** gaps and mirror to both converter repos with a bead.
+
+This is also a lightweight way to **validate a migrated DM/workbook**: point `scout-validate.py`
+at the denorm element to confirm a suspect formula resolves (no `type:error` column) before
+declaring Phase 4 green.
 
 ---
 
