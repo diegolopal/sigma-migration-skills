@@ -28,9 +28,68 @@ TILE_KIND = {
 }
 AGG = {"average": "Avg", "sum": "Sum", "min": "Min", "max": "Max", "median": "Median"}
 
+# ── LookML value_format_name / value_format -> Sigma column format ──────────
+# Sigma columns carry an optional `format` object — for numbers:
+#   {"kind": "number", "formatString": "<d3-format>"}  (see sigma-workbooks
+#   reference/specification/formatting.md). LookML measures declare their display
+#   via a named format (`value_format_name`) or a custom Excel-style mask
+#   (`value_format`). Map the common named formats to d3 format strings; fall
+#   back to a best-effort translation of a custom mask.
+VALUE_FORMAT_NAME_MAP = {
+    "usd":          "$,.2f",
+    "usd_0":        "$,.0f",
+    "gbp":          "£,.2f",
+    "gbp_0":        "£,.0f",
+    "eur":          "€,.2f",
+    "eur_0":        "€,.0f",
+    "percent_0":    ",.0%",
+    "percent_1":    ",.1%",
+    "percent_2":    ",.2%",
+    "percent_3":    ",.3%",
+    "percent_4":    ",.4%",
+    "decimal_0":    ",.0f",
+    "decimal_1":    ",.1f",
+    "decimal_2":    ",.2f",
+    "decimal_3":    ",.3f",
+    "decimal_4":    ",.4f",
+    "id":           "d",            # plain integer, no thousands separator
+}
+
+def custom_value_format_to_d3(mask):
+    """Best-effort translate a LookML custom value_format (Excel-style mask) to a
+    d3 format string. Handles the common shapes: currency prefix, thousands
+    separator, fixed decimals, and percent. Returns None if nothing recognizable."""
+    if not mask: return None
+    m = mask.strip().strip('"')
+    is_pct = m.endswith("%")
+    sym = ""
+    if m[:1] in "$£€¥": sym = m[0]
+    has_thousands = "," in m
+    dec = 0
+    dm = re.search(r"\.(0+|#+)", m)        # ".00" or ".##" -> 2 decimals
+    if dm: dec = len(dm.group(1))
+    thou = "," if has_thousands else ""
+    if is_pct:
+        return f"{thou}.{dec}%"
+    if sym or has_thousands or dec:
+        return f"{sym}{thou}.{dec}f"
+    return None
+
+def sigma_format_for(value_format_name, value_format):
+    """Resolve a LookML measure's format -> a Sigma column `format` object (or None)."""
+    fs = None
+    if value_format_name:
+        fs = VALUE_FORMAT_NAME_MAP.get(value_format_name.strip().lower())
+    if fs is None and value_format:
+        fs = custom_value_format_to_d3(value_format)
+    if not fs: return None
+    return {"kind": "number", "formatString": fs}
+
+
 # ── parse view files: classify fields as measure (agg + base col) or dimension ──
 def build_field_index(view_files):
-    measures = {}   # "view.field" -> (agg_type, base_display_or_None)
+    measures = {}   # "view.field" -> (agg_type, base_display_or_None, sql)
+    formats = {}    # "view.field" -> Sigma format dict (or None)
     dims = set()    # "view.field"
     view_pk = {}    # "view" -> primary-key dimension name
     for path in view_files:
@@ -63,8 +122,14 @@ def build_field_index(view_files):
                 ref = re.search(r"\$\{(?:TABLE\}\.)?(\w+)\}?", s)  # ${dim} or ${TABLE}.col
                 r2 = re.search(r"\$\{TABLE\}\.(\w+)", s)
                 base = disp((r2 or ref).group(1)) if (r2 or ref) else None
-            measures[f"{view}.{name}"] = (mtype, base, (sqlm.group(1).strip() if sqlm else ""))
-    return measures, dims, view_pk
+            key = f"{view}.{name}"
+            measures[key] = (mtype, base, (sqlm.group(1).strip() if sqlm else ""))
+            # capture the measure's display format (named or custom mask)
+            vfn = re.search(r"value_format_name:\s*(\w+)", block)
+            vf = re.search(r'value_format:\s*"([^"]*)"', block)
+            fmt = sigma_format_for(vfn.group(1) if vfn else None, vf.group(1) if vf else None)
+            if fmt: formats[key] = fmt
+    return measures, dims, view_pk, formats
 
 def main():
     ap = argparse.ArgumentParser()
@@ -80,8 +145,20 @@ def main():
     a = ap.parse_args()
 
     dash = json.load(open(a.contract))
-    measures, dims, view_pk = build_field_index(sorted(glob.glob(os.path.join(a.views, "*.view.lkml"))))
+    measures, dims, view_pk, formats = build_field_index(sorted(glob.glob(os.path.join(a.views, "*.view.lkml"))))
     warnings = []
+
+    def fmt_for(f):
+        """Sigma column `format` dict for a measure field (or None). Ratio
+        measures inherit their own value_format if declared; else best-effort
+        percent for ratio-typed measures left unset."""
+        return formats.get(f)
+    def apply_fmt(col, f):
+        """Attach a Sigma number format to a tile column if the LookML measure
+        declared one. Mutates+returns col for chaining."""
+        ff = fmt_for(f)
+        if ff: col["format"] = ff
+        return col
 
     def is_measure(f): return f in measures
     def is_ratio(f):
@@ -220,7 +297,9 @@ def main():
         if kind == "kpi-chart":
             vf = formula_for(ms[0], ex) if ms else "Count()"
             cid = sid("v")
-            base["columns"] = [{"id": cid, "formula": vf, "name": el["name"]}]
+            col = {"id": cid, "formula": vf, "name": el["name"]}
+            if ms: apply_fmt(col, ms[0])      # carry LookML value_format -> Sigma $/%/decimals
+            base["columns"] = [col]
             base["value"] = {"columnId": cid}
             if ms: _warn_count(ms[0], el)
             if el.get("showComparison"):
@@ -231,10 +310,13 @@ def main():
             xf = ms[0] if ms else None
             yf = ms[1] if len(ms) > 1 else None
             xid, yid, cols = sid("x"), sid("y"), []
-            cols.append({"id": xid, "formula": formula_for(xf, ex) if xf else "Count()",
-                         "name": disp(leaf(xf)) if xf else "X"})
-            cols.append({"id": yid, "formula": formula_for(yf, ex) if yf else "Count()",
-                         "name": disp(leaf(yf)) if yf else "Y"})
+            xcol = {"id": xid, "formula": formula_for(xf, ex) if xf else "Count()",
+                    "name": disp(leaf(xf)) if xf else "X"}
+            ycol = {"id": yid, "formula": formula_for(yf, ex) if yf else "Count()",
+                    "name": disp(leaf(yf)) if yf else "Y"}
+            if xf: apply_fmt(xcol, xf)
+            if yf: apply_fmt(ycol, yf)
+            cols.append(xcol); cols.append(ycol)
             base["columns"] = cols
             base["xAxis"] = {"columnId": xid}; base["yAxis"] = {"columnIds": [yid]}
             if ds:
@@ -248,7 +330,8 @@ def main():
             cols.append({"id": xid, "formula": formula_for(xf, ex) if xf else "Count()",
                          "name": (col_display(xf, ex) if xf else None) or "Group"})
             for mf in (ms or []):
-                yid = sid("y"); cols.append({"id": yid, "formula": formula_for(mf, ex), "name": disp(leaf(mf))})
+                yid = sid("y")
+                cols.append(apply_fmt({"id": yid, "formula": formula_for(mf, ex), "name": disp(leaf(mf))}, mf))
                 ymids.append(yid)
                 _warn_count(mf, el)
             if not ymids:
@@ -271,11 +354,13 @@ def main():
             catf = el["pivots"][0] if el["pivots"] else (ds[0] if ds else (el["fields"][0] if el["fields"] else None))
             valf = ms[0] if ms else None
             catid = sid("cat"); valid = sid("val")
+            valcol = {"id": valid, "formula": formula_for(valf, ex) if valf else "Count()",
+                      "name": (disp(leaf(valf)) if valf else "Count")}
+            if valf: apply_fmt(valcol, valf)
             base["columns"] = [
                 {"id": catid, "formula": formula_for(catf, ex) if catf else "Count()",
                  "name": (col_display(catf, ex) if catf else None) or "Category"},
-                {"id": valid, "formula": formula_for(valf, ex) if valf else "Count()",
-                 "name": (disp(leaf(valf)) if valf else "Count")},
+                valcol,
             ]
             base["value"] = {"id": valid}      # donut/pie use value.id (KPI uses value.columnId)
             base["color"] = {"id": catid}
@@ -286,8 +371,9 @@ def main():
         elif kind == "table":
             cols = []
             for f in el["fields"] + (el.get("pivots") or []):
-                cols.append({"id": sid("c"), "formula": formula_for(f, ex), "name": disp(leaf(f))})
-                if is_measure(f): _warn_count(f, el)
+                tcol = {"id": sid("c"), "formula": formula_for(f, ex), "name": disp(leaf(f))}
+                if is_measure(f): apply_fmt(tcol, f); _warn_count(f, el)
+                cols.append(tcol)
             base["columns"] = cols
             if el.get("pivots"):
                 warnings.append(f"tile '{el['name']}': pivot {el['pivots']} flattened to columns — "
