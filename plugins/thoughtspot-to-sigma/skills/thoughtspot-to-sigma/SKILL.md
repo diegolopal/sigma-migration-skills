@@ -1,6 +1,7 @@
 ---
 name: thoughtspot-to-sigma
 description: Convert a ThoughtSpot model/worksheet and its Liveboards into a Sigma data model and matching dashboards. Use when the user has a ThoughtSpot instance (or exported TML) and wants to recreate it in Sigma. Covers discovery (TML export), data-model conversion, workbook build, layout, and parity verification driven by scripts/.
+user-invocable: true
 ---
 
 # ThoughtSpot → Sigma migration
