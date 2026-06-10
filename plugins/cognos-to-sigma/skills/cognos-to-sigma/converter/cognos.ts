@@ -66,6 +66,19 @@ export interface CognosConvertOptions {
   database?: string;
   schema?: string;
   modelName?: string;
+  // Customer-discovered translation rules (from the gap-scout, persisted in
+  // ~/.cognos-to-sigma/learned-rules.json). Applied to each Cognos expression
+  // BEFORE the built-in translator, so a validated discovered rule wins.
+  learnedRules?: Array<{ pattern: string; template: string; flags?: string }>;
+}
+
+// Apply customer-learned rules (regex pattern → Sigma template) to a raw Cognos expression.
+export function applyLearnedRules(expr: string, rules?: CognosConvertOptions['learnedRules']): string {
+  let s = expr || '';
+  for (const r of (rules || [])) {
+    try { s = s.replace(new RegExp(r.pattern, r.flags || 'gi'), r.template); } catch { /* bad rule — skip */ }
+  }
+  return s;
 }
 
 // ── Ingest: Data Module JSON → IR (tolerant of the common shape variants) ─────
@@ -208,7 +221,7 @@ export function convertCognosIR(model: CognosModule, options: CognosConvertOptio
         && item.aggregate && item.aggregate !== 'none';
 
       if (item.isCalculation && item.expression) {
-        const { formula, warnings: w } = translateCognosExpr(item.expression, qs, ensureRawCol, ctx);
+        const { formula, warnings: w } = translateCognosExpr(applyLearnedRules(item.expression, options.learnedRules), qs, ensureRawCol, ctx);
         w.forEach(x => warnings.push(`"${qs.identifier}.${item.identifier}": ${x}`));
         // a calc that aggregates → metric, else calculated column
         if (/\b(Sum|Avg|Count|Min|Max|.*Over)\(/.test(formula)) {
@@ -391,7 +404,7 @@ export function translateCognosExpr(
   f = f.replace(/'([^']*)'/g, '"$1"');  // Cognos single-quoted strings → Sigma double-quoted
 
   // Unknown bareword(...) functions → warn (kept as-is for manual review)
-  const known = /\b(If|Sum|Avg|Count|CountDistinct|Min|Max|SumOver|AvgOver|CountOver|MinOver|MaxOver|DateAdd|DateDiff|DatePart|Mid|Upper|Lower|Trim|Coalesce|Text|RegexpReplace|Replace)\b/;
+  const known = /\b(If|Switch|Sum|Avg|Count|CountDistinct|Min|Max|SumOver|AvgOver|CountOver|MinOver|MaxOver|DateAdd|DateDiff|DatePart|Mid|Upper|Lower|Trim|Coalesce|Text|RegexpReplace|Replace)\b/;
   for (const m of f.matchAll(/\b([a-z][a-z0-9_-]*)\s*\(/gi)) {
     if (!known.test(m[1]) && !/^(and|or|not|in|like|between|then|else|end|case|when)$/i.test(m[1])) {
       warnings.push(`function "${m[1]}()" has no confirmed Sigma mapping — review/translate manually.`);

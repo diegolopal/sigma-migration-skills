@@ -15,7 +15,7 @@ export async function api(method, path, body) {
   const { base, token } = sigmaEnv();
   const res = await fetch(base + path, {
     method,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
     body: body == null ? undefined : (typeof body === 'string' ? body : JSON.stringify(body)),
   });
   const text = await res.text();
