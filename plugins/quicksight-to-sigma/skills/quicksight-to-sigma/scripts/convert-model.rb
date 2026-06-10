@@ -153,7 +153,9 @@ if opts[:emit]
   puts "  database: #{opts[:db] || '(override if dataset path is incomplete)'}"
   puts "  schema:   #{opts[:schema] || '(override if dataset path is incomplete)'}"
   puts
-  puts "Save the returned model, then: ruby scripts/convert-model.rb --fixup --in <model>.json --discover-dir #{dir} --out dm-spec.json"
+  # --folder-id is REQUIRED by --fixup (POST /v2/dataModels/spec rejects specs without
+  # folderId) — print it in the next-step command so the agent doesn't hit the abort.
+  puts "Save the returned model, then: ruby scripts/convert-model.rb --fixup --in <model>.json --discover-dir #{dir} --folder-id #{opts[:folder] || '<SIGMA_FOLDER_ID>'} --out dm-spec.json"
   exit 0
 end
 

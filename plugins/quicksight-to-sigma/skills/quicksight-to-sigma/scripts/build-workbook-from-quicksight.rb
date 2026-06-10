@@ -228,6 +228,71 @@ def field_id(f)
    f['CategoricalDimensionField'] || f['DateDimensionField'] || {})['FieldId']
 end
 
+# ---- QS SortConfiguration -> Sigma sort (beads-sigma-xvjl) -------------------
+# QuickSight sorts live under ChartConfiguration.SortConfiguration, e.g.
+#   { "CategorySort": [ { "FieldSort":  { "FieldId": "...", "Direction": "DESC" } },
+#                       { "ColumnSort": { "SortBy": { "Column": { "ColumnName": ... } },
+#                                         "Direction": "ASC", "AggregationFunction": {...} } } ] }
+# (bar/line/pie use CategorySort; TableVisual uses RowSort.) Resolve the sorted field
+# to the Sigma column built for the visual and emit the verified Sigma shapes:
+#   bar/line/area/combo/scatter : xAxis.sort  = { by: <colId>, direction: }
+#   pie/donut                   : color.sort  = { by: <colId>, direction: }
+#   table                       : sort        = [{ columnId:, direction: }]
+# (pivot-table columnsBy/rowsBy sorts are NOT spec-supported — skipped with a warning.)
+
+# Every FieldId -> raw ColumnName mapping in the visual's field wells.
+def fid_to_colname(field_wells)
+  map = {}
+  walk = lambda do |o|
+    if o.is_a?(Hash)
+      if o['FieldId'] && (cn = o.dig('Column', 'ColumnName'))
+        map[o['FieldId']] = cn
+      end
+      o.each_value { |v| walk.call(v) }
+    elsif o.is_a?(Array)
+      o.each { |v| walk.call(v) }
+    end
+  end
+  walk.call(field_wells || {})
+  map
+end
+
+# Apply a visual's SortConfiguration to the built Sigma element (mutates el).
+def apply_qs_sorts(el, inner, kind, title, warnings)
+  cc = inner['ChartConfiguration'] || {}
+  sc = cc['SortConfiguration']
+  return unless sc.is_a?(Hash) && !sc.empty?
+  entries = sc.values.find { |v| v.is_a?(Array) && !v.empty? } # CategorySort / RowSort / ...
+  return unless entries
+  if kind == 'pivot-table'
+    warnings << { 'visual' => title, 'type' => 'SortConfiguration',
+                  'reason' => 'pivot-table sorts are not spec-expressible in Sigma (columnsBy/rowsBy sort rejected) — set in the UI' }
+    return
+  end
+  fidmap = fid_to_colname(cc['FieldWells'])
+  entries.each_with_index do |entry, i|
+    fs = entry['FieldSort']; cs = entry['ColumnSort']
+    raw = fs ? fidmap[fs['FieldId']] : cs&.dig('SortBy', 'Column', 'ColumnName')
+    dir = ((fs || cs || {})['Direction'].to_s.upcase == 'DESC') ? 'descending' : 'ascending'
+    next unless raw
+    # column names on the element: calc fields keep the raw name, physical cols are disp()'d
+    col = (el['columns'] || []).find { |c| c['name'] == disp(raw) || c['name'] == raw }
+    unless col
+      warnings << { 'visual' => title, 'type' => 'SortConfiguration',
+                    'reason' => "sort field '#{raw}' is not among the visual's Sigma columns — sort skipped" }
+      next
+    end
+    case kind
+    when 'bar-chart', 'line-chart', 'area-chart', 'combo-chart', 'scatter-chart'
+      (el['xAxis'] ||= {})['sort'] = { 'by' => col['id'], 'direction' => dir } if i.zero?
+    when 'pie-chart', 'donut-chart'
+      (el['color'] ||= {})['sort'] = { 'by' => col['id'], 'direction' => dir } if i.zero?
+    when 'table'
+      (el['sort'] ||= []) << { 'columnId' => col['id'], 'direction' => dir }
+    end
+  end
+end
+
 # Translate a QuickSight TableVisual ConditionalFormatting block into Sigma
 # `conditionalFormats` (D19). Supported QS -> Sigma mappings (verified spec-expressible
 # + round-tripping via /v2/workbooks/spec, 2026-06-06):
@@ -646,6 +711,8 @@ defn['Sheets'].each_with_index do |sh, sheet_idx|
                         'region' => { 'id' => did, 'regionType' => region_type_for(geo[0][1]) })
       end
     end
+    # carry the visual's QS SortConfiguration (CategorySort/RowSort) when present
+    apply_qs_sorts(el, inner, kind, title, build_warnings) if el
     elements << el if el
   end
   # one Sigma page per QS sheet (skip a sheet that produced zero elements)
