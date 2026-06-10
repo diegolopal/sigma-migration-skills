@@ -59,7 +59,9 @@ A Qlik LOAD `SELECT ... AS ... FROM t` becomes a Sigma SQL element. Rules:
   (omitting `columns` → `400 columns: Invalid array: undefined`).
 - Charts source the master: `source: { "elementId": "m-ofv", "kind": "table" }`,
   formulas `Sum([OFV/Net Revenue])` (`OFV` = the master's `name`).
-- **kpi-chart**: `columns:[{id,formula,name,format}]` + `value:{id}`.
+- **kpi-chart**: `columns:[{id,formula,name,format}]` + `value:{columnId}` — NOT
+  `value:{id}`; the live API 400s with `value.columnId: Invalid string: undefined`
+  (validate-spec misses it; pie/donut `value` keeps `{id}` — the key differs by kind).
 - **bar-chart / line-chart**: `columns:[dimCol, measCol]` + `xAxis:{columnId}` + `yAxis:{columnIds:[...]}`.
 - Number format: `format:{kind:"number","formatString":"$,.0f"}` (or `,.1%`, `,.0f`).
 

@@ -1,6 +1,7 @@
 # AGENTS.md — sigma-migration-skills
 
-Migration skills for moving BI tools (**Tableau, Power BI, Qlik, ThoughtSpot**) to
+Migration skills for moving BI tools (**Tableau, Power BI, Qlik, ThoughtSpot,
+QuickSight, Looker, Cognos**) to
 **Sigma**: per-tool *converters* (source → Sigma data model + workbook, with
 warehouse parity verification) and read-only *assessments* (tenant inventory →
 migration-readiness readout + shortlist).
@@ -32,6 +33,11 @@ reading the relevant `SKILL.md` and executing its scripts.
 | Scope/assess a ThoughtSpot instance | `thoughtspot-assessment` | `plugins/thoughtspot-to-sigma/skills/thoughtspot-assessment/` |
 | Convert an Amazon QuickSight analysis/dashboard → Sigma | `quicksight-to-sigma` | `plugins/quicksight-to-sigma/skills/quicksight-to-sigma/` |
 | Scope/assess a QuickSight instance | `quicksight-assessment` | `plugins/quicksight-to-sigma/skills/quicksight-assessment/` |
+| Convert a Looker (LookML model + dashboards) → Sigma | `looker-to-sigma` | `plugins/looker-to-sigma/skills/looker-to-sigma/` |
+| Scope/assess a Looker instance | `looker-assessment` | `plugins/looker-to-sigma/skills/looker-assessment/` |
+| Convert an IBM Cognos data module + report → Sigma | `cognos-to-sigma` | `plugins/cognos-to-sigma/skills/cognos-to-sigma/` |
+| Scope/assess a Cognos Analytics instance | `cognos-assessment` | `plugins/cognos-to-sigma/skills/cognos-assessment/` |
+| Land a Tableau published-datasource/extract in Snowflake or Databricks | `tableau-vds-to-cdw` | `plugins/tableau-to-sigma/skills/tableau-vds-to-cdw/` |
 
 Assessments are read-only (never write to the source or post to Sigma); run one
 to pick what to convert, then hand off to the matching converter.
