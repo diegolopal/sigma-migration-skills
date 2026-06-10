@@ -99,6 +99,18 @@ def normalize(d):
     elements = []
     for el in d.get("dashboard_elements", []):
         q = _query_of(el)
+        # Text/markdown tiles (headers, notes) have no query/fields — capture them
+        # as text elements so the builder can emit a Sigma text element.
+        if el.get("type") == "text" or (not q and (el.get("title_text") or el.get("body_text"))):
+            elements.append({
+                "name": el.get("title") or el.get("title_text") or f"element_{el.get('id')}",
+                "tileType": "text",
+                "titleText": el.get("title_text"),
+                "bodyText": el.get("body_text"),
+                "subtitleText": el.get("subtitle_text"),
+                "layout": comp_by_el.get(el.get("id"), {}),
+            })
+            continue
         if not q and el.get("type") in (None, "text") and not el.get("title"):
             continue
         elements.append({

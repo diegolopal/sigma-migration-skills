@@ -152,6 +152,8 @@ def main():
         if display and display not in needed: needed[display] = sid("col")
         return needed.get(display)
     for el in dash["elements"]:
+        if el.get("tileType") == "text":      # text tiles have no query/fields
+            continue
         for f in el["fields"]:
             need(col_display(f, el["explore"]))
             # ratio measures: pull each referenced component measure's base column
@@ -184,6 +186,27 @@ def main():
     # ── tile -> Sigma element ──
     elements, layout_items = [], []
     for el in dash["elements"]:
+        # Text/markdown tiles → Sigma text element (kind: "text"). No query, no
+        # master columns, no source — just a Markdown `body` (title_text as a
+        # heading + body_text). See sigma-workbooks reference/specification/text.md.
+        if el["tileType"] == "text":
+            eid = sid()
+            title = (el.get("titleText") or "").strip()
+            bodytxt = (el.get("bodyText") or "").strip()
+            parts = []
+            # Looker often duplicates the title as a heading in body_text; only
+            # prepend title_text as an H1 if body_text doesn't already lead with it.
+            first_line = bodytxt.splitlines()[0].lstrip("# ").strip().lower() if bodytxt else ""
+            if title and title.lower() != first_line:
+                parts.append(f"# {title}")
+            if bodytxt:
+                parts.append(bodytxt)
+            body = "\n\n".join(parts) if parts else (el.get("name") or title or "")
+            elements.append({"id": eid, "kind": "text", "body": body})
+            L = el["layout"]; c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
+            r0 = L["row"] + 1; r1 = L["row"] + 1 + L["height"]
+            layout_items.append((eid, c0, c1, r0, r1))
+            continue
         kind = TILE_KIND.get(el["tileType"])
         if not kind:
             warnings.append(f"tile '{el['name']}' type '{el['tileType']}' has no Sigma mapping — skipped")
@@ -349,7 +372,7 @@ def main():
     print(f"wrote {a.out}")
     print(f"  master cols: {len(master['columns'])}  tiles: {len(elements)}  controls: {len(controls)}")
     for e in elements:
-        print(f"    {e['kind']:11} {e['name']}")
+        print(f"    {e['kind']:11} {e.get('name', '(text)')}")
     if warnings:
         print("\n  WARNINGS:")
         for w in warnings: print("   -", w)
