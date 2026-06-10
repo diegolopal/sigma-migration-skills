@@ -86,12 +86,16 @@ Do not proceed past a non-zero exit.
 node --import tsx/esm cli.ts ../path/to/report.xml --dm <dataModelId> > wb.json
 node scripts/remap-wb-to-dm-ids.mjs --wb wb.json --dm-id <dataModelId> --out wb.remapped.json
 node scripts/post-and-readback.mjs --type workbook --spec wb.remapped.json --folder <folderId>
+node scripts/apply-layout.mjs --workbook <workbookId>          # clean dashboard grid
 ```
 Each Cognos **list/crosstab/chart/map** becomes the matching Sigma element sourced from
 the migrated DM element. The converter emits each element's `source.elementId` as the
 query **subject name** (a placeholder) — `remap-wb-to-dm-ids.mjs` rewrites those to the
 real ids from Phase 2's readback (matched by element name). Then post-and-readback POSTs
-the workbook and re-runs the error-column gate.
+the workbook and re-runs the error-column gate. **`apply-layout.mjs` then gives the page a
+clean 24-col grid** (controls on top, content stacked full-width with per-kind heights) —
+Sigma auto-arrange otherwise squishes every element to the same height. It writes the
+top-level `spec.layout` XML (matched to readback ids) and confirms it survives readback.
 
 ## Phase 4 — Verify parity (hard gate — the real proof)
 
@@ -100,7 +104,10 @@ node scripts/assert-parity.mjs --plan --type workbook --id <workbookId>   # emit
 # run each via mcp-v2 query (or the Sigma query API), save totals to actual.json
 node scripts/assert-parity.mjs --check --actual actual.json --expected cognos.json --tol 0.01
 ```
-A migration is **GREEN only when `--check` passes** — never on a 200 POST alone.
+A migration is **GREEN only when** (a) `assert-parity --check` passes AND (b) the workbook
+came back with a clean layout (`apply-layout.mjs` reported `layoutOnReadback: true`) — never
+on a 200 POST alone. Layout cleanliness is part of parity: matching numbers on a squished,
+auto-stacked dashboard isn't a faithful migration.
 `cognos.json` = the numbers from the Cognos report (or the source warehouse). For real
 parity, land the Cognos source DB in the warehouse Sigma reads (the GO samples are the
 canonical IBM `GOSALES`/`GOSALESDW` DBs — published, loadable), then confirm the Cognos
@@ -121,3 +128,13 @@ rowsBy/columnsBy, measure → values) and **charts (RAVE2 `<vizControl>`) → Si
 and **maps (`tiledmap`) → Sigma region-map / point-map** ARE converted and live-validated.
 Only Cognos viz types with no native Sigma element (network, word-cloud, packed-bubble, treemap)
 fall back to a flagged table. Drill-through→actions and Framework Manager `.cpf` remain roadmap.
+
+## Gap scout — close a flagged expression
+
+For a flagged expression you want to actually resolve (a runtime macro, running-total /
+rank / lag-lead, `GetResourceString`, a nested CASE, an unmapped function), spawn the
+**gap-scout subagent** (`scripts/gap-scout.md`): it proposes a Sigma formula, validates it
+against the customer's live Sigma via `scripts/scout-validate-and-persist.mjs`, and on
+success persists the rule to `~/.cognos-to-sigma/learned-rules.json` — which the converter
+CLI auto-applies *before* the built-in translator on the next run. If no formula validates,
+it returns an opt-in `scripts/escalate-gap.py` command to file a tracking issue (ask first).
