@@ -323,6 +323,26 @@ export function translateCognosExpr(
     return `[${sigmaDisplayName(item)}]`;
   });
 
+  // SQL-style CASE … WHEN … THEN … END (common in Cognos calc cols) →
+  // searched CASE → nested If(); simple CASE (case <sel> when <v>…) → Switch().
+  f = translateCaseExpr(f);
+  // Bracket bare column identifiers (Cognos calcs often reference columns unbracketed,
+  // e.g. `case when (Product_line) = …`). Only bracket words that match a real column on
+  // this subject, and never touch text already inside [ ].
+  const identMap = new Map<string, string>();
+  for (const it of (qs.items || [])) identMap.set(it.identifier.toLowerCase(), sigmaDisplayName(it.label || it.identifier));
+  if (identMap.size) {
+    // Prefix with the warehouse table tail so a bare ref to a fact column resolves to the
+    // raw column, NOT the same-named metric (a bare `[Revenue]` is otherwise ambiguous).
+    const pfx = (ctx && (ctx as any).tableTail) ? `${(ctx as any).tableTail}/` : '';
+    f = f.replace(/\[[^\]]*\]|[^[\]]+/g, (seg) => seg.startsWith('[') ? seg
+      : seg.replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*\()/g, (w) => {
+          const d = identMap.get(w.toLowerCase());
+          return d ? `[${pfx}${d}]` : w;
+        }));
+  }
+  if (/\bcase\b[\s\S]*\bwhen\b/i.test(f)) warnings.push('a CASE expression could not be fully translated (nested or non-standard) — review/author manually.');
+
   // Aggregations with optional "for" scope: total([X] for [A],[B])
   f = f.replace(/\b(total|sum|average|count|maximum|minimum)\s*\(\s*([^()]*?)\s+for\s+([^()]*)\)/gi,
     (_m, fn, inner, scope) => {
@@ -378,6 +398,41 @@ export function translateCognosExpr(
     }
   }
   return { formula: f, warnings };
+}
+
+// CASE … END → Sigma. Searched CASE → nested If(); simple CASE (selector before the
+// first WHEN) → Switch(selector, v1, r1, …, default). Handles flat (non-nested) CASE;
+// anything it can't parse is left intact (and flagged by the caller).
+function translateCaseExpr(s: string): string {
+  let guard = 0;
+  while (/\bcase\b/i.test(s) && guard++ < 25) {
+    const m = s.match(/\bcase\b([\s\S]*?)\bend\b/i);
+    if (!m || m.index == null) break;
+    const repl = convertCaseBody(m[1]);
+    if (repl == null) break;
+    s = s.slice(0, m.index) + repl + s.slice(m.index + m[0].length);
+  }
+  return s;
+}
+function convertCaseBody(body: string): string | null {
+  const em = body.match(/\belse\b([\s\S]*)$/i);
+  const elseVal = em ? em[1].trim() : 'Null';
+  const head = em ? body.slice(0, em.index) : body;
+  const fw = head.search(/\bwhen\b/i);
+  if (fw < 0) return null;
+  const selector = head.slice(0, fw).trim();          // empty ⇒ searched CASE
+  const clauses = head.slice(fw).split(/\bwhen\b/i).map(c => c.trim()).filter(Boolean);
+  const pairs: Array<[string, string]> = [];
+  for (const cl of clauses) {
+    const tm = cl.match(/^([\s\S]*?)\bthen\b([\s\S]*)$/i);
+    if (!tm) return null;
+    pairs.push([tm[1].trim(), tm[2].trim()]);
+  }
+  if (!pairs.length) return null;
+  if (selector) return `Switch(${[selector, ...pairs.flatMap(p => [p[0], p[1]]), elseVal].join(', ')})`;
+  let out = elseVal;
+  for (let i = pairs.length - 1; i >= 0; i--) out = `If(${pairs[i][0]}, ${pairs[i][1]}, ${out})`;
+  return out;
 }
 
 // ── small parsers ─────────────────────────────────────────────────────────────
