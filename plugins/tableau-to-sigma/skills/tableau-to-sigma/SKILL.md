@@ -58,7 +58,7 @@ which calc translation, which layout) — not orchestration.
 | `scripts/put-layout.rb` | Apply a layout XML to an existing workbook (strips read-only fields) |
 | `scripts/auto-parity-plan.rb` | Phase 6a: auto-build a parity plan by matching Sigma chart elements to Tableau view CSVs (with `--rename` for renamed tiles). Output → `/tmp/<name>/parity-plan.json` wrapped as `{ extract, charts: [...] }` |
 | `scripts/verify-parity.rb` | Phase 6c: diff expected (Tableau) vs actual (Sigma) per chart. `--extract-mode` switches to structural comparison (bucket count + dim set + sort) with value-drift tolerance for hasExtracts=true workbooks |
-| `scripts/assert-phase6-ran.rb` | **Conversion hard gate (3 gates)** — exits 0 only when ALL three pass: (1) Phase 6 ran and parity-final.json shows status=PASS at the required rate, (2) no uncleaned orphan workbooks (posted-workbooks.jsonl has ≤1 entry OR cleanup-marker.json shows a successful non-dry-run cleanup), (3) the live workbook's `/columns` endpoint shows no column with `type=error` (catches circular refs / runtime errors introduced after the initial POST's column-type guard). Exits 1 for missing parity sentinel, 2 for parity FAIL / extract-mode-without-flag / charts_total==0, 4 for uncleaned orphans (beads-sigma-38a), 5 for live type=error columns (beads-sigma-38a). Subagent flows MUST call this as their final step. |
+| `scripts/assert-phase6-ran.rb` | **Conversion hard gate (5 gates)** — exits 0 only when ALL five pass: (1) Phase 6 ran and parity-final.json shows status=PASS at the required rate, (2) no uncleaned orphan workbooks (posted-workbooks.jsonl has ≤1 entry OR cleanup-marker.json shows a successful non-dry-run cleanup), (3) the live workbook's `/columns` endpoint shows no column with `type=error` (catches circular refs / runtime errors introduced after the initial POST's column-type guard), (4) a non-empty top-level layout XML is applied (beads-sigma-bw3), (5) tile census — parity-final.json's `tile_census` shows no unexplained dashboard zones without a matching chart (catches the empty-view-CSV N-1-charts escape, bead gjhe; `--allow-missing-tiles N` for legitimately unbuildable zones). Exits 1 for missing parity sentinel, 2 for parity FAIL / extract-mode-without-flag / charts_total==0, 4 for uncleaned orphans, 5 for live type=error columns, 6 for missing layout, 7 for census failure. Subagent flows MUST call this as their final step. |
 | `scripts/cleanup-orphan-workbooks.rb` | Delete orphan workbooks left by spec-iteration retries. Reads `<workdir>/posted-workbooks.jsonl`, keeps the most-recent ID, deletes the rest via `DELETE /v2/files/{id}`. Writes `cleanup-marker.json` so the hard gate can confirm cleanup ran (and wasn't `--dry-run`). Idempotent (404 on delete is treated as success). See beads-sigma-38a. |
 | `scripts/build-dashboard-layout.rb` | **MANDATORY in Phase 5d** (dashboard-fidelity mode) — auto-build the Sigma layout XML from the parsed Tableau zone tree (`dashboard-layout.json`) + the workbook readback IDs (`wb-ids.json`). Positions each chart at the grid cell derived from its zone's x/y/w/h%. Without this step, the workbook PUTs without a top-level layout and Sigma renders elements as a single-column stack — see `assert-phase6-ran.rb` gate 4 (beads-sigma-bw3). |
 | `scripts/export-chart-png.rb` | Phase 6d (visual): export PNG screenshots of every chart in the converted Sigma workbook via `/v2/workbooks/{wb}/export` → `/v2/query/{q}/download`. Catches visual regressions CSV value parity can miss (silently-dropped log scale, missing data labels, wrong chart kind, palette drift). Output: per-element PNGs + `_manifest.json`. Pair with the Tableau MCP `get-view-image` to side-by-side compare source vs target. |
@@ -1121,6 +1121,11 @@ ruby scripts/build-dashboard-layout.rb \
   --layout /tmp/<name>/dashboard-layout.json \
   --wb-ids /tmp/<name>/wb-ids.json \
   --out /tmp/<name>/layout.xml
+# If any chart tile was renamed from its Tableau title, pass the same
+# --rename "Tableau name=Sigma name" pairs you give the parity scripts —
+# otherwise the renamed tile silently drops out of the layout (bead ddbq).
+# Row heights are scaled 1.5x by default (--row-scale) so Sigma doesn't
+# suppress axis/pie labels on short tiles (bead tkkv); proportions are kept.
 
 ruby scripts/put-layout.rb \
   --workbook <workbookId> \
@@ -1130,7 +1135,10 @@ ruby scripts/put-layout.rb \
 `build-dashboard-layout.rb` walks the dashboard's zones, converts each
 zone's `x_pct`/`y_pct`/`w_pct`/`h_pct` into Sigma 24-column grid spans,
 and stretches adjacent tiles to fill empty columns where Tableau had
-legend/filter shelves Sigma doesn't render. This is the dashboard-fidelity
+legend/filter shelves Sigma doesn't render. Band heights are multiplied by
+`--row-scale` (default 1.5 — Tableau zone ratios mapped 1:1 onto a 32-row
+page produce tiles short enough that Sigma suppresses axis and pie labels;
+1.43× was the empirically sufficient minimum, looker's builder uses 2×). This is the dashboard-fidelity
 path — chart positions mirror the source PNG.
 
 **Hand-rolled path — page-per-worksheet OR when zone parsing fails:**
@@ -1258,7 +1266,7 @@ ruby scripts/assert-phase6-ran.rb --tableau /tmp/<name>
 # add --allow-extract when running parity in extract-mode
 ```
 
-The gate checks four independent things and rejects on any failure:
+The gate checks five independent things and rejects on any failure:
 
 1. **Phase 6 ran** — `parity-final.json` exists with status=PASS at the
    required rate.
@@ -1278,6 +1286,15 @@ The gate checks four independent things and rejects on any failure:
    `<LayoutElement>` tags. Catches the CoCo regression where the agent
    forgot to PUT a layout and Sigma rendered every tile as a
    single-column stack instead of the dashboard grid.
+5. **Tile census** — reads `tile_census` from `parity-final.json`
+   (emitted by `phase6-parity.rb --finalize` when
+   `dashboard-layout.json` is present): "X zones, Y charts built,
+   Z unmatched". Rejects when any source dashboard zone has no
+   matching chart in the parity plan — the empty-view-CSV escape
+   where the builder silently emitted N-1 charts and every other
+   gate still passed (bead gjhe). Renamed tiles must be explained
+   via `--rename` on `phase6-parity.rb`; legitimately unbuildable
+   zones via `--allow-missing-tiles N` (name them in your report).
 
 Exit 0 means the conversion is allowed to declare GREEN. Any other exit
 code means downgrade to YELLOW (parity skipped or incomplete, orphans
@@ -1308,6 +1325,8 @@ ruby scripts/auto-parity-plan.rb \
   --workbook-id <sigma-workbook-id> \
   --out /tmp/<name>/parity-plan.json
 ```
+
+On `--finalize`, `phase6-parity.rb` also writes a `tile_census` field into `parity-final.json` (zones vs charts built vs unmatched, read from `dashboard-layout.json`) — gate 5 of `assert-phase6-ran.rb` fails on unmatched zones.
 
 The output is wrapped as `{ "extract": <bool>, "charts": [...] }` — the `extract` flag is set automatically from `get-workbook.json`'s `hasExtracts` field when the workbook itself is extract-backed. If a Sigma chart was renamed from its Tableau title (e.g., the pie tile renamed from "Order Channel vs Ship Method" → "Orders by Category"), pass `--rename "Order Channel vs Ship Method=Orders by Category"` so the auto-matcher pairs them.
 
@@ -1368,18 +1387,7 @@ If the customer expects Tableau-extract numbers to match Sigma-live numbers exac
 | Empty result / column resolves as `error` | `mcp__sigma-mcp-v2__describe` on the element; type `error` means the formula failed to compile (often `IsIn`, unsupported window function, or missing-column ref) |
 | Numbers consistently within ±X% across all buckets | Extract drift — switch to `--extract-mode` if the source workbook has `hasExtracts: true` |
 
-### 6b. Triage divergences
-
-| Symptom | Likely cause |
-|---|---|
-| Numbers wrong by a constant factor | Aggregation mismatch (Sum vs Avg vs CountDistinct) |
-| Wrong dimension values | `[Master/...]` formula references the wrong column |
-| Date axis has 24 buckets where Tableau shows 12 | Cross-year month rollup — see `refs/column-gotchas.md` |
-| Sigma chart shows extra dim values Tableau never displays | Missed Phase 2.5 filter — apply the filter as `date-range`/`list`/`top-n` |
-| Bucket values differ but ratios match | Wrong source column — see Phase 3 "Translate Tableau calc fields here". A `Customer Value Tier` Tableau calc-derived from `Lifetime Revenue` must NOT be replaced by a warehouse `LOYALTY_TIER` column |
-| Empty result / column resolves as `error` | `mcp__sigma-mcp-v2__describe` on the element; type `error` means the formula failed to compile (often `IsIn`, unsupported window function, or missing-column ref) |
-
-### 6c. Trust the CSV, not the dashboard caption
+#### Trust the CSV, not the dashboard caption
 
 A Tableau dashboard's chart title is hardcoded text on the dashboard, not derived from
 the underlying view. When a Tableau author replaces a chart's data without updating the
@@ -1387,7 +1395,7 @@ title, the caption lies. **The view's `get-view-data` CSV is the source of truth
 build the Sigma chart against the CSV's actual columns and pick a truthful Sigma name,
 even if it disagrees with what's printed above the bars in Tableau.
 
-### 6d. Phantom `--metric-["..."]` columns
+#### Phantom `--metric-["..."]` columns
 
 `mcp__sigma-mcp-v2__query` with `type="workbook"` appends synthetic columns of the form
 `--metric-["<colId>"]` whose values look like `Column "X.--metric-[...]" does not exist.`.

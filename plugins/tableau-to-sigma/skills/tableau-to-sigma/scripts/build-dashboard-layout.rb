@@ -21,7 +21,19 @@
 #
 # Optional:
 #   --page-cols N    Sigma grid columns (default 24)
-#   --page-rows N    visible rows (default 32)
+#   --page-rows N    visible rows BEFORE row scaling (default 32)
+#   --row-scale F    multiply the chart band's row count (default 1.5).
+#                    Tableau zone h% mapped 1:1 onto a 32-row Sigma page makes
+#                    tiles too short — Sigma suppresses axis labels / pie slice
+#                    labels below ~5-6 grid rows (bead tkkv; the looker builder
+#                    uses ROW_SCALE=2, tableau E2E found 1.43× sufficient —
+#                    default 1.5 preserves proportions while clearing the
+#                    label-suppression threshold). Pass --row-scale 1 to get
+#                    the old un-scaled mapping.
+#   --rename PAIR    "Tableau name=Sigma name" (repeatable) — same flag as the
+#                    parity scripts. A chart tile renamed during conversion
+#                    otherwise fails the zone→element name match and silently
+#                    drops out of the layout (bead ddbq).
 #   --chart-y0 PCT   top of the chart band as Tableau %  (default 29.7)
 #   --chart-y1 PCT   bottom of the chart band as Tableau % (default 100.0)
 #   --chart-row0 N   first grid row of the chart band     (default 6)
@@ -29,18 +41,30 @@
 require 'json'
 require 'optparse'
 
-opts = { page_cols: 24, page_rows: 32, chart_y0: 29.7, chart_y1: 100.0, chart_row0: 6 }
+opts = { page_cols: 24, page_rows: 32, row_scale: 1.5, chart_y0: 29.7,
+         chart_y1: 100.0, chart_row0: 6, renames: {} }
 OptionParser.new do |p|
   p.on('--layout PATH')        { |v| opts[:layout] = v }
   p.on('--wb-ids PATH')        { |v| opts[:wb_ids] = v }
   p.on('--out PATH')           { |v| opts[:out] = v }
   p.on('--page-cols N',  Integer) { |v| opts[:page_cols] = v }
   p.on('--page-rows N',  Integer) { |v| opts[:page_rows] = v }
+  p.on('--row-scale F',  Float, 'row-height multiplier (default 1.5; min label-safe ~1.43)') { |v| opts[:row_scale] = v }
+  p.on('--rename PAIR', 'Tableau-name=Sigma-name (repeat) — matches the parity scripts\' flag') do |v|
+    from, to = v.split('=', 2)
+    abort("--rename expects 'Tableau name=Sigma name', got #{v.inspect}") if from.nil? || to.nil? || from.empty? || to.empty?
+    opts[:renames][from] = to
+  end
   p.on('--chart-y0 PCT', Float)   { |v| opts[:chart_y0] = v }
   p.on('--chart-y1 PCT', Float)   { |v| opts[:chart_y1] = v }
   p.on('--chart-row0 N', Integer) { |v| opts[:chart_row0] = v }
 end.parse!
 %i[layout wb_ids out].each { |k| abort("missing --#{k.to_s.tr('_','-')}") unless opts[k] }
+
+# Row scaling (bead tkkv): scale the page's row count so each chart band tile
+# gets proportionally more rows. Title (rows 1-3) and controls (rows 3-6) keep
+# their fixed positions; only the chart band [chart_row0..page_rows] stretches.
+opts[:page_rows] = (opts[:page_rows] * opts[:row_scale]).round if opts[:row_scale] != 1.0
 
 dash_layout = JSON.parse(File.read(opts[:layout]))
 wb_ids      = JSON.parse(File.read(opts[:wb_ids]))
@@ -101,8 +125,12 @@ end
 
 # Compute initial positions
 chart_layouts = chart_zones.map do |z|
-  el = els_by_name[z['caption']]
-  warn "WARN: no Sigma element matched zone caption #{z['caption'].inspect}" if el.nil?
+  lookup_name = opts[:renames][z['caption']] || z['caption']
+  el = els_by_name[lookup_name]
+  if el.nil?
+    warn "WARN: no Sigma element matched zone caption #{z['caption'].inspect}" \
+         "#{lookup_name == z['caption'] ? " — if the tile was renamed, pass --rename #{z['caption'].inspect}'=<Sigma name>'" : " (renamed to #{lookup_name.inspect})"} — tile DROPPED from layout"
+  end
   next nil unless el
   c1, c2, r1, r2 = chart_pos(z, opts)
   { el_id: el['id'], c1: c1, c2: c2, r1: r1, r2: r2 }
@@ -149,4 +177,4 @@ end
 lines << '</Page>'
 
 File.write(opts[:out], lines.join("\n") + "\n")
-puts "wrote #{opts[:out]} (#{chart_layouts.length} charts, #{ctl_els.length} controls, gap-closing applied)"
+puts "wrote #{opts[:out]} (#{chart_layouts.length} charts, #{ctl_els.length} controls, gap-closing applied, row-scale #{opts[:row_scale]}× → #{opts[:page_rows]} rows)"

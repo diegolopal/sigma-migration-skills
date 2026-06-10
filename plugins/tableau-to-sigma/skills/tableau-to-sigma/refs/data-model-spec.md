@@ -35,7 +35,7 @@ POST /v2/dataModels/spec
   "source": {
     "connectionId": "<connection-id>",
     "kind": "warehouse-table",
-    "path": ["SCHEMA", "CATALOG", "TABLE_NAME"]
+    "path": ["DATABASE", "SCHEMA", "TABLE_NAME"]
   },
   "columns": [
     {"id": "col-sales", "name": "Sales", "formula": "[TABLE_NAME/SALES]"}
