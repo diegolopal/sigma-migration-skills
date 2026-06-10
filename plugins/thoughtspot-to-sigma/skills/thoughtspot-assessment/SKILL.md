@@ -1,6 +1,7 @@
 ---
 name: thoughtspot-assessment
 description: Take inventory of a ThoughtSpot instance and produce a migration-readiness readout — models/worksheets, Liveboards, Answers, tables, connections, per-object usage (views + distinct users from TS: BI Server), per-Liveboard chart-type mix and complexity, ownership concentration, Embrace-vs-Falcon data-source patterns, and a value/cost-ranked migration shortlist. Use to scope a ThoughtSpot→Sigma migration or audit BI sprawl. Read-only.
+user-invocable: true
 ---
 
 # ThoughtSpot migration assessment
