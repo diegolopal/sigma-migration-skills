@@ -93,6 +93,31 @@ def _obj_flag(sv, key):
     return None
 
 
+def _sort_signal(sv):
+    """bead f972: classic sort -> {queryRef, direction asc|desc} or None.
+
+    Classic configs carry the visual's sort in prototypeQuery.OrderBy[]:
+    {Direction: 1|2 (1=Ascending, 2=Descending), Expression: <field expr>}.
+    The Expression is structurally IDENTICAL to one of prototypeQuery.Select[]'s
+    entries (minus its Name/NativeReferenceName) — and that Select's `Name` is the
+    exact queryRef the projections bind ("ABSENCE_RECORDS.Absence Count",
+    "Sum(ABSENCE_RECORDS.HOURS)"), so match by expression equality."""
+    pq = sv.get("prototypeQuery") or {}
+    ob = pq.get("OrderBy") or []
+    if not ob:
+        return None
+    first = ob[0]
+    direction = "desc" if first.get("Direction") == 2 else "asc"
+    expr = first.get("Expression")
+    for sel in pq.get("Select", []):
+        if not isinstance(sel, dict):
+            continue
+        sel_expr = {k: v for k, v in sel.items() if k not in ("Name", "NativeReferenceName")}
+        if sel_expr == expr and sel.get("Name"):
+            return {"queryRef": sel["Name"], "direction": direction}
+    return None
+
+
 def _textbox_body(sv):
     for para in sv.get("objects", {}).get("general", []):
         paras = para.get("properties", {}).get("paragraphs", [])
@@ -127,6 +152,8 @@ def extract(report):
                 "z": vc.get("z", 0),
                 "parent_group": None,
                 "bindings": _projections(sv, vt),
+                # bead f972: visual sort ({queryRef, direction asc|desc}) or None
+                "sort": _sort_signal(sv),
                 "formats": {},
                 # bead n9u9: PBI data-label toggle (objects.labels show) — true/false/None
                 "data_labels": _obj_flag(sv, "labels"),

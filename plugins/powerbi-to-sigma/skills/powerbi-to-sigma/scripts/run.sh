@@ -55,7 +55,24 @@ while [[ $# -gt 0 ]]; do case "$1" in
 esac; done
 mkdir -p "$WORK"
 CVT_OUT="${CVT_OUT:-$WORK/dm-raw.json}"
-PY=$([[ -x /tmp/pbiauth/bin/python ]] && echo /tmp/pbiauth/bin/python || echo python3)
+
+# ---- Python resolution + venv bootstrap (bead 7o01) -------------------------
+# The extract/auth scripts need msal + requests + truststore (scripts/
+# requirements.txt). Resolution order: $PBI_PY (explicit) -> <work-dir>/.venv
+# (bootstrapped here) -> the legacy /tmp/pbiauth venv -> system python3 IF it
+# already imports msal -> bootstrap a fresh venv at $WORK/.venv.
+PY="${PBI_PY:-}"
+if [[ -z "$PY" ]]; then
+  if [[ -x "$WORK/.venv/bin/python" ]]; then PY="$WORK/.venv/bin/python"
+  elif [[ -x /tmp/pbiauth/bin/python ]]; then PY=/tmp/pbiauth/bin/python
+  elif python3 -c 'import msal, requests, truststore' 2>/dev/null; then PY=python3
+  else
+    echo "== bootstrap: creating Python venv at $WORK/.venv (msal/requests/truststore) =="
+    python3 -m venv "$WORK/.venv"
+    "$WORK/.venv/bin/pip" install --quiet -r "$HERE/requirements.txt"
+    PY="$WORK/.venv/bin/python"
+  fi
+fi
 
 stage_idx() { case "$1" in
   extract) echo 1;; convert) echo 2;; post-dm) echo 3;; build) echo 4;;
@@ -108,8 +125,10 @@ fi
 
 if [[ $START -le 3 ]]; then
   echo "== [3/7] POST DATA MODEL =="
+  # bead 7o01(d): post-and-readback prints its verdict on STDERR — merge it into
+  # the tee'd log (a bare `| tee` swallows the verdict from the saved log).
   ruby "$HERE/post-and-readback.rb" --type datamodel --spec "$WORK/dm-spec.json" \
-    --out "$WORK/dm-idmap.json" --workdir "$WORK" | tee "$WORK/dm-post.txt"
+    --out "$WORK/dm-idmap.json" --workdir "$WORK" 2>&1 | tee "$WORK/dm-post.txt"
   echo "  NOTE: PUT reassigns element IDs — use the readback IDs in master-map.json"
 fi
 
@@ -129,8 +148,9 @@ fi
 
 if [[ $START -le 5 ]]; then
   echo "== [5/7] POST WORKBOOK =="
+  # bead 7o01(d): keep STDERR (the post-and-readback verdict) in the tee'd log.
   ruby "$HERE/post-and-readback.rb" --type workbook --spec "$WORK/workbook-spec.json" \
-    --out "$WORK/wb-idmap.json" --workdir "$WORK" | tee "$WORK/wb-post.txt"
+    --out "$WORK/wb-idmap.json" --workdir "$WORK" 2>&1 | tee "$WORK/wb-post.txt"
 fi
 
 if [[ $START -le 6 ]]; then

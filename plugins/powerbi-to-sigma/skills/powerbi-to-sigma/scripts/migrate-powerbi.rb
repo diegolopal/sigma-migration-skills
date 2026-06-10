@@ -37,7 +37,15 @@
 #     --connection <SIGMA_CONN_UUID> --database TJ --schema PUBLIC \
 #     --ref-dm <referenceDataModelId> \
 #     [--name "Superstore Overview (from Power BI)"] [--folder <id>] \
-#     [--out DIR] [--answers '<json>'] [--yes]
+#     [--out DIR] [--answers '<json>'] [--yes] \
+#     [--mcp-dir <sigma-data-model-mcp clone> | --converter-out <mcp-tool result.json>] \
+#     [--python <interpreter>]
+#
+# Converter route (bead 7o01): with a local sigma-data-model-mcp build (--mcp-dir /
+# PBI_MCP_DIR / ~/Desktop or ~/ clone) the conversion runs in-process via a node
+# shim. WITHOUT one, Phase 2 stops with a gate: run the convert_powerbi_to_sigma
+# MCP tool yourself and resume with --converter-out <its result JSON> — the
+# default route on machines without a local build.
 #
 # Exit codes: 0 = done (parity pass); 10 = decisions needed (OPEN QUESTIONS); 3 = parity fail; other = error.
 require 'json'
@@ -63,6 +71,13 @@ OptionParser.new do |o|
   o.on('--out DIR')         { |v| opts[:out]    = File.expand_path(v) }
   o.on('--answers JSON')    { |v| opts[:answers]= v }
   o.on('--yes')             {     opts[:yes]    = true }
+  # bead 7o01 portability: no hardcoded developer paths. --mcp-dir / PBI_MCP_DIR
+  # selects a local sigma-data-model-mcp build; --converter-out feeds a converter
+  # result produced by the convert_powerbi_to_sigma MCP TOOL (the default route
+  # when no local build exists); --python / PBI_PY picks the Python interpreter.
+  o.on('--mcp-dir DIR')        { |v| opts[:mcp_dir] = File.expand_path(v) }
+  o.on('--converter-out PATH') { |v| opts[:cvt_out] = File.expand_path(v) }
+  o.on('--python PATH')        { |v| opts[:python]  = File.expand_path(v) }
 end.parse!
 
 abort 'missing --tmsl' unless opts[:tmsl]
@@ -77,10 +92,15 @@ if opts[:conn] && opts[:conn] !~ /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
 end
 
 # Local converter build (the convert_powerbi_to_sigma MCP tool, imported directly).
-MCP_DIR = ENV['PBI_MCP_DIR'] || %w[
-  /Users/tjwells/Desktop/sigma-data-model-mcp
-  /Users/tjwells/sigma-data-model-mcp
-].find { |d| File.exist?(File.join(d, 'build', 'powerbi.js')) }
+# bead 7o01: no hardcoded developer paths — resolve from --mcp-dir / PBI_MCP_DIR,
+# else probe common clone locations under $HOME. When NONE is found, Phase 2 does
+# NOT abort: it stops with a gate instructing the agent to run the
+# convert_powerbi_to_sigma MCP tool and resume with --converter-out (the default
+# converter route on machines without a local build).
+MCP_DIR = [opts[:mcp_dir], ENV['PBI_MCP_DIR'],
+           File.expand_path('~/Desktop/sigma-data-model-mcp'),
+           File.expand_path('~/sigma-data-model-mcp')]
+          .compact.find { |d| File.exist?(File.join(d, 'build', 'powerbi.js')) }
 
 name_slug = File.basename(opts[:tmsl], '.*').gsub(/[^A-Za-z0-9_-]/, '-')
 WORK = opts[:out] || File.expand_path("~/powerbi-migration/#{name_slug}")
@@ -158,7 +178,12 @@ end
 abort "FATAL: PBIR bundle has no definition/ parts — is this an exploded PBIR? keys=#{bundle.keys.first(3)}" if exploded.zero?
 
 signals_path = File.join(WORK, 'signals.json')
-PY = File.exist?('/tmp/pbiauth/bin/python') ? '/tmp/pbiauth/bin/python' : 'python3'
+# bead 7o01: Python resolution — --python / PBI_PY, else a bootstrapped venv
+# (run.sh creates <work-dir>/.venv), else the legacy /tmp/pbiauth venv, else
+# system python3 (sufficient here: the offline PBIR parse is stdlib-only).
+PY = opts[:python] || ENV['PBI_PY'] ||
+     [File.join(WORK, '.venv', 'bin', 'python'), '/tmp/pbiauth/bin/python']
+       .find { |p| File.exist?(p) } || 'python3'
 run!([PY, File.join(HERE, 'extract-pbir.py'), '--pbir-dir', pbir_dir, '--out', signals_path])
 signals = JSON.parse(File.read(signals_path))
 
@@ -181,7 +206,27 @@ puts "   report: #{signals['pages'].size} page(s), #{all_visuals.size} visual(s)
 # Phase 2 — Convert (run convertPowerBIToSigma via a node shim)
 # ---------------------------------------------------------------------------
 hdr(2, TOTAL, 'Convert')
-abort 'FATAL: cannot locate sigma-data-model-mcp powerbi build (set PBI_MCP_DIR)' unless MCP_DIR
+if opts[:cvt_out]
+  # bead 7o01: converter output supplied (the convert_powerbi_to_sigma MCP tool
+  # ran out-of-process — the default route when no local build exists). Unwrap
+  # the {model,...} / {sigmaDataModel} wrapper the same way the shim does.
+  raw = JSON.parse(File.read(opts[:cvt_out]))
+  bare = raw['model'] || raw['sigmaDataModel'] || raw
+  File.write(File.join(WORK, 'dm-raw.json'), JSON.pretty_generate(bare))
+  File.write(File.join(WORK, 'conv-meta.json'),
+             JSON.pretty_generate({ 'model' => bare, 'warnings' => raw['warnings'] || [],
+                                    'stats' => raw['stats'] || {} }))
+  puts "   converter output ingested from #{opts[:cvt_out]}"
+elsif MCP_DIR.nil?
+  puts '   no local sigma-data-model-mcp build found (set --mcp-dir / PBI_MCP_DIR for the in-process route).'
+  puts
+  puts '   >>> GATE: run the convert_powerbi_to_sigma MCP tool on the TMSL model'
+  puts "       (#{opts[:tmsl]}) with connectionId=#{opts[:conn]} database=#{opts[:db]} schema=#{opts[:schema]},"
+  puts '       save the tool result JSON to a file, then re-run this command with'
+  puts '       --converter-out <that file>. No Sigma objects were created.'
+  exit 10
+end
+unless opts[:cvt_out]
 shim = File.join(WORK, '_convert.mjs')
 File.write(shim, <<~JS)
   import { readFileSync, writeFileSync } from 'node:fs';
@@ -203,6 +248,7 @@ JS
 _c_out, c_err, c_st = Open3.capture3('node', shim)
 abort "FATAL: converter failed:\n#{c_err}#{_c_out}" unless c_st.success?
 puts "   converter ran (build: #{MCP_DIR})"
+end
 conv = JSON.parse(File.read(File.join(WORK, 'conv-meta.json')))
 dm_model = conv['model']
 conv_warnings = conv['warnings'] || []

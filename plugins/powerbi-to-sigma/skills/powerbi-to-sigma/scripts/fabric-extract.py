@@ -1,8 +1,21 @@
 import truststore; truststore.inject_into_ssl()  # use macOS system trust (corp root CA)
-import sys, json, base64, time, os, atexit, requests
+import argparse, sys, json, base64, time, os, atexit, requests
 import msal
 
-CACHE = "/tmp/pbiauth/cache.bin"
+# bead 7o01(c): model + output dir are ARGUMENTS, not hardcoded values.
+#   python3 fabric-extract.py [--model-name <substring>] [--out-dir DIR]
+# --model-name: case-insensitive substring of the semantic model display name
+#               (default: pick the first model found, with a note).
+# --out-dir:    where the definition parts land (default /tmp/pbix).
+# Token cache path is overridable via PBI_TOKEN_CACHE.
+ap = argparse.ArgumentParser(description="Extract a semantic model's TMSL definition from Fabric")
+ap.add_argument("--model-name", default=None,
+                help="case-insensitive substring of the target semantic model name (default: first found)")
+ap.add_argument("--out-dir", default="/tmp/pbix", help="output directory for definition parts (default /tmp/pbix)")
+ARGS = ap.parse_args()
+
+CACHE = os.environ.get("PBI_TOKEN_CACHE", "/tmp/pbiauth/cache.bin")
+os.makedirs(os.path.dirname(CACHE), exist_ok=True)
 _cache = msal.SerializableTokenCache()
 if os.path.exists(CACHE):
     _cache.deserialize(open(CACHE).read())
@@ -79,8 +92,18 @@ def main():
                 print(f"  MODEL ws='{w.get('displayName')}' id={m['id']} name='{m.get('displayName')}'", flush=True)
                 found.append((w, m))
 
-    # pick one named like Employee, else first
-    target = next((x for x in found if "employee" in (x[1].get("displayName","" ).lower())), None) or (found[0] if found else None)
+    # pick the model matching --model-name (case-insensitive substring), else first
+    target = None
+    if ARGS.model_name:
+        needle = ARGS.model_name.lower()
+        target = next((x for x in found if needle in (x[1].get("displayName", "").lower())), None)
+        if not target:
+            print(f"NO MODEL matching --model-name '{ARGS.model_name}' "
+                  f"(saw: {', '.join(m.get('displayName','?') for _, m in found)})", flush=True)
+            sys.exit(4)
+    elif found:
+        target = found[0]
+        print(f"[note] no --model-name given — defaulting to the first model found", flush=True)
     if not target:
         print("NO_SEMANTIC_MODEL found in any accessible workspace.", flush=True); sys.exit(4)
     w, m = target
@@ -110,11 +133,12 @@ def main():
 
     parts = body.get("definition", {}).get("parts", [])
     print(f"[definition] {len(parts)} parts: " + ", ".join(p['path'] for p in parts), flush=True)
+    os.makedirs(ARGS.out_dir, exist_ok=True)
     for p in parts:
         data = base64.b64decode(p["payload"]).decode("utf-8", "replace")
-        out = "/tmp/pbix/" + p["path"].replace("/", "__")
+        out = os.path.join(ARGS.out_dir, p["path"].replace("/", "__"))
         open(out, "w").write(data)
     # the TMSL model file is usually 'model.bim' or 'definition/database.tmsl'
-    print("WROTE definition parts to /tmp/pbix/__*. DONE.", flush=True)
+    print(f"WROTE definition parts to {ARGS.out_dir}/. DONE.", flush=True)
 
 main()
