@@ -60,7 +60,41 @@ OptionParser.new do |p|
   p.on('--out-dir DIR')         { |v| opts[:outdir] = v }
   p.on('--extract-mode')        { opts[:extract] = true }
   p.on('--extract-tol F', Float){ |v| opts[:tol] = v }
+  # bead fmte — freshness.json from pbi-freshness.py. When present, the
+  # SOURCE-FRESHNESS banner leads both passes, and finalize classifies each
+  # chart MATCH / STALE-EXPLAINED / DIVERGENT (only DIVERGENT blocks).
+  p.on('--freshness PATH')      { |v| opts[:fresh] = v }
 end.parse!
+
+FRESH = if opts[:fresh] && File.exist?(opts[:fresh])
+          (JSON.parse(File.read(opts[:fresh])) rescue {})
+        else
+          {}
+        end
+
+def freshness_banner
+  ok = FRESH['lastSuccessfulRefresh']
+  fail1 = (FRESH['failures'] || []).first
+  return unless ok || fail1
+  sd = FRESH['staleDays']
+  puts '── SOURCE FRESHNESS (read this before any side-by-side) ──'
+  puts "PBI dataset last refreshed #{ok['endTime']} (#{sd} days ago)" if ok
+  if fail1
+    tag = FRESH['credsSuspect'] ? ' — dataset credentials look EXPIRED' : ''
+    puts "⚠ most recent refresh FAILURE #{fail1['endTime']} (#{fail1['errorCode']})#{tag}"
+  end
+  if sd && sd >= 1
+    puts "⚠ source is ~#{sd.ceil} day(s) stale — Sigma reads the LIVE warehouse and is"
+    puts '  EXPECTED to show more data; staleness-shaped deltas classify as STALE-EXPLAINED.'
+  end
+  puts
+end
+
+# true when the snapshot is stale enough (or refreshes are failing) for a
+# "Sigma shows more/newer data" delta to be expected rather than suspicious.
+def fresh_stale?
+  ((FRESH['staleDays'] || 0) >= 1) || FRESH['credsSuspect'] || (FRESH['failures'] || []).any?
+end
 
 HERE = File.expand_path(__dir__)
 HARNESS = File.join(HERE, 'pbi_exec.py')
@@ -89,7 +123,11 @@ HARNESS_SRC = <<~PY
   assert tok, "no powerbi token"
   WS, DS = sys.argv[1], sys.argv[2]
   spec=json.load(sys.stdin)   # {name:{dax,dim_col,val_col}}
-  URL=f"https://api.powerbi.com/v1.0/myorg/groups/{WS}/datasets/{DS}/executeQueries"
+  # "me" / "My workspace" datasets live outside any group (no /groups/ segment).
+  if WS.lower() in ("me", "myorg", "my workspace", "myworkspace"):
+      URL=f"https://api.powerbi.com/v1.0/myorg/datasets/{DS}/executeQueries"
+  else:
+      URL=f"https://api.powerbi.com/v1.0/myorg/groups/{WS}/datasets/{DS}/executeQueries"
   out={}
   for name, q in spec.items():
       r=requests.post(URL, headers={"Authorization":f"Bearer {tok}"},
@@ -134,6 +172,7 @@ if opts[:emit]
   plan = { 'extract' => opts[:extract], 'charts' => charts }
   File.write(opts[:out], JSON.pretty_generate(plan))
   warn "[phase6-pbi] wrote plan with PBI `expected` rows -> #{opts[:out]}"
+  freshness_banner # bead fmte — staleness leads, before any side-by-side
   puts "=" * 70
   puts "PHASE 6 (PBI) — collect Sigma actuals, one MCP query per chart:"
   puts "=" * 70
@@ -147,6 +186,21 @@ if opts[:emit]
   exit 0
 end
 
+# bead fmte — does this chart's delta look like "Sigma shows MORE/newer data"?
+# (extra Sigma-only buckets with none missing, or a larger Sigma total) — the
+# shape a stale import snapshot produces, as opposed to a conversion error.
+def sigma_shows_more?(exp_rows, act_rows)
+  numify = ->(v) { v.is_a?(Numeric) ? v.to_f : (v.to_s.gsub(/[$,%\s]/, '') =~ /\A-?\d+(\.\d+)?\z/ ? v.to_s.gsub(/[$,%\s]/, '').to_f : nil) }
+  exp = exp_rows || []
+  act = act_rows || []
+  exp_dims = exp.map { |r| r[0] }
+  act_dims = act.map { |r| r[0] }
+  return true if (act_dims - exp_dims).any? && (exp_dims - act_dims).empty?
+  exp_sum = exp.map { |r| numify.call(r[1]) }.compact.sum
+  act_sum = act.map { |r| numify.call(r[1]) }.compact.sum
+  act.size >= exp.size && act_sum > exp_sum
+end
+
 if opts[:finalize]
   %i[plan actuals outdir].each { |k| abort("missing --#{k}") unless opts[k] }
   plan = JSON.parse(File.read(opts[:plan]))
@@ -156,27 +210,64 @@ if opts[:finalize]
     c['actual'] = { 'rows' => a } if a
   end
   File.write(opts[:plan], JSON.pretty_generate(plan))
+  freshness_banner # bead fmte — staleness leads, before the side-by-side
   args = ['ruby', File.join(HERE, 'verify-parity.rb'), '--plan', opts[:plan]]
   args.concat(['--extract-mode', '--extract-tol', opts[:tol].to_s]) if opts[:extract]
   out, err, st = Open3.capture3(*args)
   puts out
   warn err unless err.empty?
-  # assert-phase6-ran.rb sentinel
   total = plan['charts'].size
   passed = out.scan(/^PASS\s+\[[^\]]+\]\s+(.+)$/).flatten
   failed = out.scan(/^DIVERGE\s+\[[^\]]+\]\s+(.+)$/).flatten
+
+  # bead fmte — classify every chart MATCH / STALE-EXPLAINED / DIVERGENT.
+  # A DIVERGE whose delta is "Sigma shows more/newer data" while the source is
+  # stale (or its refresh is failing) is EXPLAINED, not a conversion error.
+  # Only DIVERGENT blocks. Without --freshness, DIVERGE stays DIVERGENT.
+  classes = plan['charts'].map do |c|
+    name = c['chart']
+    cls = if passed.include?(name)
+            'MATCH'
+          elsif fresh_stale? && sigma_shows_more?(c['expected'], c.dig('actual', 'rows'))
+            'STALE-EXPLAINED'
+          else
+            'DIVERGENT'
+          end
+    [name, cls]
+  end.to_h
+  stale_expl = classes.values.count('STALE-EXPLAINED')
+  divergent  = classes.values.count('DIVERGENT')
+  if FRESH.any? || stale_expl.positive?
+    puts
+    puts 'classification (only DIVERGENT blocks):'
+    classes.each { |name, cls| puts format('  %-15s %s', cls, name) }
+    if stale_expl.positive?
+      puts "  → #{stale_expl} delta(s) are EXPLAINED by the stale PBI snapshot" \
+           "#{FRESH['credsSuspect'] ? ' (refresh failing — creds)' : ''}, not a conversion error."
+    end
+  end
+
+  status = total.positive? && divergent.zero? && (passed.size + stale_expl) == total ? 'PASS' : 'FAIL'
   summary = {
     'workbook_id' => plan.dig('charts', 0, 'workbook_id'),
     'ran_at' => Time.now.utc.iso8601,
     'source' => 'powerbi-executequeries',
     'mode' => opts[:extract] ? 'extract' : 'strict',
-    'charts_total' => total, 'charts_pass' => passed.size, 'charts_fail' => failed.size,
+    'charts_total' => total, 'charts_pass' => passed.size, 'charts_fail' => divergent,
+    'charts_stale_explained' => stale_expl,
     'pass_names' => passed, 'fail_names' => failed,
-    'status' => (st.success? && total > 0 && passed.size == total) ? 'PASS' : 'FAIL'
+    'classifications' => classes,
+    'freshness' => FRESH.empty? ? nil : {
+      'lastSuccessfulRefresh' => FRESH.dig('lastSuccessfulRefresh', 'endTime'),
+      'staleDays' => FRESH['staleDays'], 'credsSuspect' => FRESH['credsSuspect'],
+      'failures' => (FRESH['failures'] || []).size
+    },
+    'status' => status
   }
   File.write(File.join(opts[:outdir], 'parity-final.json'), JSON.pretty_generate(summary))
-  warn "[phase6-pbi] wrote parity-final.json (status=#{summary['status']} #{passed.size}/#{total})"
-  exit(st.success? ? 0 : 2)
+  warn "[phase6-pbi] wrote parity-final.json (status=#{status} " \
+       "#{passed.size} match / #{stale_expl} stale-explained / #{divergent} divergent of #{total})"
+  exit(status == 'PASS' ? 0 : 2)
 end
 
 abort('specify --emit-dax or --finalize')

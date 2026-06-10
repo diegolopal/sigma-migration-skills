@@ -11,6 +11,13 @@ Usage:
   python3 scripts/quicksight-discover.py \
     --account-id 153722385948 --region us-east-1 --profile pivot \
     --analysis-id orders-overview --out-dir ~/quicksight-migration/orders-overview
+
+Offline / fixture mode (no AWS account or CLI needed — drives the same
+signals.json off describe-shaped JSON files already on disk, e.g. the skill's
+fixtures/ or a customer's exported definitions):
+
+  python3 scripts/quicksight-discover.py \
+    --from-fixtures plugins/.../fixtures --out-dir /tmp/qs-orders
 """
 import argparse, json, os, subprocess, sys
 
@@ -51,23 +58,54 @@ def field_columns(inner):
     return out
 
 
+def load_fixtures(fdir):
+    """Read describe-shaped JSONs from a dir: one analysis/dashboard definition
+    (top-level "Definition") + one or more datasets (top-level "DataSet")."""
+    analysis, datasets = None, []
+    for fn in sorted(os.listdir(fdir)):
+        if not fn.endswith(".json"):
+            continue
+        try:
+            j = json.load(open(os.path.join(fdir, fn)))
+        except (ValueError, OSError):
+            continue
+        if isinstance(j, dict) and "Definition" in j:
+            analysis = j
+        elif isinstance(j, dict) and "DataSet" in j:
+            datasets.append(j)
+    if analysis is None:
+        sys.exit(f"--from-fixtures: no analysis/dashboard definition JSON (top-level 'Definition') in {fdir}")
+    return analysis, datasets
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--account-id", required=True)
-    ap.add_argument("--region", required=True)
+    ap.add_argument("--account-id")
+    ap.add_argument("--region")
     ap.add_argument("--profile")
-    g = ap.add_mutually_exclusive_group(required=True)
+    g = ap.add_mutually_exclusive_group()
     g.add_argument("--analysis-id")
     g.add_argument("--dashboard-id")
+    ap.add_argument("--from-fixtures", help="dir of describe-shaped JSONs — offline mode, no AWS calls")
     ap.add_argument("--out-dir", required=True)
     a = ap.parse_args()
+    offline = bool(a.from_fixtures)
+    if not offline and not (a.analysis_id or a.dashboard_id):
+        ap.error("need --analysis-id or --dashboard-id (or --from-fixtures)")
+    if not offline and not (a.account_id and a.region):
+        ap.error("--account-id and --region are required for live discovery")
 
     out = os.path.expanduser(a.out_dir)
     os.makedirs(os.path.join(out, "datasets"), exist_ok=True)
     os.makedirs(os.path.join(out, "datasources"), exist_ok=True)
 
+    fixture_ds = []
     # 1. the analysis / dashboard definition
-    if a.analysis_id:
+    if offline:
+        d, fixture_ds = load_fixtures(os.path.expanduser(a.from_fixtures))
+        src_kind = "dashboard" if d.get("DashboardId") else "analysis"
+        src_id = d.get("AnalysisId") or d.get("DashboardId") or "fixture"
+    elif a.analysis_id:
         d = aws(["describe-analysis-definition", "--analysis-id", a.analysis_id], a.account_id, a.region, a.profile)
         src_kind, src_id = "analysis", a.analysis_id
     else:
@@ -79,9 +117,16 @@ def main():
 
     # 2. datasets referenced by the definition
     ds_meta, src_arns = [], set()
+    fixture_by_id = {ds["DataSet"].get("DataSetId"): ds for ds in fixture_ds}
     for decl in defn.get("DataSetIdentifierDeclarations", []):
         ident, ds_id = decl["Identifier"], arn_id(decl["DataSetArn"])
-        ds = aws(["describe-data-set", "--data-set-id", ds_id], a.account_id, a.region, a.profile)
+        if offline:
+            ds = fixture_by_id.get(ds_id)
+            if ds is None:
+                print(f"  WARN: no fixture dataset JSON for '{ds_id}' — skipping", file=sys.stderr)
+                continue
+        else:
+            ds = aws(["describe-data-set", "--data-set-id", ds_id], a.account_id, a.region, a.profile)
         json.dump(ds, open(os.path.join(out, "datasets", ds_id + ".json"), "w"), indent=2)
         dso = ds["DataSet"]
         for ptv in (dso.get("PhysicalTableMap") or {}).values():
@@ -96,6 +141,9 @@ def main():
     src_meta = []
     for arn in sorted(src_arns):
         sid = arn_id(arn)
+        if offline:
+            src_meta.append({"dataSourceId": sid, "name": None, "type": "OFFLINE-FIXTURE"})
+            continue
         try:
             s = aws(["describe-data-source", "--data-source-id", sid], a.account_id, a.region, a.profile)
             json.dump(s, open(os.path.join(out, "datasources", sid + ".json"), "w"), indent=2)

@@ -32,6 +32,16 @@ The corporate tenant blocks Entra app creation, Git integration, and XMLA (PPU).
 - **Layout**: a `.pbix` is a zip; `Report/Layout` is **UTF-16LE** JSON with per-visual `x,y,w,h` (canvas px, 1280×720 default). The model in a `.pbix` is a *binary* `DataModel` blob — NOT usable; get the model via getDefinition or a `.pbit`'s `DataModelSchema`.
 - See `refs/powerbi-visual-layout.md` for the Report/Layout & PBIR parsers and the visualType→Sigma-kind table.
 
+## Phase 2.5 — SOURCE-FRESHNESS PREFLIGHT (import-mode models, bead fmte)
+Import-mode PBI models are **frozen snapshots**; Sigma reads the LIVE warehouse. Before any parity side-by-side, capture the dataset's freshness so staleness deltas are called out UP FRONT (mirrors qlik-to-sigma Phase 1.5):
+
+```bash
+"$PY" scripts/pbi-freshness.py --workspace <wsId|me> --dataset <datasetId> \
+  --tmsl model.bim --out $WORK/freshness.json
+```
+
+Pulls the refresh history (`GET datasets/{id}/refreshes` via the cached token) — last successful refresh + **FAILED refreshes** (expired warehouse creds are the classic cause; surfaced loudly) — plus a cheap `executeQueries` row-count/max-date snapshot per table. `run.sh` runs it automatically as stage 1.5 when `--workspace`/`--dataset` are given; `migrate-powerbi.rb` runs it as Phase 1.5 (same flags). Phase 6/7 parity is then **LED by the staleness banner**, and deltas classify **MATCH / STALE-EXPLAINED / DIVERGENT — only DIVERGENT blocks** (a "Sigma shows more data" delta on a stale snapshot is explained, not a conversion error).
+
 ## Phase 3 — Convert (MCP)
 `convert_powerbi_to_sigma(model_json, connection_id, database, schema)`.
 - DAX measures → Sigma metrics. ~70% mechanical; see `refs/dax-to-sigma-coverage.md` and `fixtures/MANIFEST.md` (test oracle: 94 DAX expressions bucketed a/b/c).
@@ -103,6 +113,7 @@ The conversion is script-driven (mirrors `tableau-to-sigma/scripts/`). `scripts/
 | Script | Stage | What it does |
 |---|---|---|
 | `extract-pbir.py` | 1 extract | Fetch a report's PBIR (or parse one already on disk) → normalized `signals.json` (per-visual `sigma_kind` + role bindings + x/y/w/h). The PBI analog of `parse-twb-layout.rb`. |
+| `pbi-freshness.py` | 1.5 preflight | SOURCE-FRESHNESS: refresh history (incl. FAILED/creds-expired refreshes) + cheap executeQueries row-count/max-date snapshot → `freshness.json`. Leads the parity output; deltas classify MATCH / STALE-EXPLAINED / DIVERGENT (bead fmte). |
 | `convert-model.rb` | 2–3 convert/post | MODE A prints the exact `convert_powerbi_to_sigma` MCP call for a `model.bim`; MODE B takes the converter output and applies the 3 fixups (schemaVersion + folderId/ownerId via a ref-DM harvest + base-element names) → postable DM spec. |
 | `build-workbook-from-pbir.rb` | 4 build | `signals.json` + a `master-map.json` → full workbook spec + 24-col layout XML. Applies the measure-translation patterns in `refs/measure-patterns.md`; **line charts default to a single series** (`beads-sigma-c07`) unless PBI bound a Series/Legend role. **Carries the PBI visual sort** (`f972` — PBIR `query.sortDefinition` / classic `prototypeQuery.OrderBy` → chart `xAxis.sort`/`color.sort`; grouped table → `groupings[0].sort` — element-level sort is rejected on grouped tables). Analog of `build-charts-from-signals.rb`. |
 | `phase6-parity-pbi.rb` | 7 parity | executeQueries(DAX) adapter: `--emit-dax` runs the PBI side and writes the parity plan's `expected` rows; `--finalize` injects Sigma actuals and runs the shared `verify-parity.rb`. The PBI analog of Tableau's view-CSV parity adapter. |

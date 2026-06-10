@@ -18,7 +18,11 @@ if cache.has_state_changed: open(CACHE,"w").write(cache.serialize())
 assert tok, "no powerbi token"
 WS, DS = sys.argv[1], sys.argv[2]
 spec=json.load(sys.stdin)   # {name:{dax,dim_col,val_col}}
-URL=f"https://api.powerbi.com/v1.0/myorg/groups/{WS}/datasets/{DS}/executeQueries"
+# "me" / "My workspace" datasets live outside any group (no /groups/ segment).
+if WS.lower() in ("me", "myorg", "my workspace", "myworkspace"):
+    URL=f"https://api.powerbi.com/v1.0/myorg/datasets/{DS}/executeQueries"
+else:
+    URL=f"https://api.powerbi.com/v1.0/myorg/groups/{WS}/datasets/{DS}/executeQueries"
 out={}
 for name, q in spec.items():
     r=requests.post(URL, headers={"Authorization":f"Bearer {tok}"},

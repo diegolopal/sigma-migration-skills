@@ -23,6 +23,20 @@ user-invocable: true
 
 See `refs/migration-test-slate.md` for the complexity taxonomy + 20-dashboard test slate that grounds the converter's coverage and known gaps.
 
+## One command (preferred): `scripts/migrate-quicksight.rb`
+
+The single-process orchestrator chains every phase below — discover (live AWS or `--from-fixtures <dir>`), convert (local MCP build, or `convert-model.rb --emit-mcp` gate + `--converted` resume), the **Phase 3.5 DM-reuse check** (`qs-dm-signature.py` + `find-or-pick-dm.rb`; default **build new**, attach with `--reuse-dm <id>`), fixup `--folder-id` → validate → post-and-readback, workbook build, layout, then the **two-pass Phase 7 parity** (`phase6-parity-quicksight.rb` emits the per-chart query list and gates; write `parity-expected.json` + `parity-actuals.json` and re-run the SAME command — phases 1–5 skip automatically) and the `assert-phase6-ran.rb --workdir` hard gate:
+
+```bash
+ruby scripts/migrate-quicksight.rb \
+  --analysis-id <ID> --account-id <ACCT> --region us-east-1 --profile <P> \
+  --connection <SIGMA_CONN_UUID> --folder <FOLDER_ID> \
+  [--database DB --schema SCH] [--name "My Dashboard"] [--out DIR] [--yes]
+# offline / fixtures: swap the first line for --from-fixtures fixtures/
+```
+
+Exit 0 = parity + hard gate green; exit 10 = a gate (converter MCP / parity collection / OPEN QUESTIONS) printed its exact resume command; exit 3 = parity fail. Each phase prints a visible header — it is not a black box. The per-script phases below remain the reference for running any stage by hand.
+
 ## Phase 1 — Auth
 
 **QuickSight (AWS CLI).**
