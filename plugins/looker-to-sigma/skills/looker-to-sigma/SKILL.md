@@ -56,7 +56,8 @@ offline-only path that normalizes into the same contract.
 | `scripts/apply_sigma_rls.py` | **Phase 1.5 (apply RLS):** scripted, API-driven RLS port. Reuse-first `GET /v2/user-attributes` (prints a match before creating); `--create` → `POST /v2/user-attributes`; `--assign` (+`--member-id`,`--value`) → `POST /v2/user-attributes/{id}/users`; `--field`/`--element-id` → print the verified RLS calc-col + element-filter snippet, `--apply --dm-id` → PATCH it into the DM element spec. **Read-only / plan-only by default — mutates only on an explicit `--create`/`--assign`/`--apply` flag.** Reads `$SIGMA_BASE_URL`/`$SIGMA_API_TOKEN` like `post_dm.py`. |
 | `scripts/convert_dm.mjs` | **Phase 2:** run `convertLookMLToSigma` against a directory of `.lkml` files for one explore → a Sigma DM spec JSON. Bypasses the deployed MCP build (see the converter-build gotcha below). Env: `LOOKML_DIR`, `CONVERTER_SRC`; args `<exploreName> <out.json>`. |
 | `scripts/post_dm.py` | **Phase 2:** POST a DM spec to `/v2/dataModels/spec` (auto-finds a writable folder, swaps in the full connection UUID). Env: `SIGMA_API_TOKEN`, `SIGMA_BASE_URL`, `SIGMA_CONNECTION_ID`; args `<spec.json>`. |
-| `scripts/build_workbook.py` | **Phase 3:** dashboard contract + the explore's view `.lkml` files → a Sigma `/v2/workbooks/spec` body (hidden Data page + master table, one element per tile, controls from filters, newspaper→24-col layout XML). Generates locally; does **not** POST. Handles ratio measures, joined-col `Field (alias)` naming, table calcs, pivot-flatten + warn. |
+| `scripts/build_workbook.py` | **Phase 3:** dashboard contract + the explore's view `.lkml` files → a Sigma `/v2/workbooks/spec` body (hidden Data page + master table, one element per tile, controls from filters, newspaper→24-col layout XML). Generates locally; does **not** POST. Handles ratio measures, joined-col `Field (alias)` naming, table calcs, pivot-flatten + warn. Layout: a top control bar (row 0), a full-width strip of **tall** KPI tiles (height ≥ 6 so titles render), then the remaining tiles shifted down. |
+| `scripts/sigma-export-png.py` | **Phase 4 (visual QA):** render a posted workbook page or element to PNG via `POST /v2/workbooks/{id}/export` → poll `GET /v2/query/{queryId}/download`. For side-by-side layout/render checks against the source Looker dashboard (catches hidden KPI titles, orphaned filters, overlaps that a numeric parity check can't). Reads `$SIGMA_BASE_URL`/`$SIGMA_API_TOKEN`. `python3 sigma-export-png.py --workbook <id> --page <pageId> --out /tmp/x.png` (or `--element <id>`). |
 | `scripts/build_looker_dashboard.py` | **TEST-FIXTURE BUILDER (not a migration step).** Builds the "Orders Overview" UDD on `csa_thelook` via the Looker API (4 KPIs + line/column/bar/pie + grid, 3 filters wired via `result_maker.filterables.listen`). |
 | `scripts/build_looker_dashboard2.py` | **TEST-FIXTURE BUILDER (not a migration step).** Builds the "Orders Deep Dive" UDD — area, pivot, table-calcs, scatter, donut, text tile — the harder dashboard surface for the converter. |
 
@@ -507,6 +508,24 @@ key metrics, and per-tile.
 GREEN only when all three match. The validated run produced **exact** parity to the cent —
 region revenue (West 38906.82 / South 31650.98 / NE 21587.52 / MW 14966.20 / null 3231.23 =
 $109,765.89) and the ratio metrics (AOV / margin / return) identical across Looker and Sigma.
+
+### 4a. Visual QA — render the workbook to PNG and eyeball it
+
+Numbers tying out is necessary but not sufficient — a workbook can be GREEN on parity yet look
+broken (hidden KPI titles, orphaned filters, overlapping tiles, the wrong chart kind). After
+POSTing, render the dashboard page to a PNG and inspect it side-by-side against the source Looker
+dashboard:
+
+```bash
+bash -c 'eval "$(scripts/get-token.sh)" && python3 scripts/sigma-export-png.py \
+  --workbook <workbookId> --page page-dash --out /tmp/<name>/<dash>.png'
+```
+
+Confirm visually: **KPI tile titles show** (the builder lays KPIs ≥ 6 rows tall — a `kpi-chart`
+hides its title below ~5 rows / ~150px; see `feedback_sigma_kpi_label_height.md`), the **filters
+sit in a top control bar** (not orphaned at the bottom), tiles are aligned with no large empty
+regions, and each chart kind matches Looker. Iterate on `build_workbook.py` + re-`PUT` the spec
+until the render is clean.
 
 **Record the RLS outcome here.** If Phase 1d found RLS, the migration summary MUST list, per
 finding, whether it was **ported / reused / skipped** (and the Sigma user attribute + filter used)

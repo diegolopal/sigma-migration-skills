@@ -205,7 +205,7 @@ def main():
             elements.append({"id": eid, "kind": "text", "body": body})
             L = el["layout"]; c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
             r0 = L["row"] + 1; r1 = L["row"] + 1 + L["height"]
-            layout_items.append((eid, c0, c1, r0, r1))
+            layout_items.append((eid, c0, c1, r0, r1, "text"))
             continue
         kind = TILE_KIND.get(el["tileType"])
         if not kind:
@@ -329,7 +329,7 @@ def main():
         # newspaper -> 24-col grid
         L = el["layout"]; c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
         r0 = L["row"] + 1; r1 = L["row"] + 1 + L["height"]
-        layout_items.append((eid, c0, c1, r0, r1))
+        layout_items.append((eid, c0, c1, r0, r1, kind))
 
     # ── controls from dashboard filters ──
     controls = []
@@ -352,10 +352,67 @@ def main():
             warnings.append(f"filter '{flt['name']}': could not bind to a master column")
         controls.append(ctrl)
 
-    # ── layout XML (single top-level field; newspaper maps 1:1 to 24 cols) ──
+    # ── layout finalize: top control bar, tall titled KPIs, downshifted tiles ──
+    # The raw newspaper→grid math (above) honors Looker's pixel positions, but two
+    # Looker→Sigma quirks need fixing for a tidy, readable dashboard:
+    #   1. Sigma kpi-chart HIDES its title (the element name / measure label) when
+    #      the tile is shorter than ~5 grid rows / ~150px — Looker KPIs are usually
+    #      2-3 rows tall, so every title vanishes (bare floating numbers). Fix: lay
+    #      KPIs as a full-width strip of equal, TALL tiles (height >= 6).
+    #      See memory feedback_sigma_kpi_label_height.md.
+    #   2. Dashboard controls (filters) carry no layout, so they orphan at the
+    #      bottom-left. Looker shows filters at the TOP. Fix: a control row at row 0
+    #      and shift every tile DOWN by that row's height.
+    GRID = 24
+    CTRL_H = 3                 # control-bar height (grid rows)
+    KPI_H = 6                  # KPI tile height — >= 5 so the title renders
+
+    # (a) Top control bar: lay controls side-by-side across row 0, evenly. Each
+    #     control needs a layout entry so it docks at the top instead of orphaning.
+    ctrl_items = []
+    if controls:
+        n = len(controls)
+        cw = max(1, GRID // n)
+        x = 1
+        for i, c in enumerate(controls):
+            c1 = (x + cw) if i < n - 1 else (GRID + 1)   # last fills to the edge
+            ctrl_items.append((c["id"], x, c1, 1, 1 + CTRL_H, "control"))
+            x = c1
+    ctrl_h = CTRL_H if controls else 0
+
+    # (b) KPI strip: pull every KPI out of its Looker position and lay them as one
+    #     full-width row of equal, TALL tiles directly under the control bar — this
+    #     is the only reliable way to keep their titles visible.
+    kpi_ids = [e for (e, *_rest, k) in layout_items if k == "kpi-chart"]
+    other_items = [it for it in layout_items if it[5] != "kpi-chart"]
+    new_items = list(ctrl_items)
+    kpi_row0 = 1 + ctrl_h
+    if kpi_ids:
+        n = len(kpi_ids)
+        kw = max(1, GRID // n)
+        x = 1
+        for i, e in enumerate(kpi_ids):
+            c1 = (x + kw) if i < n - 1 else (GRID + 1)   # last fills to the edge
+            new_items.append((e, x, c1, kpi_row0, kpi_row0 + KPI_H, "kpi-chart"))
+            x = c1
+    kpi_h = KPI_H if kpi_ids else 0
+
+    # (c) Shift all remaining tiles DOWN below the control bar + KPI strip, by the
+    #     amount their original top-row sat above the first non-KPI tile (so we
+    #     close the gap the KPIs left and never overlap the bars). Preserve their
+    #     relative vertical order and columns from the newspaper math.
+    body_off = ctrl_h + kpi_h
+    top = min((r0 for (_e, _c0, _c1, r0, _r1, _k) in other_items), default=1)
+    for (e, c0, c1, r0, r1, k) in other_items:
+        h = r1 - r0
+        nr0 = (r0 - top) + 1 + body_off
+        new_items.append((e, c0, c1, nr0, nr0 + h, k))
+    layout_items = new_items
+
+    # ── layout XML (single top-level field; 24-col grid) ──
     page_id = "page-dash"
     les = "\n".join(f'  <LayoutElement elementId="{e}" gridColumn="{c0} / {c1}" gridRow="{r0} / {r1}"/>'
-                    for (e, c0, c1, r0, r1) in layout_items)
+                    for (e, c0, c1, r0, r1, _k) in layout_items)
     layout_xml = ('<?xml version="1.0" encoding="utf-8"?>\n'
                   f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="{page_id}">\n'
                   f'{les}\n</Page>')
