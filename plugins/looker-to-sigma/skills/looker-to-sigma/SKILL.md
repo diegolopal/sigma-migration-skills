@@ -44,10 +44,55 @@ offline-only path that normalizes into the same contract.
 
 ---
 
+## ONE COMMAND (preferred): migrate-looker.py
+
+The whole pipeline — parse → **RLS gate** → convert → **DM-reuse check** → DM
+POST + readback → workbook build (layout inline) → **source-freshness
+preflight** → **scripted parity + hard gate** — as a single command (mirrors
+qlik-to-sigma's `migrate-qlik.rb` / thoughtspot's `migrate-thoughtspot.py`).
+Gates are never bypassed: the command exits non-zero if parity or
+`assert-phase6-ran.rb` fails.
+
+```bash
+# offline (.dashboard.lookml + view files; the fixture pair works end-to-end):
+python3 scripts/migrate-looker.py --lookml-dir fixtures/skilltest-orders \
+    --dashboard fixtures/skilltest-orders/skilltest_orders.dashboard.lookml \
+    [--name PREFIX] [--workdir /tmp/look-run]
+# live (UDD or LookML dashboard, ~/.looker/looker.ini configured):
+python3 scripts/migrate-looker.py --lookml-dir /path/to/lookml \
+    --dashboard-id <id> [--explore <name>] [--name PREFIX] [--workdir DIR]
+```
+
+- **Decision points are flags with safe defaults, never silent:** `detect_rls.py`
+  runs first — RLS findings STOP the command (exit 10, nothing posted) until you
+  either port them via `apply_sigma_rls.py` (Phase 1.5) or re-run with `--yes`
+  (proceed WITHOUT RLS — loud + recorded). The DM-reuse check (Phase 2.5) always
+  runs and PRINTS candidates+scores; default is build-new, reuse only via an
+  explicit `--reuse-dm <id>`. The folder is auto-resolved and printed.
+- **Converter paths:** `CONVERTER_SRC` (patched `src/lookml.ts` via tsx) or
+  `CONVERTER_PATH` (`build/lookml.js`) — both auto-located; with neither, the
+  command writes `<workdir>/convert-request.json` (the exact
+  `convert_lookml_to_sigma` MCP arguments) and exits 3 — call the tool, save its
+  JSON, re-run with `--converted <file>` (mirrors thoughtspot's exit-3 design).
+- **Parity is fully scripted** (the Phase-4 gate below): ACTUAL = Sigma CSV
+  export per chart; EXPECTED = a Looker inline query (live) or a
+  SOURCE-LookML-derived re-aggregation of the master's warehouse rows (offline —
+  measure semantics from the `.view.lkml` `type:`, independent of the builder's
+  formulas). Then `phase6-parity-looker.rb --finalize` + `assert-phase6-ran.rb`
+  run automatically.
+- Exit codes: `0` GREEN · `3` MCP convert request emitted · `10` RLS decision
+  needed · `2` built but a gate FAILED. `--dry-run` = no Sigma POSTs.
+
+---
+
 ## Scripts
 
 | Script | Purpose |
 |---|---|
+| `scripts/migrate-looker.py` | **ONE-COMMAND orchestrator** (preferred entry) — chains every phase below + the scripted parity hard gate; see the section above. |
+| `scripts/phase6-parity-looker.rb` | **Phase 4 (parity gate):** two-pass orchestrator — PASS 1 reads the workbook spec → `parity-plan.json` + per-chart fetch instructions; PASS 2 `--finalize` runs `verify-parity.rb` and writes the **`parity-final.json` sentinel** the hard gate requires. Same contract as quicksight/thoughtspot/tableau. |
+| `scripts/verify-parity.rb` | **Phase 4:** the comparator (strict set-compare with date-bucket canonicalization; `--extract-mode` tolerance variant). Vendored from the shared converter copy. |
+| `scripts/assert-phase6-ran.rb` | **HARD GATE** (vendored **byte-identical** from quicksight-to-sigma — keep the md5 in lockstep): parity ran + PASS, no orphan workbooks, no `type=error` columns, layout applied. `ruby scripts/assert-phase6-ran.rb --workdir <dir> --workbook-id <wb>` must **exit 0** before declaring GREEN. |
 | `scripts/get-token.sh` | Exchange `SIGMA_CLIENT_ID`/`SIGMA_CLIENT_SECRET` → `SIGMA_API_TOKEN` (~1h TTL). `eval "$(scripts/get-token.sh)"` |
 | `scripts/looker_api.py` | Minimal Looker REST API 4.0 client (no SDK). Reads `~/.looker/looker.ini`, logs in via `client_credentials`, exposes `L.call(method, path, body)`. CLI: `python3 looker_api.py whoami` / `get <path>` / `raw GET /lookml_models`. |
 | `scripts/fetch_looker_dashboard.py` | **Phase 1 (live):** `GET /dashboards/{id}` → the normalized contract (`refs/dashboard-contract.md`). Works for UDD AND LookML dashboards. Self-contained (reads `~/.looker/looker.ini`). `tileType` is read from `query.vis_config.type` (NOT `element.type`, which is always `"vis"`); `listen` from `result_maker.filterables`; layout from the **active** layout's components. |
@@ -540,6 +585,24 @@ applied. **POST is create-only** — every subsequent spec edit MUST use `PUT
 
 A conversion is not complete until the numbers tie out. Compare at **two grains**: the model's
 key metrics, and per-tile.
+
+### 4-pre. The scripted gate (canonical — what migrate-looker.py runs)
+
+```bash
+ruby scripts/phase6-parity-looker.rb --workdir /tmp/<name> --workbook-id <wb>   # PASS 1: plan
+# … fetch ACTUAL (Sigma CSV export / mcp__sigma-mcp-v2__query) + EXPECTED
+#   (Looker POST /queries/run/json, or the warehouse re-aggregation offline) …
+#   → write parity-expected.json + parity-actuals.json (shape: {"<chart>": [[dim,val],…]})
+ruby scripts/phase6-parity-looker.rb --workdir /tmp/<name> --finalize           # PASS 2: sentinel
+ruby scripts/assert-phase6-ran.rb   --workdir /tmp/<name> --workbook-id <wb>    # must exit 0
+```
+
+The finalize pass writes the **`parity-final.json` sentinel**; `assert-phase6-ran.rb`
+(hard gate, vendored byte-identical from quicksight-to-sigma) refuses GREEN unless
+parity ran + PASSed, no orphan workbooks were left, the live workbook has no
+`type=error` columns, and a real layout is applied. `migrate-looker.py` automates
+both fetch sides and runs the gate for you. The manual 3-way checks below remain
+the reference for what "parity" means.
 
 1. **Looker** — `POST /queries/run/json` (or `run_inline_query`) for the model/explore, e.g.
    net revenue by region.

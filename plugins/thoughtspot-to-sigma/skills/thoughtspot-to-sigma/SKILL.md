@@ -20,12 +20,48 @@ POST `username`+`secret_key` to `auth/token/full`. Sigma side uses
 Trials often sit behind corp TLS — the Python helpers use an unverified SSL
 context (curl uses the system store and works).
 
-## One-shot
+## ONE COMMAND (preferred): migrate-thoughtspot.py
+
+The whole pipeline — discover → DM-reuse check → convert → DM → workbooks →
+layout → **source-freshness preflight** → **scripted parity + hard gate** — as a
+single command (mirrors qlik-to-sigma's `migrate-qlik.rb`). Gates are never
+bypassed: the command exits non-zero if parity or `assert-phase6-ran.rb` fails.
+
+```bash
+export TS_HOST TS_TOKEN SIGMA_CONNECTION_ID TS_DB TS_SCHEMA   # + Sigma creds (token auto-minted from ~/.sigma-migration/env)
+python3 scripts/migrate-thoughtspot.py --model <TS_MODEL_ID> [--liveboard <ID> ...] \
+       [--name PREFIX] [--workdir DIR]
+# offline (fixtures, no TS instance):
+python3 scripts/migrate-thoughtspot.py --model-tml fixtures/retail-analytics-model.tml \
+       --liveboard-tml fixtures/retail-analytics-liveboard.tml --workdir /tmp/ts-run
+```
+
+- **Decision points are flags with safe defaults, never silent:** the DM-reuse
+  check (step 2.5) always runs and PRINTS candidates+scores; the default is
+  build-new — reuse only via an explicit `--reuse-dm <id>`. The Sigma folder is
+  auto-resolved and printed when `SIGMA_FOLDER_ID` is unset.
+- **Freshness first:** before any side-by-side it prints the TS model/Liveboard
+  modified times + a cheap `searchdata` aggregate probe vs a live warehouse
+  snapshot (offline runs note the TS side unavailable), so staleness/model drift
+  never masquerades as a conversion bug.
+- **Parity is fully scripted:** ACTUAL = Sigma CSV export per chart; EXPECTED =
+  `ts_lib.searchdata` ground truth (live) or a source-TML-derived re-aggregation
+  of the master's warehouse rows (offline — agg from the TML's own
+  `headline_aggregation`, independent of the builder). Then
+  `phase6-parity-thoughtspot.rb --finalize` + `assert-phase6-ran.rb` run
+  automatically.
+- Exit codes: `0` GREEN · `3` MCP convert request emitted (call the tool, re-run
+  with `--converted <workdir>/converted.json`) · `2` built but a gate FAILED ·
+  `10`-free (no interactive checkpoint; RLS is reported by the converter and
+  ported post-model via `apply_sigma_rls.py` as below). `--dry-run` = no Sigma
+  POSTs (discovery + reuse scan + local convert / MCP request only).
+
+## Manual phases: migrate.py (the per-phase pipeline the one-command wraps)
 ```
 export TS_HOST TS_TOKEN SIGMA_BASE_URL SIGMA_API_TOKEN \
        SIGMA_CONNECTION_ID SIGMA_FOLDER_ID TS_DB TS_SCHEMA
 python3 scripts/migrate.py --model <TS_MODEL_ID> [--liveboard <ID> ...] \
-       [--name PREFIX] [--workdir DIR]
+       [--name PREFIX] [--workdir DIR] [--reuse-dm <dataModelId>]
 ```
 `migrate.py` runs the whole pipeline with **no hardcoded ids or paths** and
 migrates every Liveboard that reads the model (or just the `--liveboard` ones).
@@ -128,9 +164,13 @@ you export for `migrate.py`). Decision:
 - **Score < 0.6** → POST new and TELL the user no reusable DM was found.
 
 ## Scripts
-- `migrate.py` — **canonical entry**: model → DM → migrate its Liveboards
-  (parameterized: `--workdir`, `--name` prefix, `--converted` MCP output,
-  offline `--model-tml`/`--liveboard-tml`)
+- `migrate-thoughtspot.py` — **ONE-COMMAND orchestrator** (preferred entry):
+  chains discovery, the DM-reuse check, `migrate.py`, the freshness preflight,
+  and the scripted parity + hard gate; exit 0 only when every gate is GREEN
+- `migrate.py` — the per-phase pipeline the one-command wraps: model → DM →
+  migrate its Liveboards (parameterized: `--workdir`, `--name` prefix,
+  `--converted` MCP output, offline `--model-tml`/`--liveboard-tml`,
+  `--reuse-dm` to skip convert+POST and build against an existing DM)
 - `convert_model.mjs` — model TML → Sigma DM spec (imports a local converter
   build via `CONVERTER_PATH`; without one, migrate.py emits the MCP request instead)
 - `phase6-parity-thoughtspot.rb` — parity orchestrator (two-pass; writes the
