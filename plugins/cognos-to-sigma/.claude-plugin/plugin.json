@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "cognos-to-sigma",
+  "displayName": "Cognos → Sigma",
+  "version": "0.1.0",
+  "description": "Migrate IBM Cognos Analytics to Sigma — Data Module JSON → Sigma data model, and report-spec XML → Sigma workbook. Translates the Cognos expression DSL (total..for → window funcs, if/then/else, date/string fns) and flags what it can't (macros, running-totals, localization). Companion to the other sigma-migration-skills converters.",
+  "author": { "name": "Thomas Wells" },
+  "license": "MIT",
+  "keywords": ["cognos", "ibm-cognos", "framework-manager", "data-module", "report-studio", "sigma", "migration", "bi", "converter"],
+  "skills": "./skills/"
+}
