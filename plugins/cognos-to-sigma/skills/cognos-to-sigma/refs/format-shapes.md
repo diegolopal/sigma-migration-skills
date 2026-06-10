@@ -76,4 +76,5 @@ Key facts:
 - `Summary(x)` / `Total(x)` list columns = layout aggregate footers → `Sum([x])` etc.
 - `prompt('p')` in any expression → a Sigma control; `#…#` macros → flagged (see `expression-dsl.md`).
 - Filters are surfaced as warnings to re-create.
-- Crosstabs (`<crosstab>`) → pivots and charts (RAVE2 `<visualization>`) are roadmap.
+- **Crosstabs (`<crosstab>`) → Sigma pivot-table** (supported, live-validated): `<crosstabRows>`/`<crosstabColumns>` → `crosstabNodeMember@refDataItem` give the row/column edge dims (skip `Total(...)` grand-total nodes); the measure is `<crosstabCorner><dataItemLabel@refDataItem>`. Maps to `rowsBy:[{id}]` · `columnsBy:[{id}]` · `values:[<colId string>]` (note: **values are bare id strings, rowsBy/columnsBy are `{id}` objects**; measure column formula = `Sum(<ref>)`).
+- Charts (RAVE2 `<visualization>`) live in dashboards (separate JSON), not report XML — roadmap.

@@ -97,5 +97,6 @@ runtime **macros** (`#…# prompt(…,'token',…)` — dynamic column/SQL build
 "swap measure" picker → model as a control + `Switch`), **running-total / moving-* /
 rank / lag / lead** (window funcs with no clean single-column analog), **GetResourceString**
 (localization), composite/non-equi **joins**, and **detail/summary filters** (surfaced
-to re-create as Sigma filters). Crosstabs→pivots, charts (RAVE2), and drill-through→actions
-are roadmap, not yet converted.
+to re-create as Sigma filters). **Crosstabs → Sigma pivot-tables ARE converted** (rows/columns
+edges → rowsBy/columnsBy, measure → values; live-validated to warehouse parity). Charts (RAVE2,
+which live in dashboards as JSON, not report XML) and drill-through→actions remain roadmap.

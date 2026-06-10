@@ -26,7 +26,8 @@ import { translateCognosExpr, type CognosQuerySubject } from './cognos.js';
 const xmlParser = new XMLParser({
   ignoreAttributes: false, attributeNamePrefix: '@_', trimValues: true,
   isArray: (n) => ['query', 'dataItem', 'list', 'page', 'detailFilter', 'summaryFilter',
-    'dataItemValue', 'dataItemLabel', 'listColumn', 'reportPage'].includes(n),
+    'dataItemValue', 'dataItemLabel', 'listColumn', 'reportPage',
+    'crosstab', 'crosstabNode', 'crosstabNodeMember'].includes(n),
 });
 const arr = (v: any): any[] => (Array.isArray(v) ? v : v == null ? [] : [v]);
 const txt = (v: any): string => (v == null ? '' : typeof v === 'object' ? (v['#text'] ?? '') : String(v));
@@ -34,7 +35,7 @@ const txt = (v: any): string => (v == null ? '' : typeof v === 'object' ? (v['#t
 // ── workbook spec types (minimal) ────────────────────────────────────────────
 interface WbColumn { id: string; name: string; formula: string; }
 interface WbControl { id: string; kind: 'control'; controlId: string; name: string; controlType: string; }
-interface WbElement { id: string; kind: string; name: string; source: Record<string, any>; columns?: WbColumn[]; order?: string[]; filters?: any[]; }
+interface WbElement { id: string; kind: string; name: string; source: Record<string, any>; columns?: WbColumn[]; order?: string[]; filters?: any[]; rowsBy?: Array<{ id: string }>; columnsBy?: Array<{ id: string }>; values?: string[]; }
 interface WbPage { id: string; name: string; elements: WbElement[]; }
 export interface CognosReportResult {
   workbook: { name: string; schemaVersion: number; pages: WbPage[]; controls?: WbControl[] };
@@ -153,6 +154,37 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     });
   }
 
+  // 2b) crosstabs → pivot-table elements (rows edge → rowsBy, columns edge → columnsBy, measure → values)
+  const isTotal = (r: string) => /^(Total|Summary|Aggregate|Average|Count|Maximum|Minimum)\(/i.test(r || '');
+  for (const X of findAll(report, 'crosstab')) {
+    const qName = X['@_refQuery'];
+    const q = queries.get(qName);
+    if (!q) { warnings.push(`<crosstab> refQuery="${qName}" has no matching query — skipped.`); continue; }
+    const edge = (subtree: any) => [...new Set(findAll(subtree || {}, 'crosstabNodeMember').map((m) => m['@_refDataItem']).filter((r) => r && !isTotal(r)))];
+    const rowRefs = edge(X.crosstabRows);
+    const colRefs = edge(X.crosstabColumns);
+    let measRefs = [...new Set(findAll(X.crosstabCorner || {}, 'dataItemLabel').map((d) => d['@_refDataItem']).filter((r) => r && !isTotal(r)))];
+    if (!measRefs.length) measRefs = [...q.items.keys()].filter((k) => !rowRefs.includes(k) && !colRefs.includes(k) && !isTotal(k));
+    const cols: WbColumn[] = [];
+    const mk = (ref: string, agg: boolean): { id: string } | null => {
+      const di = q.items.get(ref); if (!di) { warnings.push(`crosstab "${qName}" member "${ref}" not in query — skipped.`); return null; }
+      const { formula, warns } = translate(di.expression, q); warns.forEach((w) => warnings.push(`"${qName}.${ref}": ${w}`));
+      const id = sigmaShortId();
+      cols.push({ id, name: sigmaDisplayName(di.name), formula: agg ? `Sum(${formula})` : formula });
+      return { id };
+    };
+    const rowsBy = rowRefs.map((r) => mk(r, false)).filter(Boolean) as Array<{ id: string }>;
+    const columnsBy = colRefs.map((c) => mk(c, false)).filter(Boolean) as Array<{ id: string }>;
+    // Sigma pivot: rowsBy/columnsBy are {id} objects, values are bare column-id strings.
+    const values = (measRefs.map((m) => mk(m, true)).filter(Boolean) as Array<{ id: string }>).map((o) => o.id);
+    if (!values.length || (!rowsBy.length && !columnsBy.length)) warnings.push(`crosstab "${qName}" missing a measure or both edges — review the pivot.`);
+    pageEls.push({
+      id: sigmaShortId(), kind: 'pivot-table', name: `${q.subject ? sigmaDisplayName(q.subject) + ' — ' : ''}${qName} (crosstab)`,
+      source: { kind: 'data-model', dataModelId: options.dataModelId || '<DM_ID — wire after posting the data model>', elementId: q.subject ? sigmaDisplayName(q.subject) : '<element>' },
+      columns: cols, order: cols.map((c) => c.id), rowsBy, columnsBy, values,
+    });
+  }
+
   // attach controls as page-level elements too
   const controlEls = [...controls.values()];
   pages.push({ id: sigmaShortId(), name: reportPages[0]?.['@_name'] || 'Report', elements: [...controlEls as any, ...pageEls] });
@@ -165,7 +197,8 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
 
   const stats = {
     queries: queries.size,
-    tables: pageEls.length,
+    tables: pageEls.filter((e) => e.kind === 'table').length,
+    pivots: pageEls.filter((e) => e.kind === 'pivot-table').length,
     columns: pageEls.reduce((n, e) => n + (e.columns?.length || 0), 0),
     controls: controls.size,
   };
