@@ -15,7 +15,7 @@ for (const f of readdirSync(FIX)) {
       console.log(`✓ ${f.padEnd(34)} module → ${r.stats.elements} elems · ${r.stats.columns} cols · ${r.stats.metrics} metrics · ${r.stats.relationships} rels`);
     } else if (f.endsWith('.report.xml')) {
       const r = convertCognosReportToSigma(readFileSync(join(FIX, f), 'utf8'), { dataModelId: 'dm' });
-      console.log(`✓ ${f.padEnd(34)} report → ${r.stats.tables} tables · ${r.stats.pivots} pivots · ${r.stats.charts} charts · ${r.stats.columns} cols · ${r.stats.controls} controls`);
+      console.log(`✓ ${f.padEnd(34)} report → ${r.stats.tables} tables · ${r.stats.pivots} pivots · ${r.stats.charts} charts · ${r.stats.maps} maps · ${r.stats.columns} cols · ${r.stats.controls} controls`);
     }
   } catch (e: any) { fail++; console.log(`✗ ${f} — ${e.message}`); }
 }

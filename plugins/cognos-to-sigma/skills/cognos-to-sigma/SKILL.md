@@ -100,6 +100,6 @@ rank / lag / lead** (window funcs with no clean single-column analog), **GetReso
 to re-create as Sigma filters). **Crosstabs → Sigma pivot-tables** (rows/columns edges →
 rowsBy/columnsBy, measure → values) and **charts (RAVE2 `<vizControl>`) → Sigma chart elements**
 (bar/column/line/area/pie/donut/combo/scatter via the slot model — see `refs/format-shapes.md`)
-ARE converted and live-validated to warehouse parity. Cognos chart types with no native Sigma
-analog (map, network, word-cloud, packed-bubble, treemap) fall back to a flagged table.
-Drill-through→actions and Framework Manager `.cpf` remain roadmap.
+and **maps (`tiledmap`) → Sigma region-map / point-map** ARE converted and live-validated.
+Only Cognos viz types with no native Sigma element (network, word-cloud, packed-bubble, treemap)
+fall back to a flagged table. Drill-through→actions and Framework Manager `.cpf` remain roadmap.

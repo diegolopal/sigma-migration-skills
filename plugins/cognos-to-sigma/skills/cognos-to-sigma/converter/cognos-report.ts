@@ -43,6 +43,8 @@ interface WbElement {
   rowsBy?: Array<{ id: string }>; columnsBy?: Array<{ id: string }>; values?: string[];   // pivot
   xAxis?: { columnId: string; sort?: any }; yAxis?: { columnIds: string[] };               // cartesian charts
   value?: { id: string }; color?: any; stacking?: string; orientation?: string;            // pie/donut + bar styling
+  latitude?: { id: string }; longitude?: { id: string }; size?: { id: string };            // point-map
+  region?: { id: string; regionType: string }; geography?: { id: string };                 // region-map / geography-map
 }
 interface WbPage { id: string; name: string; elements: WbElement[]; }
 export interface CognosReportResult {
@@ -212,12 +214,12 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     'com.ibm.vis.clusteredcombination': 'combo-chart', 'com.ibm.vis.stackedcombination': 'combo-chart',
     'com.ibm.vis.bubble': 'scatter-chart', 'com.ibm.vis.scatter': 'scatter-chart',
   };
-  // types Sigma has no native chart for — emit the data as a table + a loud flag (don't fake the viz)
+  // types Sigma has no native element for — emit the data as a table + a loud flag (don't fake the viz)
   const VIZ_NOANALOG: Record<string, string> = {
-    'com.ibm.vis.tiledmap': 'map', 'com.ibm.vis.network': 'network diagram',
-    'com.ibm.vis.wordcloud': 'word cloud', 'com.ibm.vis.packedbubble': 'packed bubble',
-    'com.ibm.vis.treemap': 'treemap',
+    'com.ibm.vis.network': 'network diagram', 'com.ibm.vis.wordcloud': 'word cloud',
+    'com.ibm.vis.packedbubble': 'packed bubble', 'com.ibm.vis.treemap': 'treemap',
   };
+  const isMapViz = (t: string) => /tiledmap|choropleth|\bmap\b/.test(t);
   const chartSource = (q: Query) => ({ kind: 'data-model', dataModelId: options.dataModelId || '<DM_ID — wire after posting the data model>', elementId: q.subject ? sigmaDisplayName(q.subject) : '<element>' });
 
   for (const V of findAll(report, 'vizControl')) {
@@ -255,6 +257,41 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     const cats = slot('categories'), series = slot('series'), vals = slot('values');
     const sizes = slot('size'), xs = slot('x'), ys = slot('y'), colorSlot = slot('color');
     const kind = VIZ_KIND[vizType];
+
+    // maps: Cognos tiledmap → Sigma point-map (lat/long slots) or region-map (named-location slots)
+    if (isMapViz(vizType)) {
+      const lat = slot('latlonglocations.latitude')[0] || slot('latitude')[0];
+      const lon = slot('latlonglocations.longitude')[0] || slot('longitude')[0];
+      const region = slot('locations')[0] || slot('location')[0];
+      if (lat && lon) {
+        const latId = addCol(lat, false), lonId = addCol(lon, false);
+        const sizeId = addCol(slot('latlongsize')[0] || sizes[0], true);
+        const colorId = addCol(slot('latlongcolor')[0] || colorSlot[0], true);
+        const el: WbElement = { id: sigmaShortId(), kind: 'point-map', name: vizName, source: chartSource(q), columns: cols, order: [] };
+        if (latId) el.latitude = { id: latId };
+        if (lonId) el.longitude = { id: lonId };
+        if (sizeId) el.size = { id: sizeId };
+        if (colorId) el.color = { by: 'scale', column: colorId };
+        el.order = cols.map((c) => c.id);
+        if (!cols.length) { warnings.push(`<vizControl> map "${vizName}" had no resolvable lat/long columns — skipped.`); continue; }
+        pageEls.push(el);
+      } else if (region) {
+        const regId = addCol(region, false);
+        const colorId = addCol(slot('locationcolor')[0] || colorSlot[0] || slot('locationheight')[0], true);
+        if (!regId) { warnings.push(`<vizControl> map "${vizName}" had no resolvable location column — skipped.`); continue; }
+        const el: WbElement = { id: sigmaShortId(), kind: 'region-map', name: vizName, source: chartSource(q), columns: cols, order: cols.map((c) => c.id), region: { id: regId, regionType: 'country' } };
+        if (colorId) el.color = { by: 'scale', column: colorId };
+        warnings.push(`chart "${vizName}" → region-map: defaulted regionType to "country" — set it to match your data (country / us-state / us-county / us-zipcode / us-cbsa / us-postal-place / ca-province).`);
+        pageEls.push(el);
+      } else {
+        // a map with neither coordinate nor named-location slots → table fallback
+        for (const c of findAll(V, 'vcSlotDsColumn')) if (c['@_refDsColumn']) addCol({ ref: c['@_refDsColumn'], rollup: c['@_rollupMethod'] }, !!c['@_rollupMethod']);
+        if (!cols.length) { warnings.push(`<vizControl> map "${vizName}" (${vizType}) had no resolvable columns — skipped.`); continue; }
+        warnings.push(`chart "${vizName}" is a Cognos map (${vizType}) with no lat/long or named-location slot — emitted its data as a table; add geographic columns + a map in the workbook.`);
+        pageEls.push({ id: sigmaShortId(), kind: 'table', name: `${vizName} (was map)`, source: chartSource(q), columns: cols, order: cols.map((c) => c.id) });
+      }
+      continue;
+    }
 
     if (!kind) {
       // no native Sigma chart → table fallback + flag (collect every slot column, incl. map latlong/etc.)
@@ -317,6 +354,7 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     tables: pageEls.filter((e) => e.kind === 'table').length,
     pivots: pageEls.filter((e) => e.kind === 'pivot-table').length,
     charts: pageEls.filter((e) => e.kind.endsWith('-chart')).length,
+    maps: pageEls.filter((e) => e.kind.endsWith('-map')).length,
     columns: pageEls.reduce((n, e) => n + (e.columns?.length || 0), 0),
     controls: controls.size,
   };
