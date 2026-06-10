@@ -28,6 +28,7 @@ views_path      = File.join(opts[:out], 'views.json')
 perf_path       = File.join(opts[:out], 'performance.json')
 ds_usage_path   = File.join(opts[:out], 'datasource-usage.json')
 wb_users_path   = File.join(opts[:out], 'workbook-users.json')
+consol_path     = File.join(opts[:out], 'consolidation-candidates.json')
 abort("inventory.json not found in #{opts[:out]}") unless File.exist?(inv_path)
 
 def load_json(path); File.exist?(path) ? JSON.parse(File.read(path)) : nil; end
@@ -40,11 +41,13 @@ views_analysis  = load_json(views_path)
 perf_analysis   = load_json(perf_path)
 ds_usage        = load_json(ds_usage_path)
 workbook_users  = load_json(wb_users_path)
+consolidation   = load_json(consol_path)
 has_shortlist  = !shortlist.nil? && !shortlist.empty?
 has_ds_deep    = !ds_analysis.nil?
 has_users_deep = !users_analysis.nil?
 has_views      = !views_analysis.nil?
 has_perf       = !perf_analysis.nil? && !(perf_analysis['views'] || []).empty?
+has_consol     = has_shortlist && !consolidation.nil? && !(consolidation['groups'] || []).empty?
 
 def h(s); CGI.escapeHTML(s.to_s); end
 def num(n); n.to_i.to_s.reverse.scan(/.{1,3}/).join(',').reverse; end
@@ -1292,9 +1295,11 @@ html += <<~HTML
 HTML
 
 next_sec += 1
-migration_num = format('%02d', next_sec)
-priv_num      = format('%02d', has_shortlist ? next_sec + 2 : next_sec)
-next_num      = format('%02d', has_shortlist ? next_sec + 3 : next_sec + 1)
+consol_offset     = has_consol ? 1 : 0
+migration_num     = format('%02d', next_sec)
+consolidation_num = format('%02d', next_sec + 1)
+priv_num      = format('%02d', has_shortlist ? next_sec + 2 + consol_offset : next_sec)
+next_num      = format('%02d', has_shortlist ? next_sec + 3 + consol_offset : next_sec + 1)
 
 # ---------- estimated migration effort (token model) ----------
 effort_html = ''
@@ -1312,7 +1317,7 @@ if has_shortlist && File.exist?(token_model_path)
     opus_usd   = est.call('opus')
     sonnet_usd = est.call('sonnet')
     fmt = lambda { |v| '$' + format('%.2f', v) }
-    effort_num = format('%02d', next_sec + 1)
+    effort_num = format('%02d', next_sec + 1 + consol_offset)
     effort_html = <<~HTML
       <section>
         <div class="section-head">
@@ -1386,6 +1391,85 @@ if has_shortlist
 
     #{sl_total_unhandled.positive? ?
       %(<div class="callout"><strong>#{n_with_unhandled} workbook#{n_with_unhandled == 1 ? '' : 's'}</strong> include features that warrant individual review when planning their conversion — typically advanced Tableau capabilities (custom marks, complex table calculations, level-of-detail expressions) where the right Sigma equivalent depends on how the workbook actually uses them. Identifying these up-front means no surprises mid-migration.</div>) : ''}
+  </section>
+
+  HTML
+end
+
+# ---------- consolidation candidates ----------
+if has_consol
+  cs = consolidation['summary'] || {}
+  n_consol  = cs['consolidate'] || 0
+  n_review  = cs['review'] || 0
+  n_avoid   = cs['conversions_avoidable'] || 0
+
+  consol_stat_row = <<~ROW
+    <div class="stat-row">
+      <div class="stat #{n_consol.positive? ? 'stat-go' : ''}">
+        <div class="stat-l">Consolidate now</div>
+        <div class="stat-v #{n_consol.positive? ? 'go' : ''}">#{n_consol}</div>
+        <div class="stat-sub">variant groups that collapse into one Sigma workbook</div>
+      </div>
+      <div class="stat">
+        <div class="stat-l">Review side-by-side</div>
+        <div class="stat-v">#{n_review}</div>
+        <div class="stat-sub">similar enough to compare before deciding</div>
+      </div>
+      <div class="stat #{n_avoid.positive? ? 'stat-go' : ''}">
+        <div class="stat-l">Conversions avoidable</div>
+        <div class="stat-v #{n_avoid.positive? ? 'go' : ''}">#{n_avoid}</div>
+        <div class="stat-sub">fewer workbook migrations if consolidated</div>
+      </div>
+    </div>
+  ROW
+
+  consol_reco_meta = {
+    'consolidate'   => ['tag-go',   'Consolidate'],
+    'review'        => ['tag-warn', 'Review side-by-side'],
+    'keep-separate' => ['tag-mute', 'Keep separate']
+  }
+  group_rows = (consolidation['groups'] || []).map do |g|
+    cls, label = consol_reco_meta[g['recommendation']] || ['tag-gray', g['recommendation']]
+    members_html = g['workbooks'].map do |w|
+      primary = w['workbookId'] == g.dig('primary', 'workbookId')
+      %(<div class="cluster-member"><strong>#{h(w['name'])}</strong>#{primary ? ' <span class="tag tag-blue">primary</span>' : ''} <span class="muted">#{w['sheets']} sheet#{w['sheets'] == 1 ? '' : 's'} · #{num(w['accesses'])} access#{w['accesses'] == 1 ? '' : 'es'}</span></div>)
+    end.join
+    proposal_html =
+      if g['recommendation'] == 'consolidate'
+        controls = g['proposed_controls'] || []
+        ctl_txt = controls.any? ? controls.map { |c| "#{c['kind']} on <code>#{h(c['column'])}</code>" }.join(', ') : 'no control needed — variants are near-identical, keep the primary'
+        %(<div class="top-view-cell"><strong>#{g['workbooks'].size} workbooks → 1 Sigma workbook</strong><div class="muted top-view-pct">#{ctl_txt}</div></div>)
+      else
+        %(<span class="muted">—</span>)
+      end
+    evidence_html = (g['similarity_drivers'] || []).first(3).map { |d| %(<div class="cluster-member muted">#{h(d)}</div>) }.join +
+                    (g['differences'] || []).reject { |d| d == 'no structural differences detected' }.first(2).map { |d| %(<div class="cluster-member" style="color:var(--warn);">#{h(d)}</div>) }.join
+    [
+      members_html,
+      bar_cell(g['field_overlap_pct'], 100),
+      evidence_html,
+      proposal_html,
+      %(<span class="tag #{cls}">#{h(label)}</span>)
+    ]
+  end
+  consol_table_html = table(
+    ['Workbook variants', 'Field overlap', 'Evidence', 'Proposed consolidation', 'Recommendation'],
+    group_rows,
+    align: %w[left left left left left]
+  )
+
+  html += <<~HTML
+  <section>
+    <div class="section-head">
+      <span class="section-num">#{consolidation_num}</span>
+      <h2 class="section-title">Consolidation candidates</h2>
+      <span class="section-aside">#{(consolidation['groups'] || []).size} group#{(consolidation['groups'] || []).size == 1 ? '' : 's'} · #{n_avoid} conversion#{n_avoid == 1 ? '' : 's'} avoidable</span>
+    </div>
+    <p class="section-lede">Workbooks that are variants of the same dashboard — copies that differ only by a filter value, a year, or a test/republish suffix. In Sigma those collapse into <strong>one workbook plus a control</strong>, so each consolidated group saves its extra conversions and leaves one asset to govern instead of several. Recommendations are conservative: a group is only marked "Consolidate" when the variants overlap heavily in the fields they actually use and the differences map to a control.</p>
+
+    #{consol_stat_row}
+    #{consol_table_html}
+    <p class="note">During migration you'll be asked per group: <strong>consolidate into one workbook with controls</strong> (recommended where marked) or <strong>migrate as-is</strong>. Decisions are recorded in <code>migration-plan.json</code> so the conversion step builds the consolidated workbook automatically. Full evidence per group in <code>consolidation-candidates.json</code>.</p>
   </section>
 
   HTML
