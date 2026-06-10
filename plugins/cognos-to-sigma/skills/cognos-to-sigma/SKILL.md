@@ -97,6 +97,9 @@ runtime **macros** (`#…# prompt(…,'token',…)` — dynamic column/SQL build
 "swap measure" picker → model as a control + `Switch`), **running-total / moving-* /
 rank / lag / lead** (window funcs with no clean single-column analog), **GetResourceString**
 (localization), composite/non-equi **joins**, and **detail/summary filters** (surfaced
-to re-create as Sigma filters). **Crosstabs → Sigma pivot-tables ARE converted** (rows/columns
-edges → rowsBy/columnsBy, measure → values; live-validated to warehouse parity). Charts (RAVE2,
-which live in dashboards as JSON, not report XML) and drill-through→actions remain roadmap.
+to re-create as Sigma filters). **Crosstabs → Sigma pivot-tables** (rows/columns edges →
+rowsBy/columnsBy, measure → values) and **charts (RAVE2 `<vizControl>`) → Sigma chart elements**
+(bar/column/line/area/pie/donut/combo/scatter via the slot model — see `refs/format-shapes.md`)
+ARE converted and live-validated to warehouse parity. Cognos chart types with no native Sigma
+analog (map, network, word-cloud, packed-bubble, treemap) fall back to a flagged table.
+Drill-through→actions and Framework Manager `.cpf` remain roadmap.

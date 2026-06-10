@@ -77,4 +77,18 @@ Key facts:
 - `prompt('p')` in any expression → a Sigma control; `#…#` macros → flagged (see `expression-dsl.md`).
 - Filters are surfaced as warnings to re-create.
 - **Crosstabs (`<crosstab>`) → Sigma pivot-table** (supported, live-validated): `<crosstabRows>`/`<crosstabColumns>` → `crosstabNodeMember@refDataItem` give the row/column edge dims (skip `Total(...)` grand-total nodes); the measure is `<crosstabCorner><dataItemLabel@refDataItem>`. Maps to `rowsBy:[{id}]` · `columnsBy:[{id}]` · `values:[<colId string>]` (note: **values are bare id strings, rowsBy/columnsBy are `{id}` objects**; measure column formula = `Sum(<ref>)`).
-- Charts (RAVE2 `<visualization>`) live in dashboards (separate JSON), not report XML — roadmap.
+- **Charts (RAVE2 `<vizControl type="com.ibm.vis.*">`) → Sigma chart elements** (supported, live-validated). They live in the report layout (NOT only dashboards). Shape:
+  ```xml
+  <reportDataStores><reportDataStore name="dsChart"><dsSource><dsV5ListQuery refQuery="qChart"/></dsSource></reportDataStore></reportDataStores>
+  <vizControl name="Revenue by channel" type="com.ibm.vis.clusteredColumn">
+    <vcDataSets><vcDataSet refDataStore="dsChart"><vcSlots>
+      <vcSlotData idSlot="categories"><vcSlotDsColumns><vcSlotDsColumn refDsColumn="Order Channel"/></vcSlotDsColumns></vcSlotData>
+      <vcSlotData idSlot="series"/>
+      <vcSlotData idSlot="values"><vcSlotDsColumns><vcSlotDsColumn refDsColumn="Net Revenue" rollupMethod="total"/></vcSlotDsColumns></vcSlotData>
+    </vcSlots></vcDataSet></vcDataSets>
+  </vizControl>
+  ```
+  - `vcDataSet@refDataStore` → `<reportDataStore name>` → `<dsV5ListQuery@refQuery>` resolves the backing query; `vcSlotDsColumn@refDsColumn` is a dataItem name in that query.
+  - **Slot → axis:** `categories`→`xAxis.columnId` (first; extra levels kept as columns + flag), `values`/`size`→`yAxis.columnIds` (aggregated by `rollupMethod`: total→Sum, average→Avg, …), `series`/`color`→`color {by:category, column}`. Pie/donut use `value{id}`+`color{id}`; scatter uses `x`/`y` slots.
+  - **Type map:** clusteredBar/stackedBar→bar (horizontal), clusteredColumn/stackedColumn→bar (vertical, `stacking` from `stacked*`), line/spline→line, area→area, pie→pie, donut→donut, clusteredCombination→combo, bubble/scatter→scatter.
+  - **No native Sigma analog** (`tiledmap`, `network`, `wordcloud`, `packedbubble`, `treemap`) → emitted as a **flagged table** (data preserved; re-pick a chart in the workbook).

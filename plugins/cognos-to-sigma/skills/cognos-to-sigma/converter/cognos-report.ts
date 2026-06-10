@@ -15,8 +15,9 @@
  * SQL/column refs at runtime — e.g. a "swap measure" picker) have no clean static
  * Sigma analog; they're emitted as a Switch placeholder + a loud warning.
  *
- * NOT yet: crosstabs→pivot, charts (RAVE2), drill-through→actions, conditional
- * render blocks, master-detail. Those are the research long-tail.
+ * Crosstabs → pivot-tables and charts (RAVE2 `<vizControl>`) → Sigma chart
+ * elements are supported. NOT yet: drill-through→actions, conditional render
+ * blocks, master-detail. Those are the research long-tail.
  */
 
 import { XMLParser } from 'fast-xml-parser';
@@ -27,7 +28,8 @@ const xmlParser = new XMLParser({
   ignoreAttributes: false, attributeNamePrefix: '@_', trimValues: true,
   isArray: (n) => ['query', 'dataItem', 'list', 'page', 'detailFilter', 'summaryFilter',
     'dataItemValue', 'dataItemLabel', 'listColumn', 'reportPage',
-    'crosstab', 'crosstabNode', 'crosstabNodeMember'].includes(n),
+    'crosstab', 'crosstabNode', 'crosstabNodeMember',
+    'vizControl', 'vcDataSet', 'vcSlotData', 'vcSlotDsColumn', 'reportDataStore'].includes(n),
 });
 const arr = (v: any): any[] => (Array.isArray(v) ? v : v == null ? [] : [v]);
 const txt = (v: any): string => (v == null ? '' : typeof v === 'object' ? (v['#text'] ?? '') : String(v));
@@ -35,7 +37,13 @@ const txt = (v: any): string => (v == null ? '' : typeof v === 'object' ? (v['#t
 // ── workbook spec types (minimal) ────────────────────────────────────────────
 interface WbColumn { id: string; name: string; formula: string; }
 interface WbControl { id: string; kind: 'control'; controlId: string; name: string; controlType: string; }
-interface WbElement { id: string; kind: string; name: string; source: Record<string, any>; columns?: WbColumn[]; order?: string[]; filters?: any[]; rowsBy?: Array<{ id: string }>; columnsBy?: Array<{ id: string }>; values?: string[]; }
+interface WbElement {
+  id: string; kind: string; name: string; source: Record<string, any>;
+  columns?: WbColumn[]; order?: string[]; filters?: any[];
+  rowsBy?: Array<{ id: string }>; columnsBy?: Array<{ id: string }>; values?: string[];   // pivot
+  xAxis?: { columnId: string; sort?: any }; yAxis?: { columnIds: string[] };               // cartesian charts
+  value?: { id: string }; color?: any; stacking?: string; orientation?: string;            // pie/donut + bar styling
+}
 interface WbPage { id: string; name: string; elements: WbElement[]; }
 export interface CognosReportResult {
   workbook: { name: string; schemaVersion: number; pages: WbPage[]; controls?: WbControl[] };
@@ -185,6 +193,115 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     });
   }
 
+  // 2c) charts (RAVE2 <vizControl>) → Sigma chart elements
+  // dataStore name → refQuery: vcDataSet.refDataStore → <reportDataStore name><dsV5ListQuery refQuery>
+  const dsToQuery = new Map<string, string>();
+  for (const ds of findAll(report, 'reportDataStore')) {
+    const nm = ds['@_name'];
+    const rq = findAll(ds, 'dsV5ListQuery').map((x: any) => x['@_refQuery']).find(Boolean);
+    if (nm && rq) dsToQuery.set(nm, rq);
+  }
+  const ROLLUP_AGG: Record<string, string> = { total: 'Sum', sum: 'Sum', average: 'Avg', avg: 'Avg', count: 'Count', countdistinct: 'CountDistinct', maximum: 'Max', minimum: 'Min' };
+  // Cognos vizControl type → Sigma chart kind (only types with a clean native analog)
+  const VIZ_KIND: Record<string, string> = {
+    'com.ibm.vis.clusteredbar': 'bar-chart', 'com.ibm.vis.stackedbar': 'bar-chart',
+    'com.ibm.vis.clusteredcolumn': 'bar-chart', 'com.ibm.vis.stackedcolumn': 'bar-chart',
+    'com.ibm.vis.line': 'line-chart', 'com.ibm.vis.spline': 'line-chart',
+    'com.ibm.vis.area': 'area-chart', 'com.ibm.vis.stackedarea': 'area-chart',
+    'com.ibm.vis.pie': 'pie-chart', 'com.ibm.vis.donut': 'donut-chart',
+    'com.ibm.vis.clusteredcombination': 'combo-chart', 'com.ibm.vis.stackedcombination': 'combo-chart',
+    'com.ibm.vis.bubble': 'scatter-chart', 'com.ibm.vis.scatter': 'scatter-chart',
+  };
+  // types Sigma has no native chart for — emit the data as a table + a loud flag (don't fake the viz)
+  const VIZ_NOANALOG: Record<string, string> = {
+    'com.ibm.vis.tiledmap': 'map', 'com.ibm.vis.network': 'network diagram',
+    'com.ibm.vis.wordcloud': 'word cloud', 'com.ibm.vis.packedbubble': 'packed bubble',
+    'com.ibm.vis.treemap': 'treemap',
+  };
+  const chartSource = (q: Query) => ({ kind: 'data-model', dataModelId: options.dataModelId || '<DM_ID — wire after posting the data model>', elementId: q.subject ? sigmaDisplayName(q.subject) : '<element>' });
+
+  for (const V of findAll(report, 'vizControl')) {
+    const vizType = String(V['@_type'] || '').toLowerCase();
+    const vizName = V['@_name'] || 'Chart';
+    const dsName = findAll(V, 'vcDataSet').map((d: any) => d['@_refDataStore']).find(Boolean);
+    const qName = dsName ? dsToQuery.get(dsName) : undefined;
+    const q = qName ? queries.get(qName) : undefined;
+    if (!q) { warnings.push(`<vizControl> "${vizName}" (${vizType}): no resolvable query (dataStore "${dsName}") — chart skipped.`); continue; }
+
+    // slot entries by id (categories / series / values / size / x / y / color)
+    const slot = (id: string): Array<{ ref: string; rollup?: string }> => {
+      const out: Array<{ ref: string; rollup?: string }> = [];
+      for (const sd of findAll(V, 'vcSlotData')) {
+        if (String(sd['@_idSlot'] || '').toLowerCase() !== id) continue;
+        for (const c of findAll(sd, 'vcSlotDsColumn')) if (c['@_refDsColumn']) out.push({ ref: c['@_refDsColumn'], rollup: c['@_rollupMethod'] });
+      }
+      return out;
+    };
+    const cols: WbColumn[] = [];
+    const seen = new Map<string, string>();
+    const addCol = (e: { ref: string; rollup?: string } | undefined, measure: boolean): string | undefined => {
+      if (!e) return undefined;
+      const di = q.items.get(e.ref);
+      if (!di) { warnings.push(`chart "${vizName}" column "${e.ref}" not in query "${qName}" — skipped.`); return undefined; }
+      const nm = sigmaDisplayName(di.name);
+      if (seen.has(nm)) return seen.get(nm);
+      const { formula, warns } = translate(di.expression, q); warns.forEach((w) => warnings.push(`"${vizName}.${e.ref}": ${w}`));
+      const id = sigmaShortId();
+      const fn = measure ? (ROLLUP_AGG[String(e.rollup || '').toLowerCase()] || 'Sum') : '';
+      cols.push({ id, name: nm, formula: measure ? `${fn}(${formula})` : formula });
+      seen.set(nm, id); return id;
+    };
+
+    const cats = slot('categories'), series = slot('series'), vals = slot('values');
+    const sizes = slot('size'), xs = slot('x'), ys = slot('y'), colorSlot = slot('color');
+    const kind = VIZ_KIND[vizType];
+
+    if (!kind) {
+      // no native Sigma chart → table fallback + flag (collect every slot column, incl. map latlong/etc.)
+      const label = VIZ_NOANALOG[vizType] || vizType.replace('com.ibm.vis.', '');
+      for (const c of findAll(V, 'vcSlotDsColumn')) if (c['@_refDsColumn']) addCol({ ref: c['@_refDsColumn'], rollup: c['@_rollupMethod'] }, !!c['@_rollupMethod']);
+      if (!cols.length) { warnings.push(`<vizControl> "${vizName}" (${vizType}) had no resolvable columns — skipped.`); continue; }
+      warnings.push(`chart "${vizName}" is a Cognos ${label} (${vizType}) — Sigma has no native equivalent; emitted its data as a table. Re-pick a Sigma chart in the workbook.`);
+      pageEls.push({ id: sigmaShortId(), kind: 'table', name: `${vizName} (was ${label})`, source: chartSource(q), columns: cols, order: cols.map((c) => c.id) });
+      continue;
+    }
+
+    const el: WbElement = { id: sigmaShortId(), kind, name: vizName, source: chartSource(q), columns: [], order: [] };
+
+    if (kind === 'pie-chart' || kind === 'donut-chart') {
+      const colorId = addCol(cats[0] || colorSlot[0], false);
+      const valId = addCol(vals[0] || sizes[0], true);
+      if (colorId) el.color = { id: colorId };
+      if (valId) el.value = { id: valId };
+    } else if (kind === 'scatter-chart') {
+      const xId = addCol(xs[0] || cats[0], false);
+      const yId = addCol(ys[0] || vals[0] || sizes[0], true);
+      if (xId) el.xAxis = { columnId: xId };
+      if (yId) el.yAxis = { columnIds: [yId] };
+      const cId = addCol(series[0] || colorSlot[0], false);
+      if (cId) el.color = { by: 'category', column: cId };
+    } else {
+      // cartesian: bar / line / area / combo
+      const xId = addCol(cats[0], false);
+      if (xId) el.xAxis = { columnId: xId };
+      if (cats.length > 1) { warnings.push(`chart "${vizName}": Cognos used ${cats.length} category levels; Sigma x-axis takes one — bound the first, kept the rest as columns.`); cats.slice(1).forEach((c) => addCol(c, false)); }
+      const yIds = [...vals, ...sizes].map((v) => addCol(v, true)).filter(Boolean) as string[];
+      if (yIds.length) el.yAxis = { columnIds: yIds };
+      else warnings.push(`chart "${vizName}" (${kind}) resolved no measure for the value axis — add a measure in the workbook.`);
+      const cId = addCol(series[0] || colorSlot[0], false);
+      if (cId) el.color = { by: 'category', column: cId };
+      if (kind === 'bar-chart') {
+        el.stacking = /stacked/.test(vizType) ? 'stacked' : 'none';
+        if (/\bbar\b/.test(vizType) && !/column/.test(vizType)) el.orientation = 'horizontal'; // Cognos "bar" = horizontal
+      }
+      if (kind === 'combo-chart' && yIds.length > 1) warnings.push(`chart "${vizName}" → combo-chart: all measures placed on the primary axis as the same mark — set per-series shape / secondary axis in the workbook.`);
+    }
+
+    el.columns = cols; el.order = cols.map((c) => c.id);
+    if (!cols.length) { warnings.push(`<vizControl> "${vizName}" (${vizType}) had no resolvable slot columns — skipped.`); continue; }
+    pageEls.push(el);
+  }
+
   // attach controls as page-level elements too
   const controlEls = [...controls.values()];
   pages.push({ id: sigmaShortId(), name: reportPages[0]?.['@_name'] || 'Report', elements: [...controlEls as any, ...pageEls] });
@@ -199,6 +316,7 @@ export function convertCognosReportToSigma(xml: string, options: CognosReportOpt
     queries: queries.size,
     tables: pageEls.filter((e) => e.kind === 'table').length,
     pivots: pageEls.filter((e) => e.kind === 'pivot-table').length,
+    charts: pageEls.filter((e) => e.kind.endsWith('-chart')).length,
     columns: pageEls.reduce((n, e) => n + (e.columns?.length || 0), 0),
     controls: controls.size,
   };
