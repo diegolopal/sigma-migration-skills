@@ -22,6 +22,7 @@ shared `~/.sigma-migration/env` under any agent.
 /plugin install qlik-to-sigma@sigma-migration-skills
 /plugin install thoughtspot-to-sigma@sigma-migration-skills
 /plugin install quicksight-to-sigma@sigma-migration-skills
+/plugin install cognos-to-sigma@sigma-migration-skills
 ```
 
 **Other agents (Cursor, Cortex Code, …)** — clone the repo and point your agent at the
@@ -44,6 +45,7 @@ and the skill drives discovery → translation → build → parity.
 | [`qlik-to-sigma`](plugins/qlik-to-sigma/) | Qlik Sense / Cloud | `qlik-to-sigma`, `qlik-assessment` |
 | [`thoughtspot-to-sigma`](plugins/thoughtspot-to-sigma/) | ThoughtSpot | `thoughtspot-to-sigma`, `thoughtspot-assessment` |
 | [`quicksight-to-sigma`](plugins/quicksight-to-sigma/) | Amazon QuickSight | `quicksight-to-sigma`, `quicksight-assessment` |
+| [`cognos-to-sigma`](plugins/cognos-to-sigma/) | IBM Cognos Analytics | `cognos-to-sigma`, `cognos-assessment` |
 
 In Claude Code, installed skills are namespaced — e.g. `/powerbi-to-sigma:powerbi-assessment`.
 
