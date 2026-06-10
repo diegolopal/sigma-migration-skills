@@ -107,22 +107,28 @@ No local converter build (CONVERTER_PATH unset) — use the MCP converter:
 """)
     sys.exit(3)
 
-def build_dm(conv, name, folder):
-    """POST the converted Sigma data model. Returns (dmId, denormElemId, denormName)."""
-    spec = conv["model"]; spec["name"] = name
-    res = json.loads(sigma("POST", "/v2/dataModels/spec", {"folderId": folder, **spec}))
-    dm = res["dataModelId"]
-    # discover the denormalized "<root> View" element from the posted DM spec
+def find_denorm(dm):
+    """Read a DM's spec back and locate the denormalized "<root> View" element.
+    Returns (denormElemId, denormName)."""
     dmspec = yaml.safe_load(sigma("GET", f"/v2/dataModels/{dm}/spec"))
     els = dmspec["pages"][0]["elements"]
     denorm = next((el for el in els if (el.get("name") or "").endswith(" View")), None)
     if not denorm:
         # no joins → no denormalized view; use the base fact element (most columns).
         denorm = max(els, key=lambda e: len(e.get("columns", [])))
+    return denorm["id"], denorm["name"]
+
+def build_dm(conv, name, folder):
+    """POST the converted Sigma data model. Returns (dmId, denormElemId, denormName)."""
+    spec = conv["model"]; spec["name"] = name
+    res = json.loads(sigma("POST", "/v2/dataModels/spec", {"folderId": folder, **spec}))
+    dm = res["dataModelId"]
+    # discover the denormalized "<root> View" element from the posted DM spec
+    denorm_id, denorm_name = find_denorm(dm)
     stats = conv.get("stats") or {}
-    print(f"  DM {dm}  ·  denorm '{denorm['name']}' ({denorm['id']})  ·  "
+    print(f"  DM {dm}  ·  denorm '{denorm_name}' ({denorm_id})  ·  "
           f"{stats.get('relationships', '?')} rels, {stats.get('elements', '?')} elements")
-    return dm, denorm["id"], denorm["name"]
+    return dm, denorm_id, denorm_name
 
 def post_workbook(spec, wd):
     resp = sigma("POST", "/v2/workbooks/spec", spec)
@@ -190,6 +196,8 @@ def main():
     ap.add_argument("--name", default=None, help="name PREFIX applied to BOTH the data model and every workbook")
     ap.add_argument("--workdir", default=None, help="working dir for artifacts (default $TS_WORKDIR or ./ts-migration)")
     ap.add_argument("--converted", default=None, help="JSON output of the convert_thoughtspot_to_sigma MCP tool")
+    ap.add_argument("--reuse-dm", default=None, help="existing Sigma dataModelId to reuse — skips convert + POST "
+                    "(decided via ts-dm-signature.py + find-or-pick-dm.rb; see SKILL.md step 2.5)")
     a = ap.parse_args()
     wd = resolve_workdir(a.workdir)
     offline = bool(a.model_tml)
@@ -203,6 +211,7 @@ def main():
         model_tml, err = ts_lib.export_tml(a.model, "LOGICAL_TABLE")
         if err:
             sys.exit("model export failed: " + err)
+    open(os.path.join(wd, "model.tml"), "w").write(model_tml)   # always persist (parity/freshness consume it)
     root = yaml.safe_load(model_tml)
     root = root.get("model") or root.get("worksheet") or root
     model_name = root.get("name", "Migrated Model")
@@ -210,9 +219,14 @@ def main():
     resolver = ts_common.build_resolver(root)
     print(f"Model '{model_name}': {len(resolver)} resolvable columns  ·  workdir {wd}")
 
-    conv = convert_model(model_tml, wd, a.converted)
     folder = need_env("SIGMA_FOLDER_ID")[0]
-    dm, denorm_id, denorm_name = build_dm(conv, f"{prefix}{model_name} (from ThoughtSpot)", folder)
+    if a.reuse_dm:
+        dm = a.reuse_dm
+        denorm_id, denorm_name = find_denorm(dm)
+        print(f"  REUSING DM {dm}  ·  denorm '{denorm_name}' ({denorm_id})  — convert + POST skipped")
+    else:
+        conv = convert_model(model_tml, wd, a.converted)
+        dm, denorm_id, denorm_name = build_dm(conv, f"{prefix}{model_name} (from ThoughtSpot)", folder)
 
     # pick Liveboards: offline TML files, explicit ids, or every Liveboard that references the model
     targets = []                                       # (lb_doc, fallback_name)
@@ -237,15 +251,21 @@ def main():
                     targets.append((edoc, lb["metadata_name"]))
     print(f"Migrating {len(targets)} Liveboard(s)…")
 
+    # persist each Liveboard TML so downstream phases (parity expected-side,
+    # freshness probe) can re-derive viz specs without re-exporting from TS
+    lbdir = os.path.join(wd, "liveboards")
+    os.makedirs(lbdir, exist_ok=True)
     results = {}
-    for lb_doc, fallback in targets:
+    for i, (lb_doc, fallback) in enumerate(targets):
+        lb_path = os.path.join(lbdir, f"lb-{i + 1}.tml")
+        open(lb_path, "w").write(lb_doc)
         try:
             wb, display, n, tiles = migrate_liveboard(lb_doc, dm, denorm_id, denorm_name,
                                                       resolver, prefix, fallback, folder, wd)
-            results[display] = {"workbook": wb, "viz": n, "tiles": tiles}
+            results[display] = {"workbook": wb, "viz": n, "tiles": tiles, "lb_tml": lb_path}
             print(f"  ✓ {display[:34]:34s} WB {wb} ({n} viz, layout={'TML tiles' if tiles else 'auto grid'})")
         except Exception as ex:
-            results[fallback] = {"error": str(ex)}
+            results[fallback] = {"error": str(ex), "lb_tml": lb_path}
             print(f"  ✗ {fallback[:34]:34s} {ex}")
     for ans_id in (a.answer or []):
         try:
@@ -256,7 +276,9 @@ def main():
             results["answer:" + ans_id] = {"error": str(ex)}
             print(f"  ✗ answer {ans_id[:8]}  {ex}")
     wbs = [r["workbook"] for r in results.values() if r.get("workbook")]
-    json.dump({"model": a.model or a.model_tml, "dataModel": dm, "results": results},
+    json.dump({"model": a.model or a.model_tml, "modelName": model_name, "dataModel": dm,
+               "dmReused": bool(a.reuse_dm), "denormElementId": denorm_id,
+               "denormName": denorm_name, "results": results},
               open(os.path.join(wd, "migrate_out.json"), "w"), indent=2)
     if len(wbs) == 1:        # convenience for the parity gate (assert-phase6-ran.rb)
         json.dump({"workbookId": wbs[0]}, open(os.path.join(wd, "wb-ids.json"), "w"))

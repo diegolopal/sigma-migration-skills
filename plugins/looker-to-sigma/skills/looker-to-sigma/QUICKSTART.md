@@ -3,6 +3,23 @@
 End-to-end: a Looker LookML model + its dashboards (UDD or LookML-defined) → a Sigma data model
 + workbook(s), parity-verified against Looker AND the warehouse.
 
+## 0. ONE COMMAND (preferred)
+```bash
+# offline (fixtures work end-to-end):
+python3 scripts/migrate-looker.py --lookml-dir fixtures/skilltest-orders \
+    --dashboard fixtures/skilltest-orders/skilltest_orders.dashboard.lookml \
+    [--name PREFIX] [--workdir /tmp/look-run]
+# live: --dashboard-id <id> instead of --dashboard (needs ~/.looker/looker.ini)
+```
+Runs everything below — parse → RLS gate (exit 10 on findings unless `--yes`) →
+convert (exit 3 + `--converted` resume when no local converter) → DM-reuse check
+(candidates PRINTED; default build-new, reuse only via `--reuse-dm <id>`) →
+`post_dm.py` + readback → `build_workbook.py` + POST (layout inline) → freshness
+preflight → **scripted parity (`phase6-parity-looker.rb`) +
+`assert-phase6-ran.rb` hard gate**. Exit 0 = GREEN; a failed gate fails the
+command. Sigma token auto-minted from `~/.sigma-migration/env`. Steps 1–5 below
+are the manual, per-phase path.
+
 ## 1. Authenticate
 
 **Looker** (REST API 4.0). Put an API3 key in `~/.looker/looker.ini`:
@@ -86,14 +103,22 @@ Emits a `/v2/workbooks/spec` body: hidden Data page + master table, one element 
 controls from filters, newspaper→24-col layout XML. POST it to `/v2/workbooks/spec` (returns
 YAML → record `workbookId`). **POST once; PUT every later edit** (re-POST leaves orphans).
 
-## 5. Verify parity (3-way) — MANDATORY
+## 5. Verify parity (3-way) — MANDATORY (scripted hard gate)
 
-Compare at the metric grain and per tile:
+```bash
+ruby scripts/phase6-parity-looker.rb --workdir /tmp/look --workbook-id <wb>   # PASS 1: plan
+# … fetch ACTUAL (Sigma) + EXPECTED (Looker inline query / warehouse) …
+ruby scripts/phase6-parity-looker.rb --workdir /tmp/look --finalize           # PASS 2: sentinel
+ruby scripts/assert-phase6-ran.rb   --workdir /tmp/look --workbook-id <wb>    # must exit 0
+```
+(`migrate-looker.py` runs all of this automatically.) The reference comparison
+is 3-way, at the metric grain and per tile:
 - **Looker** — `POST /queries/run/json` for the explore.
 - **Sigma** — `mcp__sigma-mcp-v2__query` (raw aggregate; `metric()` returns "Missing Metric").
 - **Warehouse** — the source-of-truth `SELECT`.
 
-GREEN only when all three match (the validated run tied out to the cent).
+GREEN only when all three match (the validated run tied out to the cent) AND
+`assert-phase6-ran.rb` exits 0.
 
 ---
 

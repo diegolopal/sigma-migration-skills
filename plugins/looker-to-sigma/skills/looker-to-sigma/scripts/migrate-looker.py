@@ -1,0 +1,604 @@
+#!/usr/bin/env python3
+"""migrate-looker.py — ONE-COMMAND orchestrator for the looker-to-sigma
+pipeline: parse → RLS gate → convert → DM-reuse check → DM POST + readback →
+workbook build (+ layout, inline) → source-freshness preflight → scripted
+parity + HARD GATE. Mirrors qlik-to-sigma's migrate-qlik.rb: every phase prints
+a visible header + concise result, decision points are flags with safe defaults
+(never silent), and the parity gate is NEVER bypassed — the command FAILS if a
+gate fails.
+
+This script does NOT re-implement any phase — it chains the per-phase scripts:
+  parse_lookml_dashboard.py / fetch_looker_dashboard.py
+                          (Phase 1 — the normalized dashboard contract, offline
+                           .dashboard.lookml or live GET /dashboards/{id})
+  detect_rls.py           (Phase 2 — RLS gate: zero overhead when clean; when
+                           RLS IS found the command STOPS (exit 10) unless
+                           --yes — security is never silently dropped. Port it
+                           via apply_sigma_rls.py (SKILL.md Phase 1.5), then
+                           re-run.)
+  convert_dm.mjs / a local converter build / the MCP-request pattern
+                          (Phase 3 — LookML → Sigma DM spec. No shellable
+                           converter? The command writes convert-request.json —
+                           the exact mcp__sigma-data-model__convert_lookml_to_sigma
+                           arguments — and exits 3; call the tool, save its JSON,
+                           and re-run with --converted <file>. Mirrors
+                           thoughtspot's exit-3 design.)
+  lookml-dm-signature.py + find-or-pick-dm.rb
+                          (Phase 3.5 — DM-reuse check: candidates+scores
+                           PRINTED, default = build new; reuse only on an
+                           explicit --reuse-dm <id>)
+  post_dm.py              (Phase 3 — POST /v2/dataModels/spec, join-key guard
+                           included) + denorm-element readback
+  build_workbook.py       (Phase 4 — contract + view .lkml → workbook spec with
+                           the newspaper→24-col layout XML inline; POST once)
+  Phase 5 — SOURCE-FRESHNESS preflight: source mtime/live note + a warehouse
+            snapshot (master row count + max date) printed BEFORE any
+            side-by-side.
+  phase6-parity-looker.rb (Phase 6 — two-pass parity, fully scripted: ACTUAL =
+                           Sigma CSV export per chart; EXPECTED = a Looker
+                           inline query when live, or a SOURCE-LookML-derived
+                           re-aggregation of the master's warehouse rows when
+                           offline) + verify-parity.rb
+  assert-phase6-ran.rb    (HARD GATE — vendored byte-identical from
+                           quicksight-to-sigma; must exit 0 to declare GREEN)
+
+Usage (offline — fixtures, no live Looker):
+  python3 scripts/migrate-looker.py --lookml-dir fixtures/skilltest-orders \
+      --dashboard fixtures/skilltest-orders/skilltest_orders.dashboard.lookml \
+      [--name PREFIX] [--workdir DIR]
+Usage (live — ~/.looker/looker.ini configured):
+  python3 scripts/migrate-looker.py --lookml-dir /path/to/lookml \
+      --dashboard-id <id> [--explore <name>] [--name PREFIX] [--workdir DIR]
+Resume after the MCP converter fallback (exit 3):
+  ... same command ... --converted <workdir>/converted.json
+Other flags:
+  --reuse-dm <dataModelId>   reuse an existing DM (skip convert+POST) — the
+                             Phase-3.5 check prints candidates; reuse is NEVER
+                             chosen silently, only via this flag
+  --skip-dm-reuse-check      skip the Phase-3.5 scan entirely
+  --folder <folderId>        Sigma folder (auto-resolved and PRINTED when unset)
+  --yes                      accept safe defaults at the RLS gate (proceed
+                             WITHOUT porting RLS — loud, recorded, never silent)
+  --dry-run                  no Sigma POSTs: contract + RLS scan + DM spec (or
+                             MCP request) + workbook spec with placeholder ids
+
+Env: SIGMA_BASE_URL + SIGMA_API_TOKEN (or SIGMA_CLIENT_ID/SECRET via
+~/.sigma-migration/env — the script mints a token), SIGMA_CONNECTION_ID,
+optional CONVERTER_SRC (src/lookml.ts, run via tsx) or CONVERTER_PATH
+(build/lookml.js) — both auto-located.
+
+Exit codes: 0 = done, all gates GREEN; 3 = MCP convert request emitted (resume
+with --converted); 10 = RLS found, decision needed (nothing posted); 2 = built
+but a parity/hard gate FAILED; other = error.
+"""
+import argparse, csv, glob, io, json, os, re, statistics, subprocess, sys, time
+import urllib.request, urllib.error
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from build_workbook import build_field_index, disp, leaf
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+T0 = time.time()
+MCP_TOOL = "mcp__sigma-data-model__convert_lookml_to_sigma"
+CONVERTER_HOMES = [os.path.expanduser(p) for p in
+                   ("~/Desktop/sigma-data-model-mcp", "~/sigma-data-model-mcp")]
+
+
+def hdr(n, total, title):
+    print(f"\n── Phase {n}/{total} · {title} ──")
+
+
+def run(cmd, env=None, cwd=None, check=True):
+    p = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd,
+                       env={**os.environ, **(env or {})})
+    out = (p.stdout or "") + (p.stderr or "")
+    for line in out.splitlines():
+        print("   " + line)
+    if check and p.returncode != 0:
+        sys.exit(f"FATAL: command failed ({p.returncode}): {' '.join(cmd)}")
+    return p.returncode, out
+
+
+def ensure_sigma_env():
+    env_file = os.path.expanduser("~/.sigma-migration/env")
+    if os.path.exists(env_file):
+        for line in open(env_file):
+            m = re.match(r"\s*export\s+(\w+)=['\"]?([^'\"\n]+)", line)
+            if m and not os.environ.get(m.group(1)):
+                os.environ[m.group(1)] = m.group(2)
+    if not os.environ.get("SIGMA_API_TOKEN") and os.environ.get("SIGMA_CLIENT_ID"):
+        p = subprocess.run(["bash", os.path.join(HERE, "get-token.sh")],
+                           capture_output=True, text=True)
+        m = re.search(r"export SIGMA_API_TOKEN=(\S+)", p.stdout or "")
+        if m:
+            os.environ["SIGMA_API_TOKEN"] = m.group(1)
+
+
+def sigma(method, path, body=None):
+    base = os.environ["SIGMA_BASE_URL"]; tok = os.environ["SIGMA_API_TOKEN"]
+    req = urllib.request.Request(base + path,
+        data=(json.dumps(body).encode() if body is not None else None), method=method,
+        headers={"Authorization": "Bearer " + tok, "Accept": "application/json",
+                 **({"Content-Type": "application/json"} if body is not None else {})})
+    try:
+        return urllib.request.urlopen(req).read().decode()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Sigma {method} {path} -> {e.code}: {e.read().decode()[:300]}")
+
+
+def resolve_folder(arg):
+    if arg:
+        return arg
+    if os.environ.get("SIGMA_FOLDER_ID"):
+        return os.environ["SIGMA_FOLDER_ID"]
+    files = json.loads(sigma("GET", "/v2/files?typeFilters=folder&limit=200"))
+    entries = files.get("entries") or []
+    pick = next((f for f in entries
+                 if any(k in (f.get("name") or "").upper()
+                        for k in ("LOOKER", "MIGRATION", "TEST"))),
+                entries[0] if entries else None)
+    if not pick:
+        sys.exit("FATAL: no writable folder found — pass --folder")
+    print(f"   no --folder supplied — using folder '{pick.get('name')}' ({pick['id']})")
+    return pick["id"]
+
+
+def export_csv(wb_id, element_id, timeout=240):
+    res = json.loads(sigma("POST", f"/v2/workbooks/{wb_id}/export",
+                           {"elementId": element_id, "format": {"type": "csv"}}))
+    qid = res["queryId"]
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            body = sigma("GET", f"/v2/query/{qid}/download")
+            if body and body.strip():
+                return body
+        except RuntimeError:
+            pass
+        time.sleep(2)
+    raise RuntimeError(f"CSV export of element {element_id} timed out")
+
+
+def parse_csv(body):
+    rows = list(csv.reader(io.StringIO(body)))
+    return (rows[0], rows[1:]) if rows else ([], [])
+
+
+def numify(v):
+    s = str(v).strip().replace("$", "").replace(",", "").replace("%", "")
+    try:
+        return float(s)
+    except ValueError:
+        return v
+
+
+# ── EXPECTED side (offline): re-aggregate the master's warehouse rows per the
+#    SOURCE LookML measure definitions — independent of the formulas the
+#    builder generated, so a builder bug DIVERGES instead of self-confirming. ──
+class SourceEval:
+    def __init__(self, measures, view_pk, explore, headers):
+        self.measures, self.view_pk, self.explore = measures, view_pk, explore
+        self.idx = {h: i for i, h in enumerate(headers)}
+
+    def display(self, field):
+        view = field.split(".")[0]
+        suf = "" if view == self.explore else f" ({view})"
+        if field in self.measures:
+            base = self.measures[field][1]
+            return (base + suf) if base else None
+        return disp(leaf(field)) + suf
+
+    def col_vals(self, field_display, rows, raw=False):
+        i = self.idx.get(field_display)
+        if i is None:
+            return None
+        vals = [r[i] for r in rows if str(r[i]).strip() != ""]
+        return vals if raw else [numify(v) for v in vals]
+
+    def measure_value(self, field, rows, depth=0):
+        if depth > 4 or field not in self.measures:
+            return None
+        mtype, base, sql = self.measures[field]
+        view = field.split(".")[0]
+        if mtype in ("number",) or re.search(r"\$\{(\w+)\}", sql or ""):
+            # ratio / composite: substitute each ${measure} component recursively
+            refs = {m for m in re.findall(r"\$\{(\w+)\}", sql or "")
+                    if f"{view}.{m}" in self.measures}
+            if refs:
+                expr = sql
+                for m in refs:
+                    v = self.measure_value(f"{view}.{m}", rows, depth + 1)
+                    if v is None:
+                        return None
+                    expr = expr.replace("${%s}" % m, f"({v!r})")
+                expr = re.sub(r"\$\{TABLE\}\.", "", expr)
+                expr = re.sub(r"\bNULLIF\s*\(", "NullIf(", expr, flags=re.I)
+                try:
+                    return eval(expr, {"__builtins__": {}},          # noqa: S307 — arithmetic only
+                                {"NullIf": lambda x, y: None if x == y else x})
+                except Exception:
+                    return None
+        d = self.display(field)
+        if mtype == "count":
+            if view != self.explore and self.view_pk.get(view):
+                pk = disp(self.view_pk[view]) + f" ({view})"
+                vals = self.col_vals(pk, rows, raw=True)
+                return len(set(vals)) if vals is not None else len(rows)
+            return len(rows)
+        vals = self.col_vals(d, rows, raw=(mtype == "count_distinct"))
+        if vals is None:
+            return None
+        if mtype == "count_distinct":
+            return len(set(vals))
+        nums = [v for v in vals if isinstance(v, float)]
+        return {"sum": sum, "average": statistics.fmean, "avg": statistics.fmean,
+                "min": min, "max": max,
+                "median": statistics.median}.get(mtype, sum)(nums) if nums else None
+
+
+def expected_offline(el, ev, rows):
+    """Contract element + SourceEval + master rows → [[dim, val], ...]."""
+    fields = el.get("fields") or []
+    ms = [f for f in fields if f in ev.measures]
+    ds = [f for f in fields if f not in ev.measures]
+    data = rows
+    for fld, val in (el.get("filters") or {}).items():
+        d = ev.display(fld)
+        i = ev.idx.get(d)
+        if i is None:
+            continue
+        wanted = {v.strip().casefold() for v in str(val).split(",") if v.strip()}
+        data = [r for r in data if str(r[i]).casefold() in wanted]
+    if el.get("tileType") == "looker_scatter" and len(ms) >= 2:
+        groups = {None: data}
+        if ds:
+            groups = {}
+            di = ev.idx.get(ev.display(ds[0]))
+            for r in data:
+                groups.setdefault(r[di], []).append(r)
+        return [[ev.measure_value(ms[0], rs), ev.measure_value(ms[1], rs)]
+                for rs in groups.values()]
+    if not ms:
+        return None
+    # dim field mirrors the builder/plan: pie slices come from pivots[0] or the
+    # first dimension; axis charts use the first dimension; KPI has none.
+    if el.get("tileType") in ("looker_pie", "looker_donut_multiples"):
+        catf = (el.get("pivots") or ds or [None])[0]
+    else:
+        catf = ds[0] if ds else None
+    if el.get("tileType") == "single_value" or not catf:
+        return [[None, ev.measure_value(ms[0], data)]]
+    di = ev.idx.get(ev.display(catf))
+    if di is None:
+        return None
+    groups = {}
+    for r in data:
+        groups.setdefault(r[di], []).append(r)
+    return [[d, ev.measure_value(ms[0], rs)] for d, rs in groups.items()]
+
+
+def expected_live(el):
+    """Ground truth from Looker itself: run the tile's inline query."""
+    import looker_api
+    fields = el.get("fields") or []
+    body = {"model": el.get("model"), "view": el.get("explore"), "fields": fields,
+            "filters": el.get("filters") or {}, "limit": "5000"}
+    code, res = looker_api.call("POST", "/queries/run/json", body)
+    if code != 200 or not isinstance(res, list):
+        raise RuntimeError(f"Looker inline query -> {code}: {str(res)[:200]}")
+    # last field is the measure by tile convention; dim = first other field present
+    keys = list(res[0].keys()) if res else fields
+    val_key = next((f for f in reversed(fields) if f in keys), keys[-1])
+    dim_key = next((f for f in fields if f != val_key and f in keys), None)
+    if dim_key is None:
+        return [[None, numify(res[0][val_key])]] if res else None
+    return [[r[dim_key], numify(r[val_key])] for r in res]
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--lookml-dir", required=True, help="LookML project dir (model + views)")
+    ap.add_argument("--dashboard", help="offline: a .dashboard.lookml file")
+    ap.add_argument("--dashboard-id", help="live: Looker dashboard id (needs ~/.looker/looker.ini)")
+    ap.add_argument("--explore", help="explore to convert (default: the contract's most-used)")
+    ap.add_argument("--name", help="name PREFIX applied to the DM and the workbook")
+    ap.add_argument("--workdir")
+    ap.add_argument("--converted", help="JSON output of the convert_lookml_to_sigma MCP tool")
+    ap.add_argument("--reuse-dm")
+    ap.add_argument("--skip-dm-reuse-check", action="store_true")
+    ap.add_argument("--folder")
+    ap.add_argument("--yes", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+    if not a.dashboard and not a.dashboard_id:
+        ap.error("--dashboard (offline .dashboard.lookml) or --dashboard-id (live) required")
+    offline = not a.dashboard_id
+    lookml_dir = os.path.abspath(os.path.expanduser(a.lookml_dir))
+    wd = os.path.abspath(os.path.expanduser(a.workdir or "./looker-migration"))
+    os.makedirs(wd, exist_ok=True)
+    prefix = (a.name.strip() + " ") if a.name else ""
+    ensure_sigma_env()
+    if not a.dry_run:
+        missing = [v for v in ("SIGMA_BASE_URL", "SIGMA_API_TOKEN") if not os.environ.get(v)]
+        if not a.reuse_dm and not os.environ.get("SIGMA_CONNECTION_ID"):
+            missing.append("SIGMA_CONNECTION_ID (full warehouse-connection UUID — NOT a short prefix)")
+        if missing:
+            sys.exit("FATAL: missing env: " + ", ".join(missing))
+    TOTAL = 6
+
+    # ── Phase 1 — Parse (the normalized dashboard contract) ──────────────────
+    hdr(1, TOTAL, "Parse")
+    contract_path = os.path.join(wd, "contract.json")
+    if offline:
+        run(["python3", os.path.join(HERE, "parse_lookml_dashboard.py"),
+             a.dashboard, "--out", contract_path])
+    else:
+        run(["python3", os.path.join(HERE, "fetch_looker_dashboard.py"),
+             a.dashboard_id, contract_path])
+    dash = json.load(open(contract_path))
+    if isinstance(dash, list):
+        dash = dash[0]
+    explores = [e.get("explore") for e in dash["elements"] if e.get("explore")]
+    explore = a.explore or (max(set(explores), key=explores.count) if explores else None)
+    views_dir = os.path.join(lookml_dir, "views")
+    if not os.path.isdir(views_dir):
+        views_dir = lookml_dir
+    view_files = sorted(glob.glob(os.path.join(views_dir, "*.view.lkml")))
+    measures, _dims, view_pk, _formats = build_field_index(view_files)
+    print(f"   '{dash['title']}': {len(dash['elements'])} tile(s), {len(dash['filters'])} filter(s), "
+          f"explore '{explore}' · {len(view_files)} view file(s), {len(measures)} measure(s) · workdir {wd}")
+
+    # ── Phase 2 — RLS gate (zero overhead when clean; LOUD when not) ─────────
+    hdr(2, TOTAL, "RLS gate (detect_rls.py)")
+    p = subprocess.run(["python3", os.path.join(HERE, "detect_rls.py"), lookml_dir, "--json"],
+                       capture_output=True, text=True)
+    findings = []
+    try:
+        parsed = json.loads(p.stdout) if p.stdout.strip() else []
+        findings = parsed.get("findings", parsed) if isinstance(parsed, dict) else parsed
+    except ValueError:
+        findings = []
+    if not findings:
+        print("   no RLS constructs found — proceeding (zero-overhead happy path)")
+    else:
+        print(f"   ⚠ {len(findings)} RLS finding(s):")
+        for f in findings[:10]:
+            print(f"     - {json.dumps(f)[:160]}")
+        json.dump(findings, open(os.path.join(wd, "rls-findings.json"), "w"), indent=2)
+        if not a.yes:
+            print("\n==================== DECISION NEEDED (RLS) ====================")
+            print("This LookML enforces row-level security. It is NEVER silently dropped")
+            print("and NEVER silently ported. Options:")
+            print("  1. Port it: run the scripted flow in SKILL.md Phase 1.5")
+            print("     (scripts/apply_sigma_rls.py — reuse-first, plan-only by default),")
+            print("     then re-run this command with --yes.")
+            print("  2. Re-run with --yes to migrate WITHOUT RLS (every row visible to")
+            print("     everyone — the outcome is recorded in rls-findings.json).")
+            print("Nothing was posted to Sigma.")
+            print("===============================================================")
+            return 10
+        print("   --yes: proceeding WITHOUT porting RLS — the migrated model shows ALL rows")
+        print("   to everyone until you run apply_sigma_rls.py (recorded in rls-findings.json)")
+
+    # ── Phase 3 — Convert (local build / patched source / MCP request) ────────
+    hdr(3, TOTAL, "Convert")
+    dm_spec_path = os.path.join(wd, "dm-spec.json")
+    conn = os.environ.get("SIGMA_CONNECTION_ID", "PLACEHOLDER_CONNECTION_ID")
+    if a.reuse_dm:
+        print(f"   --reuse-dm {a.reuse_dm} — converter skipped")
+    elif a.converted:
+        conv = json.load(open(a.converted))
+        spec = conv.get("model") or conv.get("sigmaDataModel") or conv
+        json.dump(spec, open(dm_spec_path, "w"), indent=2)
+        print(f"   using MCP converter output {a.converted} -> {dm_spec_path}")
+    else:
+        src = os.environ.get("CONVERTER_SRC") or next(
+            (os.path.join(h, "src", "lookml.ts") for h in CONVERTER_HOMES
+             if os.path.exists(os.path.join(h, "src", "lookml.ts"))
+             and os.path.exists(os.path.join(h, "node_modules", ".bin", "tsx"))), None)
+        build = os.environ.get("CONVERTER_PATH") or next(
+            (os.path.join(h, "build", "lookml.js") for h in CONVERTER_HOMES
+             if os.path.exists(os.path.join(h, "build", "lookml.js"))), None)
+        if src:
+            repo = os.path.dirname(os.path.dirname(src))
+            run(["node", "--import", "tsx/esm", os.path.join(HERE, "convert_dm.mjs"),
+                 explore, dm_spec_path],
+                env={"LOOKML_DIR": lookml_dir, "CONVERTER_SRC": src,
+                     "SIGMA_CONNECTION_ID": conn}, cwd=repo)
+        elif build:
+            shim = os.path.join(wd, "_convert_lookml.mjs")
+            files = [{"name": os.path.basename(f), "content": open(f).read()}
+                     for f in sorted(glob.glob(os.path.join(lookml_dir, "*.model.lkml"))) + view_files]
+            json.dump(files, open(os.path.join(wd, "_lookml-files.json"), "w"))
+            open(shim, "w").write(f"""// generated by migrate-looker.py — local converter build path
+import {{ readFileSync, writeFileSync }} from 'node:fs';
+import {{ convertLookMLToSigma }} from {json.dumps(build)};
+const files = JSON.parse(readFileSync({json.dumps(os.path.join(wd, "_lookml-files.json"))}, 'utf8'));
+const res = convertLookMLToSigma(files, {{ connectionId: {json.dumps(conn)},
+  exploreName: {json.dumps(explore)}, joinStrategy: 'relationships' }});
+writeFileSync({json.dumps(dm_spec_path)}, JSON.stringify(res.model, null, 2));
+console.error('stats:', JSON.stringify(res.stats));
+(res.warnings || []).forEach(w => console.error('  WARN ' + w));
+""")
+            run(["node", shim])
+        else:
+            files = [{"name": os.path.basename(f), "content": open(f).read()}
+                     for f in sorted(glob.glob(os.path.join(lookml_dir, "*.model.lkml"))) + view_files]
+            req = {"tool": MCP_TOOL,
+                   "arguments": {"files": files, "connectionId": conn,
+                                 "exploreName": explore, "joinStrategy": "relationships"}}
+            req_path = os.path.join(wd, "convert-request.json")
+            json.dump(req, open(req_path, "w"), indent=2)
+            print(f"""
+   No shellable converter (CONVERTER_SRC / CONVERTER_PATH unset) — use the MCP converter:
+     1. Call the `{MCP_TOOL}` MCP tool with the arguments in
+          {req_path}
+     2. Save the tool's JSON output to {wd}/converted.json
+     3. RE-RUN THIS COMMAND with:  --converted {wd}/converted.json""")
+            return 3
+
+    # ── Phase 3.5 — DM-reuse check (printed; default = BUILD NEW) ─────────────
+    hdr(3, TOTAL, "DM-reuse check (3.5)")
+    if a.reuse_dm:
+        print(f"   --reuse-dm {a.reuse_dm} supplied — reusing that data model (POST skipped)")
+    elif a.skip_dm_reuse_check or a.dry_run:
+        print("   skipped (--skip-dm-reuse-check / --dry-run) — building new")
+    else:
+        sig = os.path.join(wd, "dm-signature.json")
+        match_out = os.path.join(wd, "dm-match.json")
+        run(["python3", os.path.join(HERE, "lookml-dm-signature.py"),
+             "--lookml-dir", lookml_dir, "--label", dash["title"], "--out", sig])
+        rc, _ = run(["ruby", os.path.join(HERE, "find-or-pick-dm.rb"),
+                     "--workbook-signature", sig, "--out", match_out], check=False)
+        try:
+            match = json.load(open(match_out))
+            cands = match.get("candidates") or []
+            for c in cands[:5]:
+                print(f"     candidate: {c.get('dm_name')} ({c.get('dm_id')}) score={c.get('score')}")
+            if rc == 0 and cands:
+                print("   ➤ a reusable DM scored ≥ threshold — DEFAULT IS STILL BUILD-NEW. To reuse it, re-run with:")
+                print(f"       --reuse-dm {cands[0].get('dm_id')}")
+            else:
+                print("   no existing DM scores above the reuse threshold — building new")
+        except Exception as ex:
+            print(f"   DM-reuse scan unavailable ({ex}) — building new")
+
+    if a.dry_run:
+        wb_spec = os.path.join(wd, "wb-spec.json")
+        run(["python3", os.path.join(HERE, "build_workbook.py"), contract_path,
+             "--views", views_dir, "--out", wb_spec])
+        print("\n================ RESULT (dry run) ================")
+        print(f"artifacts   : {wd}  (contract, dm-spec/convert-request, wb-spec — no Sigma objects created)")
+        print("==================================================")
+        return 0
+
+    # ── Phase 4a — POST the data model + denorm readback ──────────────────────
+    hdr(4, TOTAL, "Build data model (post_dm.py + readback)")
+    folder = resolve_folder(a.folder)
+    if a.reuse_dm:
+        dm = a.reuse_dm
+    else:
+        spec = json.load(open(dm_spec_path))
+        if prefix:
+            spec["name"] = f"{prefix}{spec.get('name') or dash['title']}"
+            json.dump(spec, open(dm_spec_path, "w"), indent=2)
+        rc, out = run(["python3", os.path.join(HERE, "post_dm.py"), dm_spec_path,
+                       "--folder-id", folder])
+        m = re.search(r'dataModelId"?\s*[:=]\s*"?([0-9a-f-]{36})', out)
+        if not m:
+            sys.exit("FATAL: could not parse dataModelId from post_dm.py output")
+        dm = m.group(1)
+    import yaml
+    dmspec = yaml.safe_load(sigma("GET", f"/v2/dataModels/{dm}/spec"))
+    els = [e for pg in dmspec.get("pages", []) for e in (pg.get("elements") or [])]
+    denorm = next((e for e in els if (e.get("name") or "").endswith(" View")), None) \
+        or max(els, key=lambda e: len(e.get("columns") or []))
+    print(f"   DM {dm} · denorm '{denorm['name']}' ({denorm['id']}, "
+          f"{len(denorm.get('columns') or [])} cols) · {len(els)} element(s)")
+
+    # ── Phase 4b — Build + POST the workbook (layout XML inline) ─────────────
+    hdr(4, TOTAL, "Build workbook (4b)")
+    wb_spec_path = os.path.join(wd, "wb-spec.json")
+    run(["python3", os.path.join(HERE, "build_workbook.py"), contract_path,
+         "--views", views_dir, "--dm-id", dm, "--element-id", denorm["id"],
+         "--dm-element-name", denorm["name"], "--folder-id", folder,
+         "--out", wb_spec_path])
+    wspec = json.load(open(wb_spec_path))
+    wspec["name"] = f"{prefix}{dash['title']} (from Looker)"
+    resp = sigma("POST", "/v2/workbooks/spec", wspec)       # responds in YAML
+    m = re.search(r"workbookId[\"'\s:]+([0-9a-f-]{36})", resp)
+    if not m:
+        sys.exit("FATAL: workbook POST: " + resp[:300])
+    wb = m.group(1)
+    with open(os.path.join(wd, "posted-workbooks.jsonl"), "a") as f:
+        f.write(json.dumps({"id": wb, "name": wspec["name"]}) + "\n")
+    json.dump({"workbookId": wb}, open(os.path.join(wd, "wb-ids.json"), "w"))
+    cols = json.loads(sigma("GET", f"/v2/workbooks/{wb}/columns"))
+    entries = cols.get("entries") or []
+    errs = [c for c in entries if (c.get("type") or {}).get("type") == "error"]
+    print(f"   workbook {wb} '{wspec['name']}' · {len(entries) - len(errs)}/{len(entries)} columns resolve"
+          + (f" — {len(errs)} ERROR-typed" if errs else ""))
+    for c in errs[:6]:
+        print(f"     [{c.get('elementId')}] {c.get('label')}: {c.get('formula')}")
+
+    # ── Phase 5 — SOURCE-FRESHNESS preflight (read BEFORE any side-by-side) ───
+    hdr(5, TOTAL, "Source freshness (preflight — before parity)")
+    mh, mr = parse_csv(export_csv(wb, "m-master"))
+    print("   ── SOURCE FRESHNESS (read this before any side-by-side) ──")
+    if offline:
+        newest = max((os.path.getmtime(f) for f in view_files + [a.dashboard]), default=None)
+        print(f"   source                : offline .lkml files (newest mtime "
+              f"{time.strftime('%Y-%m-%d %H:%M', time.localtime(newest)) if newest else '?'}) — "
+              "live Looker freshness unavailable")
+    else:
+        print("   source                : live Looker — tiles query the warehouse live; EXPECTED")
+        print("                           below comes from Looker inline queries run NOW")
+    idx = {h: i for i, h in enumerate(mh)}
+    datecol = next((h for h in mh if "date" in h.lower()), None)
+    line = f"   warehouse (via Sigma) : master = {len(mr)} rows"
+    if datecol:
+        mx = max((str(r[idx[datecol]]) for r in mr if str(r[idx[datecol]]).strip()), default="?")
+        line += f", max({datecol}) = {mx}"
+    print(line)
+    print("   (Looker is live-query: a parity delta is a CONVERSION issue, not cache staleness.)")
+
+    # ── Phase 6 — Parity (two-pass, scripted) + HARD GATE ────────────────────
+    hdr(6, TOTAL, "Parity + hard gate")
+    rc, _ = run(["ruby", os.path.join(HERE, "phase6-parity-looker.rb"),
+                 "--workdir", wd, "--workbook-id", wb], check=False)
+    if rc != 0:
+        sys.exit("FATAL: parity pass 1 failed")
+    plan = json.load(open(os.path.join(wd, "parity-plan.json")))
+    by_name = {e.get("name"): e for e in dash["elements"]}
+    ev = SourceEval(measures, view_pk, explore, mh)
+    expected, actuals = {}, {}
+    for c in plan["charts"]:
+        cname = c["chart"]
+        headers, rows = parse_csv(export_csv(wb, c["sigma_element_id"]))
+        cidx = {h: i for i, h in enumerate(headers)}
+        want = c["sigma_columns"]
+        if len(want) == 1:                      # KPI
+            vi = cidx.get(want[0], 0)
+            actuals[cname] = [[None, numify(rows[0][vi])]] if rows else []
+        else:
+            di = cidx.get(want[0], 0)
+            vi = cidx.get(want[1], 1 if len(headers) > 1 else 0)
+            actuals[cname] = [[row[di], numify(row[vi])] for row in rows]
+        el = by_name.get(cname)
+        if not el:
+            print(f"   WARN: no source tile named {cname!r} in the contract — chart will DIVERGE")
+            continue
+        exp = None
+        if not offline:
+            try:
+                exp = expected_live(el)
+            except Exception as ex:
+                print(f"   WARN: Looker inline query failed for {cname!r} ({ex}); "
+                      "falling back to warehouse re-aggregation")
+        if exp is None:
+            exp = expected_offline(el, ev, mr)
+        if exp is not None:
+            expected[cname] = exp
+    json.dump(expected, open(os.path.join(wd, "parity-expected.json"), "w"), indent=2)
+    json.dump(actuals, open(os.path.join(wd, "parity-actuals.json"), "w"), indent=2)
+    rc, _ = run(["ruby", os.path.join(HERE, "phase6-parity-looker.rb"),
+                 "--workdir", wd, "--finalize"], check=False)
+    grc, _ = run(["ruby", os.path.join(HERE, "assert-phase6-ran.rb"),
+                  "--workdir", wd, "--workbook-id", wb], check=False)
+    summary = json.load(open(os.path.join(wd, "parity-final.json")))
+
+    # ── Summary ────────────────────────────────────────────────────────────────
+    green = grc == 0 and not errs
+    print("\n================ RESULT ================")
+    print(f"dataModelId : {dm}{'  (REUSED)' if a.reuse_dm else ''}")
+    print(f"workbookId  : {wb}  '{wspec['name']}'")
+    print(f"parity      : {summary['charts_pass']}/{summary['charts_total']} {summary['status']} · "
+          f"hard gate {'PASS' if grc == 0 else f'FAIL (exit {grc})'}")
+    if findings:
+        print(f"RLS         : {len(findings)} finding(s) NOT ported (recorded in rls-findings.json)")
+    print(f"PARITY      : {'GREEN' if green else 'RED'}  ·  wall-clock {time.time() - T0:.1f}s")
+    print("========================================")
+    return 0 if green else 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

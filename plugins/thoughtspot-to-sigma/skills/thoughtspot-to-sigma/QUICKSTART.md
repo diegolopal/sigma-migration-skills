@@ -3,6 +3,20 @@
 End-to-end: a ThoughtSpot model + its Liveboards → a Sigma data model + workbooks,
 parity-verified against the warehouse.
 
+## 0. ONE COMMAND (preferred)
+```bash
+export TS_HOST TS_TOKEN SIGMA_CONNECTION_ID TS_DB TS_SCHEMA   # Sigma token auto-minted from ~/.sigma-migration/env
+python3 scripts/migrate-thoughtspot.py --model <TS_MODEL_ID> [--liveboard <ID> ...] \
+    [--name PREFIX] [--workdir /tmp/ts-run]
+# offline: --model-tml fixtures/retail-analytics-model.tml --liveboard-tml fixtures/retail-analytics-liveboard.tml
+```
+Runs everything below — discover → DM-reuse check (candidates PRINTED; default
+build-new, reuse only via `--reuse-dm <id>`) → convert (exit 3 + `--converted`
+resume when no local converter build) → DM → workbooks → layout → **freshness
+preflight** → **scripted parity + `assert-phase6-ran.rb` hard gate**. Exit 0 =
+GREEN; a failed gate fails the command. Steps 1–5 below are the manual,
+per-phase path.
+
 ## 1. Authenticate
 **ThoughtSpot** (REST v2). On an SSO trial with no local password, open
 `https://<your>.thoughtspot.cloud/api/rest/2.0/auth/session/token` in the tab where
