@@ -53,6 +53,7 @@ offline-only path that normalizes into the same contract.
 | `scripts/fetch_looker_dashboard.py` | **Phase 1 (live):** `GET /dashboards/{id}` → the normalized contract (`refs/dashboard-contract.md`). Works for UDD AND LookML dashboards. Self-contained (reads `~/.looker/looker.ini`). `tileType` is read from `query.vis_config.type` (NOT `element.type`, which is always `"vis"`); `listen` from `result_maker.filterables`; layout from the **active** layout's components. |
 | `scripts/parse_lookml_dashboard.py` | **Phase 1 (offline):** parse a `.dashboard.lookml` (YAML) → the SAME contract. Dev/test only; cannot see UDD dashboards. Requires PyYAML. |
 | `scripts/detect_rls.py` | **Phase 1 (RLS scan):** dependency-free regex scan of a LookML dir/file (and/or model JSON) for row-level-security constructs (`access_filter`, `sql_always_where`, `access_grant`, `user_attribute`). Prints a structured summary + recommended Sigma mapping per finding (or `--json`). **Prints nothing / exits 0 when there's no RLS** (zero-overhead). `python3 detect_rls.py <lookml_dir> [--json]` |
+| `scripts/apply_sigma_rls.py` | **Phase 1.5 (apply RLS):** scripted, API-driven RLS port. Reuse-first `GET /v2/user-attributes` (prints a match before creating); `--create` → `POST /v2/user-attributes`; `--assign` (+`--member-id`,`--value`) → `POST /v2/user-attributes/{id}/users`; `--field`/`--element-id` → print the verified RLS calc-col + element-filter snippet, `--apply --dm-id` → PATCH it into the DM element spec. **Read-only / plan-only by default — mutates only on an explicit `--create`/`--assign`/`--apply` flag.** Reads `$SIGMA_BASE_URL`/`$SIGMA_API_TOKEN` like `post_dm.py`. |
 | `scripts/convert_dm.mjs` | **Phase 2:** run `convertLookMLToSigma` against a directory of `.lkml` files for one explore → a Sigma DM spec JSON. Bypasses the deployed MCP build (see the converter-build gotcha below). Env: `LOOKML_DIR`, `CONVERTER_SRC`; args `<exploreName> <out.json>`. |
 | `scripts/post_dm.py` | **Phase 2:** POST a DM spec to `/v2/dataModels/spec` (auto-finds a writable folder, swaps in the full connection UUID). Env: `SIGMA_API_TOKEN`, `SIGMA_BASE_URL`, `SIGMA_CONNECTION_ID`; args `<spec.json>`. |
 | `scripts/build_workbook.py` | **Phase 3:** dashboard contract + the explore's view `.lkml` files → a Sigma `/v2/workbooks/spec` body (hidden Data page + master table, one element per tile, controls from filters, newspaper→24-col layout XML). Generates locally; does **not** POST. Handles ratio measures, joined-col `Field (alias)` naming, table calcs, pivot-flatten + warn. |
@@ -216,31 +217,71 @@ python3 scripts/detect_rls.py /path/to/lookml          # the project dir (and/or
 here, before POSTing the data model in Phase 2 — make it one explicit, reviewed decision, never an
 invisible default.
 
-1. **Reuse-first — check what already exists in Sigma before creating anything.** The customer may
-   have already set RLS up in Sigma; don't duplicate it.
-   - **Existing Sigma user attributes** — list them and match by name to the Looker
-     `user_attribute`s in the findings. (Manual check today: **Administration → User Attributes**
-     in the Sigma UI; reuse a matching attribute rather than creating a new one. If a list
-     endpoint becomes available, prefer it — but do not block on it; the manual check is the
-     contract.)
+**The whole flow is scripted and API-driven** — Sigma user attributes are fully API-supported, so
+reuse-first, provisioning, and the row filter itself are all done via `apply_sigma_rls.py` (no UI
+step). Keep the framing intact (one consolidated gate, opt-in/out, never-silent); only the
+mechanics are now concrete.
+
+1. **Reuse-first — check what already exists in Sigma before creating anything (scripted).** The
+   customer may have already set RLS up in Sigma; don't duplicate it.
+   - **Existing Sigma user attributes** — list them via the API and match by name to the Looker
+     `user_attribute`s in the findings. `apply_sigma_rls.py --attr <name>` does this:
+     `GET /v2/user-attributes` (read-only, no flags) and prints a **REUSE:** line with the existing
+     `userAttributeId` if one matches (case-insensitive), or "no existing attribute" otherwise.
+     Reuse a matching attribute rather than creating a new one.
+
+     ```bash
+     bash -c 'eval "$(scripts/get-token.sh)" && python3 scripts/apply_sigma_rls.py --attr region'
+     ```
    - **Existing data models with similar RLS logic** — if a Sigma DM already filters the same
      field by the same attribute (e.g. a previously-migrated explore on the same source), reuse it
      instead of re-implementing the filter.
 2. **Pre-fill a recommended plan.** Using the mapping table above, draft the per-finding Sigma
-   action (which user attribute, which field, `LookupUserAttributeText`/`CurrentUserAttributeText`
-   filter vs DM/element filter vs note) — reusing the existing Sigma attributes/DMs found in step 1.
+   action (which user attribute, which field, `CurrentUserAttributeText` row filter vs DM/element
+   filter vs note) — reusing the existing Sigma attributes/DMs found in step 1. Preview the exact
+   row-filter spec for a finding with `apply_sigma_rls.py --attr <name> --field <DisplayName>
+   --element-id <denorm-element-id>` (prints the calc-col + element-filter snippet; plan-only).
 3. **One consolidated confirm / edit / skip.** Present the full plan and let the user, in a SINGLE
    decision: **confirm** it as drafted, **edit** any mapping (e.g. point at a different existing
    attribute, change a field), or **skip** porting RLS entirely (they may enforce it elsewhere in
-   Sigma). No per-rule nagging.
+   Sigma). No per-rule nagging. `apply_sigma_rls.py` is **plan-only by default** — it mutates ONLY
+   when you pass `--create` / `--assign` / `--apply`, so running it through step 1–2 never changes
+   anything before the user confirms.
 4. **Always record the outcome.** For every finding, note **ported / reused / skipped** in the
    migration summary (Phase 4 output) so any skipped RLS is **visible, never silent** — a reviewer
    can see exactly which Looker restriction was carried over, reused, or deliberately dropped.
 
-Then proceed to Phase 2. Apply the confirmed plan as part of the DM build: create/reuse the Sigma
-user attribute(s), and add the row filter(s) to the data model (or element) — `access_filter` and
-user-attribute `sql_always_where` → `LookupUserAttributeText`/`CurrentUserAttributeText` row
-filters; static `sql_always_where` → a plain DM/element filter; `access_grant` → the recorded note.
+Then proceed to Phase 2 and apply the confirmed plan as part of the DM build, via the SAME script:
+
+- **Provision the user attribute** (only if nothing reusable was found in step 1):
+  ```bash
+  bash -c 'eval "$(scripts/get-token.sh)" && python3 scripts/apply_sigma_rls.py \
+    --attr region --value West --create'                       # POST /v2/user-attributes
+  ```
+- **Assign a value to the member(s)** who should be restricted (the value the user attribute
+  resolves to per person — assign to the member that the parity query runs AS, or RLS returns 0
+  rows):
+  ```bash
+  bash -c 'eval "$(scripts/get-token.sh)" && python3 scripts/apply_sigma_rls.py \
+    --attr region --value West --member-id <memberId> --assign'  # POST /v2/user-attributes/{id}/users
+  ```
+- **Apply the row filter** to the DM element — the verified spec shape (a boolean calc column
+  `CurrentUserAttributeText("<attr>") = [<Field>]` + an element `filters` entry
+  `{kind:list, mode:include, values:[true]}`):
+  ```bash
+  bash -c 'eval "$(scripts/get-token.sh)" && python3 scripts/apply_sigma_rls.py \
+    --attr region --field Region --element-id <denorm-element-id> \
+    --dm-id <dataModelId> --apply'                              # GET → inject → PUT /v2/dataModels/{id}/spec
+  ```
+
+Mapping recap: `access_filter` and user-attribute `sql_always_where` → the
+`CurrentUserAttributeText("<attr>") = [<Field>]` row filter above; static `sql_always_where` → a
+plain DM/element filter; `access_grant` → the recorded note. (Team mode =
+`CurrentUserInTeam([...])`; user-email mode = `[Email] = CurrentUserEmail()`.)
+
+> **Proof:** this exact scripted flow was validated live end-to-end 2026-06-10 (Looker hakkoda1 →
+> Sigma tj-wells-1989, `csa_thelook` order_fact, `region`/West) with **exact 3-way parity** —
+> Looker-restricted == Sigma-restricted == warehouse = **$38,906.82 / 220 rows**.
 
 ---
 
@@ -314,8 +355,11 @@ shapes so you recognize a regression:
   source queries; >2 sources or non-equi joins → manual + warn).
 - **Not yet converted:** NDT (`explore_source`), PDT `datagroup`/`persist_for`, `many_to_many`.
 - **RLS (`access_filter` / `sql_always_where` / `access_grant`)** — detected at discovery
-  (Phase 1d) and decided ONCE at the Phase 1.5 gate; the converter emits an `access_filter` RLS
-  note + `CurrentUserAttributeText()` stub. Never silently dropped — the outcome is recorded.
+  (Phase 1d) and decided ONCE at the Phase 1.5 gate, then ported via the scripted, API-driven
+  `apply_sigma_rls.py` (reuse-first user-attribute lookup → create/assign → PATCH the
+  `CurrentUserAttributeText("<attr>") = [<Field>]` row filter). The converter also emits an
+  `access_filter` RLS note + `CurrentUserAttributeText()` stub. Never silently dropped — the
+  outcome is recorded.
 
 > **`metric()` returns "Missing Metric" in MCP SQL** — a known Sigma quirk, not a conversion
 > bug. Verify metric values via the **raw aggregate** (`Sum(...)`, `CountDistinct(...)`), not via

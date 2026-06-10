@@ -37,13 +37,19 @@ python3 scripts/parse_lookml_dashboard.py <file.dashboard.lookml> --out /tmp/loo
 
 # scan for row-level security (silent + exit 0 if none; if found → ONE decision gate before Phase 3)
 python3 scripts/detect_rls.py /path/to/lookml
+# reuse-first lookup of the matching Sigma user attribute (read-only, plan-only by default)
+python3 scripts/apply_sigma_rls.py --attr <name>
 ```
 
 If `detect_rls.py` reports RLS (`access_filter` / `sql_always_where` / `access_grant`), stop ONCE
-before building: reuse any existing Sigma user attribute / DM, pre-fill the recommended mapping
-(`access_filter` → user-attribute row filter via `LookupUserAttributeText`/`CurrentUserAttributeText`;
-`sql_always_where` → DM/element filter; `access_grant` → note), then confirm/edit/skip in a single
-decision — and record ported/reused/skipped in the summary (never silently drop RLS).
+before building: the whole port is scripted via `apply_sigma_rls.py` (Sigma user attributes are
+API-supported). Reuse-first (`--attr <name>` → `GET /v2/user-attributes`, prints a match), pre-fill
+the recommended mapping (`access_filter` → `CurrentUserAttributeText("<attr>") = [<Field>]` row
+filter; `sql_always_where` → DM/element filter; `access_grant` → note), then confirm/edit/skip in a
+single decision. On confirm, apply via the same script: `--create` (POST attribute), `--assign
+--member-id --value` (POST assignment), `--apply --field --element-id --dm-id` (PATCH the row
+filter into the DM element). It mutates only on those flags. Record ported/reused/skipped in the
+summary (never silently drop RLS). Validated live with exact 3-way parity ($38,906.82 / 220 rows).
 
 ## 3. Convert the semantic model
 
