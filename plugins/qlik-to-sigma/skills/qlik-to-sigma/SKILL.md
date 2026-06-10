@@ -12,10 +12,32 @@ user-invocable: true
 
 # Qlik → Sigma Conversion
 
-> **STATUS: VALIDATED end-to-end (2026-06-02).** The full flow below was proven on
-> a real migration ("Retail Orders (Qlik)" → Sigma) with **exact parity** to the
-> Snowflake source at the data-model, denormalized-element, and workbook-chart
-> layers. The `scripts/build-sigma-*.py` are the actual scripts used.
+> **STATUS: VALIDATED end-to-end (2026-06-02; generalized + re-validated 2026-06-10).**
+> The full flow below was proven on a real migration ("Retail Orders (Qlik)" → Sigma)
+> with **exact parity** to the Snowflake source at the data-model, denormalized-element,
+> and workbook-chart layers — and the 2026-06-10 run produced the multi-page workbook
+> (one Sigma page per Qlik sheet, layout straight from the sheet cell grids) from ONE
+> command with zero hand-edits in under 2 minutes.
+
+## The one command
+
+```bash
+eval "$(scripts/vendor/get-token.sh)"          # SIGMA_BASE_URL + SIGMA_API_TOKEN
+ruby scripts/migrate-qlik.rb \
+  --app <qlikAppId> --connection <SIGMA_CONNECTION_ID> \
+  --database <DB> --schema <SCHEMA> --context <qlik-cli ctx> \
+  [--folder <SIGMA_FOLDER_ID>] [--name '<prefix>'] [--yes]
+```
+
+discover → convert → data model → workbook → layout → parity, for ANY app, driven
+entirely by the discovery artifacts (no app-specific edits). Exit 10 = genuine human
+decisions printed as an OPEN QUESTIONS block (re-run with `--yes` or `--answers`);
+exit 0 = PARITY GREEN; exit 3 = built but parity RED. Each phase below is also an
+independently runnable script if you need to intervene mid-pipeline.
+
+**Offline smoke (no tenant/org/network):** `ruby scripts/migrate-qlik.rb
+--from-discovery fixtures/retail-orders --connection 0000… --dry-run --yes --out /tmp/smoke`
+— see `fixtures/README.md`.
 
 **Read ALL of the following before replying or taking any action:**
 - `refs/sigma-build-gotchas.md` — the hard-won spec rules (SQL element, workbook master, YAML responses). **This is the difference between a 2xx that errors at query time and a working migration.**
@@ -48,7 +70,7 @@ qlik-cli context (OAuth M2M or API key). `qlik context use <ctx>`.
 
 ### Sigma access
 ```bash
-bash -c 'eval "$(~/sigma-skills-staging/tableau-to-sigma/scripts/get-token.sh)"; <cmd>'   # sets SIGMA_BASE_URL + SIGMA_API_TOKEN
+bash -c 'eval "$(scripts/vendor/get-token.sh)"; <cmd>'   # sets SIGMA_BASE_URL + SIGMA_API_TOKEN
 ```
 Need a Sigma connection pointing at the same warehouse as the Qlik app (for parity).
 The verified CSA.TJ connection is `cb2f5180-641f-47bd-8efa-da9d590d855a` (Snowflake ymb68310).
@@ -56,14 +78,28 @@ The verified CSA.TJ connection is `cb2f5180-641f-47bd-8efa-da9d590d855a` (Snowfl
 ---
 
 ## Phase 1 — Discover (qlik-cli)
-Extract from the app (`qlik app ...`):
+`scripts/qlik-discover.py --app <id> --context <ctx> --out WORK` extracts:
 - **Data model** — tables + fields. Source of truth = the **load script** (`qlik app script get`); it encodes renames/joins/drops. Capture the effective table→field map (post-rename).
 - **Master measures** — `qMeasure.qDef` (Qlik expressions) + label. (List via the engine; for known ids `qlik app object get <id>`.)
 - **Master dimensions** — simple field refs are skipped by the converter (already columns); only *calculated* dims become calc columns.
-- **Sheets / charts** — `qlik app object get <id>` → `qHyperCubeDef` (dimensions + measures + chart type) per viz.
+- **Sheets / charts** (`charts.json`) — per object: vizType, title, owning sheet, dims (raw field defs + labels + qNullSuppression), measures (exprs + labels + Qlik number formats), sort definition.
+- **Sheet cell grids** (`layout.json`) — per sheet: `columns`×`rows` grid + every object's `col/row/colspan/rowspan`. The workbook step maps this 1:1 onto Sigma's 24-col grid (row-scale ≥2 so labels render; KPIs bumped to ≥5 rows).
+- **App freshness** (`app-meta.json` + `snapshot.json`) — `lastReloadTime`, Section Access / DirectQuery flags, plus a Qlik-engine `eval` snapshot of every sheet KPI and Max(date) — read-only, no reload.
 Assemble into the converter's input JSON (`refs/example-converter-input.json`):
 `{appName, tables:[{name, noOfRows, fields:[{name}]}], masterMeasures:[{title,qDef}], masterDimensions:[]}`.
 **Use the post-rename Qlik field names** so relationships come out clean.
+
+### Phase 1.5 — SOURCE-FRESHNESS PREFLIGHT (never skip)
+Before ANY side-by-side, compare the app's `lastReloadTime` + in-memory snapshot
+against the live warehouse. Qlik shows a **reload-time snapshot**; Sigma queries the
+warehouse **live** — a stale app makes every total differ and looks like a conversion
+bug if you don't lead with it. The orchestrator prints the staleness up front
+("Qlik app last reloaded N days ago") and Phase 6 leads its handoff with the explicit
+comparison, e.g. *"Qlik is ~8 days stale; Sigma will show more data (Qlik 106,723.34 /
+620 orders vs warehouse 110,342.75 / 648)"* — classifying each KPI delta as
+MATCH / STALE-EXPLAINED / DIVERGENT. Offer the user the option to reload/repoint the
+Qlik app first if they need matching snapshots. Only DIVERGENT (delta NOT explained by
+staleness) blocks GREEN.
 
 > **Legacy QlikView `.qvw`?** There's no Qlik Cloud API and no `.qvw` parser. Have the
 > customer enable "Create project folder" in QlikView Desktop and send the `<name>-prj/`
@@ -119,22 +155,49 @@ Qlik table names are bare). Decision:
 - **Score < 0.6** → build new (Phase 3) and TELL the user no reusable DM was found.
 
 ## Phase 3 — Build the Sigma data model  (`scripts/build-sigma-dm.py`)
-Reconcile the converter output to the real warehouse and POST:
-- Map Qlik-renamed fields → real warehouse columns (e.g. `STORE_KEY`→`ORDER_STORE_KEY`, `CUSTOMER_REGION`→`REGION`). Relationships are by column-**id**, so they survive the repoint.
-- Add a **denormalized custom-SQL element** reproducing the LOAD joins — the bulletproof master for workbook charts. SQL-element rules in `refs/sigma-build-gotchas.md`.
-- POST `/v2/dataModels/spec` body `{folderId, schemaVersion:1, ...spec}`.
-- **Verify (hard gate):** `describe(datamodel-element)` — every column a concrete type, no `error`; then `query` the metrics and compare to a warehouse baseline.
+Artifact-driven (NO baked-in table maps or SQL): consumes `converter-out.json` +
+`reconcile.json` (from `reconcile-columns.py`) + `denorm.json` (from
+`gen-denorm-sql.py`):
+- The converter's warehouse-table **star elements are repointed** via reconcile: path
+  tail Qlik-table → real table (`OrderFact`→`ORDER_FACT`), column formulas
+  `[REAL_TABLE/<real col display>]` with the Qlik field name kept as the display name.
+  Relationships are by column-**id**, so they survive the repoint. LOAD-expression
+  fields are dropped + reported.
+- The **denormalized custom-SQL element** (reproducing the LOAD joins) — the
+  bulletproof master for workbook charts; SQL-element rules in `refs/sigma-build-gotchas.md`.
+- The converter's **metrics are hosted on the denorm element** (it carries every
+  field → no cross-element errors); unresolvable ones dropped + reported. Original
+  Qlik exprs kept as metric descriptions.
+- Display names follow **Sigma's own derivation rule** (lowercase particles:
+  `DAYS_TO_SHIP` → "Days to Ship", NOT "Days To Ship" — verified against a live DM
+  readback 2026-06-10), so refs line up with Sigma-derived names with no defensive
+  describes.
+- POST `/v2/dataModels/spec` body `{folderId, schemaVersion:1, ...spec}`; element ids
+  are reassigned on save — the script reads back the persisted denorm element id.
 
 ## Phase 4 — Build the workbook  (`scripts/build-sigma-workbook.py`)
-Recreate the Qlik sheet(s): a hidden "Data" page master table sourced from the
-denormalized DM element, then KPI/bar/line/table charts sourcing the master.
-Element shapes + the `source.dataModelId` requirement in `refs/sigma-build-gotchas.md`.
-POST `/v2/workbooks/spec`.
+Artifact-driven: consumes `charts.json` + `layout.json` + `denorm.json` + the DM ids.
+Builds a hidden "Data" page master table (every denorm column) sourced from the
+denorm DM element, then **one Sigma page per Qlik sheet** with KPI/bar/line/pie/
+combo/table elements translated from each object's hypercube (kinds, labels, number
+formats, sorts, null-suppression — see the script docstring for the full mapping).
+The Qlik cell grid maps 1:1 onto the 24-col Sigma grid. Element shapes + the
+`source.dataModelId` requirement in `refs/sigma-build-gotchas.md`.
+POST `/v2/workbooks/spec`, then `scripts/vendor/put-layout.rb` applies the layout XML.
 
 ## Phase 5 — Parity (hard gate)
-Pull the source baseline from the warehouse (the same Snowflake the Qlik app loaded
-from) and compare to Sigma `query` results — at the metric level AND per chart
-(group-by). Migration is GREEN only on a match. (First run matched to the cent.)
+Three checks, led by the **freshness banner** (Phase 1.5 — read it before any
+side-by-side):
+1. **Column resolution** — `GET /v2/workbooks/{id}/columns`: zero `error`-typed columns.
+2. **KPI values** — every KPI element's REST CSV export vs the Qlik engine snapshot
+   (`qlik app eval`); deltas classified MATCH / STALE-EXPLAINED / DIVERGENT.
+3. **Bucket counts (per chart)** — Sigma export row count vs the Qlik hypercube
+   cardinality (`Count(distinct dim…)`), so a suppressed/extra null bucket or a
+   dim-value-without-facts surfaces **even when every shared cell matches**.
+   (Known shape: Qlik shows dimension values with zero fact rows — e.g. a store with
+   no orders — that a fact-grain LEFT JOIN can never emit; that's data shape, not a bug.)
+GREEN = all columns resolve + no DIVERGENT KPI. Bucket mismatches WARN loudly with
+the likely cause. (First run matched to the cent; staleness-explained deltas don't block.)
 
 > **Querying for parity:** `metric('<id>', t)` against a data-model element can return
 > "Missing Metric" — aggregate the element's raw columns directly instead
@@ -149,22 +212,24 @@ from) and compare to Sigma `query` results — at the metric level AND per chart
 | `scripts/qlik-discover.py` | 1 | Extract data model (load script), master measures/dimensions (Engine MeasureList/DimensionList), and sheets/charts from any app → `converter-input.json`. **Validated.** |
 | `scripts/qlik-dm-signature.py` | 2.5 | Converter-input JSON → DM-reuse signature (`{warehouse_tables, referenced_columns, measures}`) for `find-or-pick-dm.rb`. **Validated live.** |
 | `scripts/vendor/find-or-pick-dm.rb` | 2.5 | Scan existing Sigma DMs and recommend reuse (score = 0.7·column + 0.2·table + 0.1·metric overlap; `--auto-pick` with tie-window safety). Shared vendor-neutral copy (canonical: tableau-to-sigma). Non-destructive. |
+| `scripts/migrate-qlik.rb` | ALL | **The one command** — chains every phase below for any app/sheet; OPEN-QUESTIONS checkpoint, freshness preflight, bucket parity; `--from-discovery` + `--dry-run` = offline smoke. **Validated live 2026-06-10 (1m59s, zero hand-edits).** |
 | `scripts/reconcile-columns.py` | 3 | Auto-derive the Qlik-field → real-warehouse-column map from the load script's `AS` aliases + `FROM` tables (so the DM points at real columns). **Validated.** |
-| `scripts/gen-denorm-sql.py` | 3 | Turn reconcile.json into the denormalized SQL element (`real AS qlik` + inferred fact↔dim joins) — feeds `build-sigma-dm.py`. **Validated.** |
-| `scripts/batch-migrate.py` | 3–6 | Migrate many apps in one pass (one Sigma workbook each, reusing a DM) incl. the reusable `auto_layout()` heuristic (KPIs top row, charts 2-wide grid). **Validated on 5 apps.** |
+| `scripts/gen-denorm-sql.py` | 3 | Turn reconcile.json into the denormalized SQL element (`real AS qlik` + inferred fact↔dim joins) — feeds `build-sigma-dm.py`. Display names match Sigma's own derivation rule. **Validated.** |
+| `scripts/batch-migrate.py` | 3–6 | Migrate many apps in one pass (one Sigma workbook each, reusing a SHARED DM) — for tenant-scale demos. For distinct apps, run `migrate-qlik.rb` per app. **Validated on 5 apps.** |
 | `scripts/gap-scout.md` | 2 | Sub-agent guide: for each unhandled Qlik expression (`Aggr`/`Dual`/selection-state/`Range*`/`Class`), spawn a scout to find + validate a Sigma translation and persist it. |
 | `scripts/scout-validate.py` | 2 | Gap-scout primitive: validate a candidate formula via a throwaway test workbook (column-type check) + persist to `~/.qlik-to-sigma/learned-rules.yaml`. **Validated.** |
 | `scripts/learned-rules.py` | 2 | Loader: the build step applies customer-accumulated rules before falling back to a WARN. |
 | `scripts/qlik-screenshot.py` | 1/6 | Export PNGs of a sheet's charts (or specific viz ids) via the Qlik reporting API, for before/after capture. **Validated** (per-viz PNG; whole-sheet is PDF only). |
-| `scripts/build-sigma-dm.py` | 3 | Author + POST the Sigma data model (star + relationships + metrics + denorm SQL element). **Proven.** |
-| `scripts/build-sigma-workbook.py` | 4 | Author + POST the workbook (master + KPIs + charts). **Proven.** |
+| `scripts/build-sigma-dm.py` | 3 | Author + POST the Sigma data model FROM THE PIPELINE ARTIFACTS (converter-out + reconcile + denorm): repointed star + relationships + denorm SQL element + metrics. `--dry-run` for offline. **Proven (generalized 2026-06-10).** |
+| `scripts/build-sigma-workbook.py` | 4 | Author + POST the workbook FROM DISCOVERY (charts.json + layout.json): one page per Qlik sheet, cell-grid layout, sorts, formats, null-suppression filters. `--dry-run` for offline. **Proven (generalized 2026-06-10).** |
 | `refs/example-converter-input.json` | 1–2 | The exact convert_qlik_to_sigma input from the first migration. |
+| `fixtures/retail-orders/` | — | Complete offline discovery+converter input set (sanitized demo app) — see `fixtures/README.md` for the offline smoke path. |
 
 `qlik-discover.py --app <id>` enumerates master items via a temporary
 `MeasureList`/`DimensionList` object (create → layout → remove; briefly saves the
-app and cleans up) — qlik-cli's `object ls` does NOT list master items. The two
-`build-sigma-*.py` are the literal scripts from the validated migration, parameterized
-by DM/element/connection IDs at the top; generalize the table/column maps per app.
+app and cleans up) — qlik-cli's `object ls` does NOT list master items. Everything
+else (incl. `qlik app eval` for the freshness snapshot) is read-only; the app is
+never reloaded.
 
 ## Open work
 - ✅ Set Analysis (simple) → `Sum(If(...))` — auto-translated in the converter + validated live (2026-06-05). Host dim-flag measures on the denorm element.
@@ -174,8 +239,12 @@ by DM/element/connection IDs at the top; generalize the table/column maps per ap
 - ✅ Phase-3 reconciliation — `scripts/reconcile-columns.py` auto-derives it from the load-script `AS` aliases.
 - ✅ Before/after PNGs — `scripts/qlik-screenshot.py` (Qlik reporting API).
 - ✅ `scout-validate.py` kpi-chart bug fixed (`value.columnId`, was `value.id` → every kpi validation failed POST).
+- ✅ One-command pipeline (`migrate-qlik.rb`) — discover→convert→DM→workbook→layout→parity, artifact-driven builders, validated live 2026-06-10.
+- ✅ Layout from discovery — per-sheet cell grids → Sigma 24-col grid (row-scale ≥2, KPI ≥5 rows).
+- ✅ Source-freshness preflight + per-chart bucket-count parity.
+- ✅ Display-name rule matched to Sigma's derivation (lowercase particles), verified by live readback.
 - Companion `qlik-assessment` skill — built (sibling dir).
-- **Remaining (beads):** multi-fact relationship topology — two facts sharing dim keys still get fact↔fact links/fan-trap (`beads-sigma-uw5c`, relationship half); denorm "View" column bloat/dupes on multi-fact (`beads-sigma-hsua`); full multi-fact END-TO-END parity needs a real 2nd Snowflake fact + Qlik app (`task`). Aggr() guidance (`beads-sigma-16xc`). Feed reconcile map into `build-sigma-dm.py`; auto-layout charts.
+- **Remaining (beads):** multi-fact relationship topology — two facts sharing dim keys still get fact↔fact links/fan-trap (`beads-sigma-uw5c`, relationship half); denorm "View" column bloat/dupes on multi-fact (`beads-sigma-hsua`; the DM build now ships the denorm SQL element INSTEAD of the converter "View" elements); full multi-fact END-TO-END parity needs a real 2nd Snowflake fact + Qlik app (`task`). Aggr() guidance (`beads-sigma-16xc`).
 
 
 ## Security: Row- & Column-Level Security (RLS/CLS)
