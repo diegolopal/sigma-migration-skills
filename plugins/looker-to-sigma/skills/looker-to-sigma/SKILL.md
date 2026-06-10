@@ -52,6 +52,7 @@ offline-only path that normalizes into the same contract.
 | `scripts/looker_api.py` | Minimal Looker REST API 4.0 client (no SDK). Reads `~/.looker/looker.ini`, logs in via `client_credentials`, exposes `L.call(method, path, body)`. CLI: `python3 looker_api.py whoami` / `get <path>` / `raw GET /lookml_models`. |
 | `scripts/fetch_looker_dashboard.py` | **Phase 1 (live):** `GET /dashboards/{id}` → the normalized contract (`refs/dashboard-contract.md`). Works for UDD AND LookML dashboards. Self-contained (reads `~/.looker/looker.ini`). `tileType` is read from `query.vis_config.type` (NOT `element.type`, which is always `"vis"`); `listen` from `result_maker.filterables`; layout from the **active** layout's components. |
 | `scripts/parse_lookml_dashboard.py` | **Phase 1 (offline):** parse a `.dashboard.lookml` (YAML) → the SAME contract. Dev/test only; cannot see UDD dashboards. Requires PyYAML. |
+| `scripts/detect_rls.py` | **Phase 1 (RLS scan):** dependency-free regex scan of a LookML dir/file (and/or model JSON) for row-level-security constructs (`access_filter`, `sql_always_where`, `access_grant`, `user_attribute`). Prints a structured summary + recommended Sigma mapping per finding (or `--json`). **Prints nothing / exits 0 when there's no RLS** (zero-overhead). `python3 detect_rls.py <lookml_dir> [--json]` |
 | `scripts/convert_dm.mjs` | **Phase 2:** run `convertLookMLToSigma` against a directory of `.lkml` files for one explore → a Sigma DM spec JSON. Bypasses the deployed MCP build (see the converter-build gotcha below). Env: `LOOKML_DIR`, `CONVERTER_SRC`; args `<exploreName> <out.json>`. |
 | `scripts/post_dm.py` | **Phase 2:** POST a DM spec to `/v2/dataModels/spec` (auto-finds a writable folder, swaps in the full connection UUID). Env: `SIGMA_API_TOKEN`, `SIGMA_BASE_URL`, `SIGMA_CONNECTION_ID`; args `<spec.json>`. |
 | `scripts/build_workbook.py` | **Phase 3:** dashboard contract + the explore's view `.lkml` files → a Sigma `/v2/workbooks/spec` body (hidden Data page + master table, one element per tile, controls from filters, newspaper→24-col layout XML). Generates locally; does **not** POST. Handles ratio measures, joined-col `Field (alias)` naming, table calcs, pivot-flatten + warn. |
@@ -177,6 +178,70 @@ API.** Note: a deployed LookML dashboard does NOT auto-index for `import_lookml_
 > `isFixed` = 0, Sales-gated). Build/test from sample LookML + the offline path. The validated
 > end-to-end run used a real `hakkoda1.cloud.looker.com` instance pointed at `CSA.TJ`.
 
+### 1d. Scan for row-level security (RLS) — cheap, silent if none
+
+Looker enforces row-level security in LookML, and **security is the one place a silent default
+is dangerous in both directions** — silently dropping RLS exposes data; silently porting a wrong
+mapping over- or under-restricts it. So scan for it during discovery, but stay out of the way
+when there's nothing to decide.
+
+```bash
+python3 scripts/detect_rls.py /path/to/lookml          # the project dir (and/or a model JSON)
+```
+
+- **Zero overhead on the happy path.** `detect_rls.py` is a cheap regex scan; **if it finds no
+  RLS it prints nothing and exits 0** — no prompt, no extra phase, the migration proceeds
+  straight to Phase 2 unchanged.
+- **If it finds RLS, it lists every finding** (construct, explore, field, `user_attribute`,
+  expression) plus the recommended Sigma mapping — that output feeds the **single** RLS decision
+  gate below (do NOT prompt per rule). The constructs it detects, and their Sigma targets:
+
+  | Looker RLS construct | What it does | Sigma target |
+  |---|---|---|
+  | `access_filter` (explore) | maps a `user_attribute` → a field; restricts rows to the caller's allowed values | a Sigma **user attribute** + a row filter using `LookupUserAttributeText(...)` / `CurrentUserAttributeText(...)` on that field |
+  | `sql_always_where` (explore) | a hardcoded SQL row filter always ANDed onto the explore | a Sigma **data-model / element filter** (if the expression references a `user_attribute` / `{{ _user_attributes[...] }}`, make it a user-attribute row filter, not a static one) |
+  | `access_grant` (model) | gates explores/fields/joins by a `user_attribute`'s allowed values | **note / review** — no 1:1 analog; map to Sigma **permissions** or a user-attribute filter |
+  | `user_attribute` reference | any other `_user_attributes[...]` / `user_attribute:` use | **provision** the matching Sigma user attribute (reuse if it already exists) |
+
+> The `convert_lookml_to_sigma` converter ALSO detects `access_filter` and emits an RLS note (and
+> a `CurrentUserAttributeText()` row-filter stub) in the DM spec. `detect_rls.py` is the
+> discovery-time, project-wide view that drives the **decision gate** — the converter handles the
+> per-spec emission once you've decided to port.
+
+---
+
+## Phase 1.5 — RLS decision gate (only if Phase 1d found RLS) — BEFORE building
+
+**Skip this phase entirely when `detect_rls.py` found nothing.** When it DID find RLS, stop ONCE,
+here, before POSTing the data model in Phase 2 — make it one explicit, reviewed decision, never an
+invisible default.
+
+1. **Reuse-first — check what already exists in Sigma before creating anything.** The customer may
+   have already set RLS up in Sigma; don't duplicate it.
+   - **Existing Sigma user attributes** — list them and match by name to the Looker
+     `user_attribute`s in the findings. (Manual check today: **Administration → User Attributes**
+     in the Sigma UI; reuse a matching attribute rather than creating a new one. If a list
+     endpoint becomes available, prefer it — but do not block on it; the manual check is the
+     contract.)
+   - **Existing data models with similar RLS logic** — if a Sigma DM already filters the same
+     field by the same attribute (e.g. a previously-migrated explore on the same source), reuse it
+     instead of re-implementing the filter.
+2. **Pre-fill a recommended plan.** Using the mapping table above, draft the per-finding Sigma
+   action (which user attribute, which field, `LookupUserAttributeText`/`CurrentUserAttributeText`
+   filter vs DM/element filter vs note) — reusing the existing Sigma attributes/DMs found in step 1.
+3. **One consolidated confirm / edit / skip.** Present the full plan and let the user, in a SINGLE
+   decision: **confirm** it as drafted, **edit** any mapping (e.g. point at a different existing
+   attribute, change a field), or **skip** porting RLS entirely (they may enforce it elsewhere in
+   Sigma). No per-rule nagging.
+4. **Always record the outcome.** For every finding, note **ported / reused / skipped** in the
+   migration summary (Phase 4 output) so any skipped RLS is **visible, never silent** — a reviewer
+   can see exactly which Looker restriction was carried over, reused, or deliberately dropped.
+
+Then proceed to Phase 2. Apply the confirmed plan as part of the DM build: create/reuse the Sigma
+user attribute(s), and add the row filter(s) to the data model (or element) — `access_filter` and
+user-attribute `sql_always_where` → `LookupUserAttributeText`/`CurrentUserAttributeText` row
+filters; static `sql_always_where` → a plain DM/element filter; `access_grant` → the recorded note.
+
 ---
 
 ## Phase 2 — Convert the LookML semantic model
@@ -247,8 +312,10 @@ shapes so you recognize a regression:
 - **Table-calc grain/sort** for window functions (rank / offset / percentile) → review.
 - **`merged_results`** → a DM join or a Custom SQL element (follow `merge_result_id` to the
   source queries; >2 sources or non-equi joins → manual + warn).
-- **Not yet converted:** NDT (`explore_source`), PDT `datagroup`/`persist_for`, `many_to_many`,
-  `access_filter`.
+- **Not yet converted:** NDT (`explore_source`), PDT `datagroup`/`persist_for`, `many_to_many`.
+- **RLS (`access_filter` / `sql_always_where` / `access_grant`)** — detected at discovery
+  (Phase 1d) and decided ONCE at the Phase 1.5 gate; the converter emits an `access_filter` RLS
+  note + `CurrentUserAttributeText()` stub. Never silently dropped — the outcome is recorded.
 
 > **`metric()` returns "Missing Metric" in MCP SQL** — a known Sigma quirk, not a conversion
 > bug. Verify metric values via the **raw aggregate** (`Sum(...)`, `CountDistinct(...)`), not via
@@ -396,6 +463,12 @@ key metrics, and per-tile.
 GREEN only when all three match. The validated run produced **exact** parity to the cent —
 region revenue (West 38906.82 / South 31650.98 / NE 21587.52 / MW 14966.20 / null 3231.23 =
 $109,765.89) and the ratio metrics (AOV / margin / return) identical across Looker and Sigma.
+
+**Record the RLS outcome here.** If Phase 1d found RLS, the migration summary MUST list, per
+finding, whether it was **ported / reused / skipped** (and the Sigma user attribute + filter used)
+— so any skipped Looker restriction is visible to a reviewer, never silently dropped. (When RLS
+is active, parity-check as a representative restricted user, not only as an admin who sees all
+rows.)
 
 > **If `mcp__sigma-mcp-v2__query` errors with an auth message mid-Phase-4**, the MCP session
 > staled — re-call `mcp__sigma-mcp-v2__begin_session` and retry. Do not skip parity over a
