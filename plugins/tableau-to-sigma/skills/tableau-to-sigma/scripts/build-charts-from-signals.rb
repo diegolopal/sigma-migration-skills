@@ -110,33 +110,41 @@ DATE_TRUNC = {
   'Hour-Trunc'   => 'hour'
 }.freeze
 
-# Tableau "this year/quarter/month" (relative-date first=0,last=0) → explicit
-# [startDate, endDate] bounds for the CURRENT period. Returns [nil, nil] for
-# periods we don't bound (caller falls back to a pass-through relative filter).
+# Tableau relative-date offset window (first-period..last-period, in periods
+# relative to now — e.g. first=-2,last=0 = "last 3 months") → explicit
+# [startDate, endDate] bounds. Returns [nil, nil] for periods we don't bound
+# (caller falls back to a pass-through relative filter).
 #
-# Why bounds and not Sigma `mode: relative`/`current`: a relative/current date
-# filter only applies at UI render time — it does NOT filter the chart-data SQL
-# (Phase 6 parity showed every relative-date chart returning unfiltered data).
-# Hardcoded bounds apply at query time AND on the UI. Trade-off: the filter
-# "freezes" — it must be refreshed when the period rolls over.
-def current_period_bounds(period, now = Time.now)
+# NOTE (bead z135, 2026-06-10): this is only the FALLBACK for offset windows.
+# "This <period>" (first=0,last=0) filters are emitted as Sigma
+# `mode: "current"` + `unit: <period>` — E2E re-verified that mode:current DOES
+# filter the chart-data SQL when the control's `filters` target wiring is
+# present, so the old hardcode-the-bounds workaround (which froze the filter
+# and broke at period rollover) is no longer used for current-period filters.
+def relative_period_bounds(period, first = 0, last = 0, now = Time.now)
+  first = first.to_i
+  last  = last.to_i
   case period.to_s.downcase
   when 'year'
-    ["#{now.year}-01-01T00:00:00Z", "#{now.year}-12-31T23:59:59Z"]
+    ["#{now.year + first}-01-01T00:00:00Z", "#{now.year + last}-12-31T23:59:59Z"]
   when 'quarter'
-    q       = ((now.month - 1) / 3) + 1
-    start_m = (q - 1) * 3 + 1
-    end_m   = start_m + 2
-    end_day = Date.new(now.year, end_m, -1).day
-    ["#{now.year}-#{start_m.to_s.rjust(2, '0')}-01T00:00:00Z",
-     "#{now.year}-#{end_m.to_s.rjust(2, '0')}-#{end_day.to_s.rjust(2, '0')}T23:59:59Z"]
+    q0 = Date.new(now.year, ((now.month - 1) / 3) * 3 + 1, 1)
+    s  = q0 >> (3 * first)
+    e  = (q0 >> (3 * last + 3)) - 1
+    [s.strftime('%Y-%m-%dT00:00:00Z'), e.strftime('%Y-%m-%dT23:59:59Z')]
   when 'month'
-    last = Date.new(now.year, now.month, -1).day
-    [now.strftime('%Y-%m-01T00:00:00Z'),
-     now.strftime("%Y-%m-#{last.to_s.rjust(2, '0')}T23:59:59Z")]
+    m0 = Date.new(now.year, now.month, 1)
+    s  = m0 >> first
+    e  = (m0 >> (last + 1)) - 1
+    [s.strftime('%Y-%m-%dT00:00:00Z'), e.strftime('%Y-%m-%dT23:59:59Z')]
   else
     [nil, nil]
   end
+end
+
+# Back-compat alias — current period only.
+def current_period_bounds(period, now = Time.now)
+  relative_period_bounds(period, 0, 0, now)
 end
 
 def render_agg(agg, master_col_ref)
@@ -146,6 +154,55 @@ def render_agg(agg, master_col_ref)
   else
     "#{agg}(#{master_col_ref})"
   end
+end
+
+# Tableau "User"-aggregated calc fields (derivation=User) are already-aggregated
+# expressions like `SUM([Returns]) / COUNT([Order Id])` — wrapping them in
+# another Sum() against a master column that doesn't exist emits an
+# unresolvable `Sum([Master/X])` (bead k3kk). Decompose the Tableau formula
+# directly into a Sigma formula against the master table instead. Returns nil
+# when the formula contains anything beyond simple aggregates + arithmetic
+# (the caller falls back and warns loudly).
+USER_AGG_FN = {
+  'SUM' => 'Sum', 'AVG' => 'Avg', 'MIN' => 'Min', 'MAX' => 'Max',
+  'MEDIAN' => 'Median'
+}.freeze
+
+def translate_user_agg_formula(formula, mmap, columns_by_guid = {})
+  s = formula.to_s.gsub(/\s+/, ' ').strip
+  return nil if s.empty?
+  # Resolve Tableau-internal GUID refs ([d3b60b0e-…]) to their captions first —
+  # worksheet calc formulas reference columns by GUID, not caption.
+  s = s.gsub(/\[([0-9a-f\-]{36})\]/i) do
+    info = columns_by_guid[Regexp.last_match(1)]
+    info && info['caption'] ? "[#{info['caption']}]" : "[#{Regexp.last_match(1)}]"
+  end
+  # IIF(c, t, e) → If(c, t, e) so guarded ratios (divide-by-zero protection)
+  # survive the decomposition.
+  s = s.gsub(/\bIIF\s*\(/i, 'If(')
+  out = s.gsub(/\b(SUM|AVG|MIN|MAX|MEDIAN|COUNTD|COUNT)\s*\(\s*\[([^\]]+)\]\s*\)/i) do
+    agg = Regexp.last_match(1).upcase
+    col = Regexp.last_match(2)
+    m   = map_column(col, mmap)
+    ref = "[Master/#{m ? m['name'] : col}]"
+    case agg
+    when 'COUNT'  then "CountIf(IsNotNull(#{ref}))"
+    when 'COUNTD' then "CountDistinct(#{ref})"
+    else "#{USER_AGG_FN[agg]}(#{ref})"
+    end
+  end
+  # ZN(expr) → Coalesce(expr, 0). One nesting level of parens is enough for
+  # ZN(Sum([x]))-style wrappers; loop to handle repeated occurrences.
+  while out =~ /\bZN\s*\(((?:[^()]|\([^()]*(?:\([^()]*\)[^()]*)*\))*)\)/i
+    out = out.sub(Regexp.last_match(0), "Coalesce(#{Regexp.last_match(1)}, 0)")
+  end
+  # Validate: after stripping translated calls + refs, only arithmetic glue may
+  # remain — otherwise the formula has constructs we can't safely auto-emit.
+  residue = out.dup
+  residue.gsub!(/\[Master\/[^\]]+\]/, '1')
+  residue.gsub!(/\b(Sum|Avg|Min|Max|Median|CountDistinct|CountIf|IsNotNull|Coalesce|If)\b/, '')
+  return nil unless residue =~ %r{\A[\s()+\-*/.,\d!=<>]*\z}
+  out
 end
 
 # Translate the Tableau column reference inside aggregations dict to a clean key
@@ -166,6 +223,25 @@ def map_column(header, mmap)
     return info if Regexp.new(pat).match?(h)
   end
   nil
+end
+
+# Resolve which Sigma column a Tableau <sort column="..."> targets: the chart's
+# dim or its measure. Tableau sort columns look like
+# `[federated.X].[none:REGION:nk]` or `[sum:NET_REVENUE:qk]` — pull the middle
+# token of the last bracket segment and fuzzy-match against the dim names.
+# A sort on the dim itself = alphabetic/natural dim sort; anything else
+# (field sort on the measure, unresolvable) sorts by the measure, which was
+# the previous hardcoded behaviour.
+def sort_target_column_id(sort_info, dim, dim_hdr, dim_col_id, meas_col_id)
+  raw   = sort_info['column'].to_s
+  inner = raw[/\[([^\[\]]+)\]\z/, 1].to_s
+  token = (inner.split(':')[1] || inner).downcase.gsub(/\W+/, '')
+  return meas_col_id if token.empty?
+  dim_keys = [dim && dim['name'], dim_hdr].compact
+                                          .map { |x| x.to_s.downcase.gsub(/\W+/, '') }
+                                          .reject(&:empty?)
+  return dim_col_id if dim_keys.any? { |k| token == k || token.include?(k) || k.include?(token) }
+  meas_col_id
 end
 
 # Pick the best aggregation for a header. CSV headers often hint at the
@@ -778,9 +854,23 @@ layout.each do |dash|
       next
     end
     rows = CSV.read(csv_path)
-    next if rows.empty?
+    if rows.empty?
+      # LOUD on purpose (bead gjhe): an empty/0-byte view CSV used to silently
+      # drop the zone — the dashboard shipped with N-1 charts and every gate
+      # still passed because the missing chart never entered the parity plan.
+      warnings << "ZONE DROPPED: '#{cap}' — view CSV at #{csv_path} is EMPTY (0 bytes / 0 rows) " \
+                  "but the zone exists in the dashboard. NO Sigma chart was built for it. " \
+                  "Re-fetch the view data (fetch-view-data.rb) or build the chart by hand — " \
+                  "the Phase-6 tile census will report this zone as unmatched."
+      next
+    end
     headers = rows.shift
-    next unless headers.length >= 2
+    if headers.length < 2
+      warnings << "ZONE DROPPED: '#{cap}' — view CSV has only #{headers.length} column(s); " \
+                  "need dim + measure. NO Sigma chart was built for this zone — " \
+                  "the Phase-6 tile census will report it as unmatched."
+      next
+    end
 
     dim_hdr  = headers[0]
     meas_hdr = headers[1]
@@ -813,6 +903,28 @@ layout.each do |dash|
     agg_label ||= infer_csv_agg(meas_hdr)
     agg_label ||= 'Sum'
     sigma_agg = SIGMA_AGG[agg_label] || 'Sum'
+
+    # derivation=User → the measure IS a Tableau calc field that's already
+    # aggregated (typically a ratio like SUM(a)/COUNT(b)). Wrapping it in
+    # Sum([Master/X]) is unresolvable when no master column carries the ratio —
+    # decompose the calc formula into a direct Sigma formula instead (bead k3kk).
+    user_agg_formula = nil
+    if agg_label == 'User' && meas['formula'].nil?
+      norm = ->(x) { x.to_s.gsub(/^\[|\]$/, '').strip.downcase }
+      user_calc = (z['calculations'] || []).find do |c|
+        n = norm.call(c['name'])
+        !n.empty? && (n == norm.call(meas['name']) || n == norm.call(meas_hdr) ||
+                      norm.call(meas_hdr).include?(n))
+      end
+      user_agg_formula = user_calc &&
+                         translate_user_agg_formula(user_calc['formula'], mmap,
+                                                    meta['columns_by_guid'] || {})
+      if user_agg_formula
+        warnings << "'#{cap}' measure '#{meas['name']}' is a Tableau User-aggregated calc — emitted its decomposed Sigma formula directly: #{user_agg_formula[0..140]}"
+      else
+        warnings << "'#{cap}' measure '#{meas['name']}' has Tableau aggregation=User but its calc formula could not be auto-decomposed — falling back to Sum([Master/#{meas['name']}]), which is UNRESOLVABLE unless the master carries that column; translate the ratio by hand (add a `formula` to its master-columns.json entry)"
+      end
+    end
 
     # Decide if the dimension is a date that needs DateTrunc. The parser's
     # aggregations dict surfaces Month-Trunc / Year-Trunc / etc. on the date col.
@@ -849,6 +961,8 @@ layout.each do |dash|
     # wrap the master-table column with the Sigma aggregator picked above.
     measure_formula = if meas['formula']
                         meas['formula']
+                      elsif user_agg_formula
+                        user_agg_formula
                       else
                         render_agg(sigma_agg, "[Master/#{meas['name']}]")
                       end
@@ -1009,9 +1123,37 @@ layout.each do |dash|
       end
     end
 
-    if kind == 'pie-chart' || kind == 'donut-chart'
+    if kind == 'table'
+      # Tableau text-table → Sigma grouped ("level") table. WITHOUT `groupings`,
+      # a table with dim + Sum(...) columns renders one row per SOURCE row (no
+      # roll-up). And on a grouped table the sort MUST nest inside the grouping
+      # entry — element-level sort 400s with "Sort column not found" (verified
+      # shape, see qlik-to-sigma refs/sigma-build-gotchas.md; bead f972).
+      grouping = {
+        'id'           => "g-#{el_id}",
+        'groupBy'      => [dim_col_obj['id']],
+        'calculations' => [meas_col_obj['id']]
+      }
+      if z['sort']
+        dir = z.dig('sort', 'direction').to_s
+        grouping['sort'] = [{
+          'columnId'  => sort_target_column_id(z['sort'], dim, dim_hdr, dim_col_obj['id'], meas_col_obj['id']),
+          'direction' => (dir =~ /desc/i) ? 'descending' : 'ascending'
+        }]
+        warnings << "'#{cap}' Tableau sort carried into groupings[0].sort (grouped-table sorts must nest inside the grouping — element-level sort 400s)"
+      end
+      element['groupings'] = [grouping]
+    elsif kind == 'pie-chart' || kind == 'donut-chart'
       element['color'] = { 'id' => dim_col_obj['id'] }
       element['value'] = { 'id' => meas_col_obj['id'] }
+      if z['sort']
+        dir = z.dig('sort', 'direction').to_s
+        element['color']['sort'] = {
+          'by'        => sort_target_column_id(z['sort'], dim, dim_hdr, dim_col_obj['id'], meas_col_obj['id']),
+          'direction' => (dir =~ /desc/i) ? 'descending' : 'ascending'
+        }
+        warnings << "'#{cap}' Tableau sort carried into pie color.sort"
+      end
     else
       # Breaking-change-2026-05-21: xAxis takes singular `columnId` (string),
       # yAxis takes plural `columnIds` (array on the object — NOT array of
@@ -1024,7 +1166,10 @@ layout.each do |dash|
       if z['sort']
         dir = z.dig('sort', 'direction').to_s
         sigma_dir = (dir =~ /desc/i) ? 'descending' : 'ascending'
-        x_axis['sort'] = { 'by' => meas_col_obj['id'], 'direction' => sigma_dir }
+        x_axis['sort'] = {
+          'by'        => sort_target_column_id(z['sort'], dim, dim_hdr, dim_col_obj['id'], meas_col_obj['id']),
+          'direction' => sigma_dir
+        }
       end
       element['xAxis'] = x_axis
       # Combo-chart: yAxis.columnIds is a mixed array — bare strings default to
@@ -1119,26 +1264,36 @@ layout.each do |dash|
         }
       when 'relative-date'
         # Tableau first-period=0, last-period=0 + period-type=year means
-        # "this <period>". Emit explicit current-period bounds — `mode: relative`
-        # does NOT filter the chart-data SQL (same lesson the shared-filter path
-        # learned; see current_period_bounds). Falls back to pass-through
-        # relative for periods we don't bound (week/day).
-        period = (f['period_type'] || 'year').downcase
-        start_d, end_d = current_period_bounds(period)
-        if start_d
+        # "this <period>" → Sigma mode:"current" + unit:<period>. E2E
+        # re-verified 2026-06-10 (bead z135) that mode:current filters the
+        # chart-data SQL — it rolls over automatically instead of freezing.
+        # Offset windows (first/last ≠ 0, e.g. "last 3 months") fall back to
+        # explicit between-bounds (frozen — re-run to refresh).
+        period   = (f['period_type'] || 'year').downcase
+        inc_null = (f['include_null'].to_s == 'true' ? 'always' : 'never')
+        if f['first_period'].to_i.zero? && f['last_period'].to_i.zero?
           el_filters << {
-            'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'between',
-            'startDate' => start_d, 'endDate' => end_d,
-            'includeNulls' => (f['include_null'].to_s == 'true' ? 'always' : 'never')
+            'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'current',
+            'unit' => period, 'includeNulls' => inc_null
           }
-          warnings << "'#{cap}' relative-date '#{period}' → element filter mode:between current-#{period} (#{start_d[0..9]}..#{end_d[0..9]}); re-run next #{period} to refresh"
+          warnings << "'#{cap}' relative-date 'this #{period}' → element filter mode:current unit:#{period} (rolls over automatically; verified to filter chart-data SQL, bead z135)"
         else
-          el_filters << {
-            'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'relative',
-            'unit' => period, 'count' => 1,
-            'includeNulls' => (f['include_null'].to_s == 'true' ? 'always' : 'never')
-          }
-          warnings << "'#{cap}' relative-date '#{period}' kept as mode:relative (no current-period bounds for '#{period}') — verify it filters the SQL"
+          start_d, end_d = relative_period_bounds(period, f['first_period'], f['last_period'])
+          if start_d
+            el_filters << {
+              'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'between',
+              'startDate' => start_d, 'endDate' => end_d,
+              'includeNulls' => inc_null
+            }
+            warnings << "'#{cap}' relative-date window #{f['first_period']}..#{f['last_period']} #{period}s → element filter mode:between (#{start_d[0..9]}..#{end_d[0..9]}); FROZEN — re-run to refresh"
+          else
+            el_filters << {
+              'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'relative',
+              'unit' => period, 'count' => 1,
+              'includeNulls' => inc_null
+            }
+            warnings << "'#{cap}' relative-date '#{period}' kept as mode:relative (no bounds computable for '#{period}') — verify it filters the SQL"
+          end
         end
       when 'number-range'
         el_filters << {
@@ -1340,35 +1495,38 @@ if opts[:auto_controls]
         'columnId' => m['id']
       }]
     when 'relative-date'
-      # Tableau "this year" / "this month" / "this quarter" → translate to
-      # Sigma `mode: between` with hardcoded startDate/endDate. The previously-
-      # tried `mode: current, unit: <period>` only applies at UI render time —
-      # it does NOT filter Sigma's chart-data SQL queries (Phase 6 parity
-      # showed every relative-date chart returning unfiltered data). Hardcoded
-      # dates apply at query time AND on the UI. Trade-off: filter "freezes"
-      # — next year someone must update it manually. The mirror of v4's
-      # reference workbook.
+      # Tableau "this year" / "this month" / "this quarter" → Sigma date-range
+      # control with `mode: "current"` + `unit: <period>`. E2E re-verified
+      # 2026-06-10 (bead z135): mode:current DOES filter the chart-data SQL
+      # when the control's `filters` target wiring is present — the earlier
+      # "render-time only" finding that drove hardcoded between-bounds was
+      # wrong, and the hardcoded dates froze the filter (broke at rollover).
+      # mode:between is kept ONLY for genuinely fixed/offset windows
+      # (first/last period ≠ 0, e.g. "last 3 months"), which Sigma has no
+      # verified rolling-control shape for yet.
       spec['controlType'] = 'date-range'
-      spec['mode']        = 'between'
       period = (f['period_type'] || 'year').downcase
-      start_d, end_d = current_period_bounds(period)
-      unless start_d
-        # Fallback: pass-through current+unit; agent updates manually
-        spec['mode'] = 'current'
-        spec['unit'] = period
-        spec['filters'] = [{
-          'source'   => { 'kind' => 'table', 'elementId' => opts[:master_id] },
-          'columnId' => m['id']
-        }]
-        next
-      end
-      spec['startDate'] = start_d
-      spec['endDate']   = end_d
       spec['filters'] = [{
         'source'   => { 'kind' => 'table', 'elementId' => opts[:master_id] },
         'columnId' => m['id']
       }]
-      warnings << "shared filter '#{cap}' relative-date '#{period}' → emitted as mode:between with hardcoded current-#{period} dates (#{start_d[0..9]}..#{end_d[0..9]}). Re-run next #{period} to refresh."
+      if f['first_period'].to_i.zero? && f['last_period'].to_i.zero?
+        spec['mode'] = 'current'
+        spec['unit'] = period
+        warnings << "shared filter '#{cap}' relative-date 'this #{period}' → date-range control mode:current unit:#{period} (rolls over automatically; no frozen dates)"
+      else
+        start_d, end_d = relative_period_bounds(period, f['first_period'], f['last_period'])
+        if start_d
+          spec['mode']      = 'between'
+          spec['startDate'] = start_d
+          spec['endDate']   = end_d
+          warnings << "shared filter '#{cap}' relative-date window #{f['first_period']}..#{f['last_period']} #{period}s → mode:between (#{start_d[0..9]}..#{end_d[0..9]}); FROZEN — re-run to refresh"
+        else
+          spec['mode'] = 'current'
+          spec['unit'] = period
+          warnings << "shared filter '#{cap}' relative-date '#{period}' window not boundable — emitted mode:current unit:#{period}; verify the window manually"
+        end
+      end
     when 'number-range'
       spec['controlType'] = 'range-slider'
       spec['filters'] = [{

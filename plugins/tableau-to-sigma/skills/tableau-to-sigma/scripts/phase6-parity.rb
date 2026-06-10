@@ -42,6 +42,7 @@ OptionParser.new do |p|
   p.on('--extract-mode')         { opts[:extract_mode] = true }
   p.on('--extract-tol F', Float) { |v| opts[:extract_tol] = v }
   p.on('--rename PAIR', 'Tableau-name=Sigma-name (repeat)') { |v| opts[:renames] << v }
+  p.on('--dashboard-layout PATH', 'parse-twb-layout output for the tile census (default <tableau-dir>/dashboard-layout.json)') { |v| opts[:dash_layout] = v }
   p.on('--finalize')             { opts[:finalize] = true }
   p.on('--actuals PATH', 'JSON: { "<chart name>": [[dim, val], ...] } — for --finalize') { |v| opts[:actuals] = v }
 end.parse!
@@ -144,6 +145,40 @@ summary_path = File.join(opts[:tab], 'parity-final.json')
 total = plan['charts'].size
 passed_chart_names = out.scan(/^PASS\s+\[[^\]]+\]\s+(.+)$/).flatten
 failed_chart_names = out.scan(/^DIVERGE\s+\[[^\]]+\]\s+(.+)$/).flatten
+
+# ---- Tile census (bead gjhe) ------------------------------------------------
+# Compare the Tableau dashboard's chart-zone count against the charts that made
+# it into the parity plan. A zone that rendered in the source dashboard but has
+# no matching Sigma chart (empty view CSV silently dropped the tile, or an
+# unexplained rename) used to slip through every gate — the workbook shipped
+# with N-1 charts and parity still reported PASS. assert-phase6-ran.rb gate 5
+# fails on unmatched zones unless --allow-missing-tiles explains them.
+tile_census = nil
+dash_layout_path = opts[:dash_layout] || File.join(opts[:tab], 'dashboard-layout.json')
+if File.exist?(dash_layout_path)
+  dash_layout = JSON.parse(File.read(dash_layout_path)) rescue nil
+  if dash_layout.is_a?(Array)
+    zone_names = dash_layout.flat_map { |d| d['zones'] || [] }
+                            .select { |zz| zz['kind'] == 'chart' && !zz['caption'].to_s.strip.empty? }
+                            .map { |zz| zz['caption'].strip }
+                            .uniq
+    norm = ->(s) { s.to_s.downcase.gsub(/[^a-z0-9]/, '') }
+    matched = plan['charts'].flat_map { |c| [c['tableau_view'], c['chart']] }.compact.map(&norm)
+    unmatched = zone_names.reject { |zn| matched.include?(norm.call(zn)) }
+    tile_census = {
+      'zones_total'          => zone_names.size,
+      'charts_built'         => plan['charts'].size,
+      'zones_unmatched'      => unmatched.size,
+      'unmatched_zone_names' => unmatched
+    }
+    warn "tile census: #{zone_names.size} dashboard zone(s), #{plan['charts'].size} chart(s) in parity plan, #{unmatched.size} unmatched" \
+         "#{unmatched.any? ? " — UNMATCHED: #{unmatched.join(', ')}" : ''}"
+  else
+    warn "tile census skipped: #{dash_layout_path} is not a parse-twb-layout array"
+  end
+else
+  warn "tile census skipped: no dashboard layout at #{dash_layout_path} (pass --dashboard-layout to enable)"
+end
 summary = {
   'workbook_id'  => plan.dig('charts', 0, 'workbook_id') ||
                     (File.exist?(File.join(opts[:tab], 'wb-readback.json')) ?
@@ -158,6 +193,7 @@ summary = {
   'fail_names'   => failed_chart_names,
   'status'       => (status.success? && total > 0 && passed_chart_names.size == total) ? 'PASS' : 'FAIL'
 }
+summary['tile_census'] = tile_census if tile_census
 File.write(summary_path, JSON.pretty_generate(summary))
 warn "wrote #{summary_path} (status=#{summary['status']} #{summary['charts_pass']}/#{summary['charts_total']})"
 exit(status.success? ? 0 : 2)
