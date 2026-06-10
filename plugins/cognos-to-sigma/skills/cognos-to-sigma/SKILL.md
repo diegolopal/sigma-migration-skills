@@ -30,7 +30,11 @@ of emitting wrong logic.
   `<host>/bi/v1` (NOT `/api/v1`). Auth = a logged-in session: a **session cookie** +
   the **`X-XSRF-Token`** header. On IBMid-SSO trials you can't log in headlessly —
   grab a live session from the browser (DevTools → Network → any `coreBundle.js`-initiated
-  `bi/v1/...` XHR → **Copy as cURL**) and feed its cookie + token to `scripts/cognos-discover.sh`.
+  `bi/v1/...` XHR → **Copy as cURL**) and capture it with `scripts/get-cognos-session.sh`
+  (paste the **whole** Cookie header — incl. the Akamai `_abck`/`bm_sz`/`bm_sv`/`ak_bmsc`
+  cookies, or the WAF returns 441). CAoC sessions are short-lived: an `HTTP 441` means
+  re-login + re-copy. The **durable** path for a real engagement is a CA API key/service
+  credential where the tenant allows it — prefer it over session replay.
 - **Sigma** API token (via the `sigma-api` skill) to POST the data model + workbook.
 - **Node** for the converter (`converter/`: `npm install` once).
 
@@ -63,30 +67,44 @@ Emits the Sigma data-model JSON on stdout; stats + warnings on stderr. Read the
 warnings aloud to the user — they are the parts that need manual authoring
 (running-totals, cross-element metrics, FIXED-LOD-style calcs, localization).
 
-## Phase 2 — POST the data model + read back ids
+## Phase 2 — POST the data model + read back ids (hard gate)
 
-POST the JSON to `/v2/dataModels/spec`, then GET it back to capture the real element
-and column ids (Sigma reassigns them on POST). Abort on any `type=error` column.
-(Use the `sigma-data-models` skill / `post-and-readback` pattern.)
+```bash
+eval "$(scripts/get-token.sh)"                 # Sigma SIGMA_BASE_URL + SIGMA_API_TOKEN
+node scripts/post-and-readback.mjs --type datamodel --spec dm.json \
+  --folder <folderId> --out dm-map.json
+```
+POSTs to `/v2/dataModels/spec`, reads the spec back, and **fails on any `type=error`
+column** (a spec can POST 200 yet have formulas that don't resolve at query time — the
+readback scan is what catches it; it checks every element incl. the derived view).
+`dm-map.json` carries the real `dataModelId` + element ids (Sigma reassigns them on POST).
+Do not proceed past a non-zero exit.
 
 ## Phase 3 — Convert the report → Sigma workbook, wired to the DM
 
 ```bash
-node --import tsx/esm cli.ts ../path/to/report.xml --dm <dataModelId>
+node --import tsx/esm cli.ts ../path/to/report.xml --dm <dataModelId> > wb.json
+node scripts/remap-wb-to-dm-ids.mjs --wb wb.json --dm-id <dataModelId> --out wb.remapped.json
+node scripts/post-and-readback.mjs --type workbook --spec wb.remapped.json --folder <folderId>
 ```
-Each Cognos **list** becomes a Sigma `table` element sourced from the migrated DM
-element; dataItems become columns (expressions translated); `prompt(...)` become
-controls; `Summary()/Total()` footers become aggregate columns. **Wire the real
-element/column ids** from Phase 2's readback into the workbook spec's `source` +
-formula prefixes, then POST to `/v2/workbooks/spec`.
+Each Cognos **list/crosstab/chart/map** becomes the matching Sigma element sourced from
+the migrated DM element. The converter emits each element's `source.elementId` as the
+query **subject name** (a placeholder) — `remap-wb-to-dm-ids.mjs` rewrites those to the
+real ids from Phase 2's readback (matched by element name). Then post-and-readback POSTs
+the workbook and re-runs the error-column gate.
 
-## Phase 4 — Verify (and optional parity)
+## Phase 4 — Verify parity (hard gate — the real proof)
 
-- Confirm every workbook element resolves and queries cleanly (0 `type=error` columns).
-- **Parity** (optional, the real proof): land the Cognos source database in the
-  warehouse Sigma reads (the GO samples are the canonical IBM `GOSALES`/`GOSALESDW`
-  DBs — published, loadable), then confirm the Cognos report's numbers match the
-  migrated Sigma workbook to the cent.
+```bash
+node scripts/assert-parity.mjs --plan --type workbook --id <workbookId>   # emits per-element SQL
+# run each via mcp-v2 query (or the Sigma query API), save totals to actual.json
+node scripts/assert-parity.mjs --check --actual actual.json --expected cognos.json --tol 0.01
+```
+A migration is **GREEN only when `--check` passes** — never on a 200 POST alone.
+`cognos.json` = the numbers from the Cognos report (or the source warehouse). For real
+parity, land the Cognos source DB in the warehouse Sigma reads (the GO samples are the
+canonical IBM `GOSALES`/`GOSALESDW` DBs — published, loadable), then confirm the Cognos
+report's numbers match the migrated Sigma workbook to the cent.
 
 ---
 
