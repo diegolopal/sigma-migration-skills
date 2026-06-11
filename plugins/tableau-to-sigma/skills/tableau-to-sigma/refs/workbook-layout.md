@@ -751,7 +751,7 @@ the chart editor after publish.
 | Series color | No (not yet) | Chart editor → Properties → Color |
 | Chart color palette | No | Chart editor → Properties → Color |
 | Font size / axis title | No | Chart editor → Format tab |
-| Text element alignment (center / right) | No | Element editor → Format → Alignment. Confirmed UI-only: spec GET returns only `id`/`kind`/`body` even after centering in the UI. Markdown `# Heading` in `body` always renders left-aligned. |
+| Text element alignment (center / right) | **Yes (since 2026-06-11)** | Inline HTML in `body`: `<p style="text-align: center">…</p>` (also `right`/`left`). Round-trips through GET/PUT — live-verified 2026-06-11. Combines with `<span>` color/font-size styling. Pre-fix UI-set alignment did not serialize; re-apply once via spec or UI and it sticks. |
 
 **`"orientation": "horizontal"` is silently accepted but ignored.** Do not include it — it does nothing.
 
@@ -1006,9 +1006,10 @@ page (`page['name']`) only changes the tab label; it does not put a heading on t
 If the Tableau dashboard image shows a title at the top, add `{ "kind": "text", "body": "# Title" }`
 and reserve the top ~2 grid rows for it in the layout XML.
 
-**Alignment is UI-only.** Markdown `# Heading` in `body` always renders left-aligned. Centering
-or right-aligning has to be applied post-publish via the element editor's Format tab — the spec
-GET round-trip confirms only `id`/`kind`/`body` survive on text elements.
+**Alignment is spec-able as of 2026-06-11** (previously UI-only). Wrap the content in inline
+HTML: `<p style="text-align: center">…</p>` (also `right`/`left`). Live-verified: POSTs cleanly,
+survives GET→PUT cycles, and combines with `<span style="color/font-size">` styling. Bare
+markdown (`# Heading`) still renders left-aligned — alignment must be expressed in the HTML form.
 
 ### Image element
 
