@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+.mstr_env
+.token
+exports/
+samples/
+*.log
