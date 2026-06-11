@@ -77,6 +77,8 @@ require 'open3'
 require 'date'
 require 'time'
 
+$stdout.sync = true # progress lines interleave correctly when piped/captured
+
 HERE = __dir__
 $LOAD_PATH.unshift File.expand_path('lib', HERE)
 
@@ -125,6 +127,24 @@ FileUtils.mkdir_p(File.join(WORK, 'views'))
 TOTAL = 6
 def hdr(n, title) puts; puts "── Phase #{n}/#{TOTAL} · #{title} ──"; end
 def line(m) puts "   #{m}"; end
+
+# Phase-timing summary — printed at every terminal exit so the discovery
+# interleave speedup stays visible in every run (and regressions show up in
+# the first slow report instead of an investigation).
+START_T = Time.now
+PHASE_T = {}
+$t_mark = Time.now
+def mark(key)
+  now = Time.now
+  PHASE_T[key] = (PHASE_T[key] || 0.0) + (now - $t_mark)
+  $t_mark = now
+end
+def phase_summary
+  return if PHASE_T.empty?
+  puts
+  puts "PHASE TIMINGS  #{PHASE_T.map { |k, v| "#{k}=#{v.round(1)}s" }.join('  ')}  " \
+       "total=#{(Time.now - START_T).round(1)}s"
+end
 
 # Run a child command, indenting its output. token_env: prepend a fresh
 # Sigma/Tableau token via the skill's get-token scripts so long runs survive
@@ -195,22 +215,26 @@ if opts[:finalize]
   wb_id = state['workbook_id'] or abort 'FATAL: state has no workbook_id (pass 1 never completed Phase 4)'
 
   hdr(6, 'Parity (pass 2 — finalize)')
+  $t_mark = Time.now
   p6 = ['ruby', File.join(HERE, 'phase6-parity.rb'), '--tableau', WORK,
         '--finalize', '--actuals', opts[:actuals]]
   p6 += ['--extract-mode', '--extract-tol', '0.30'] if state['extract_mode']
   _, p6st = sigma_run!(p6, allow_fail: true)
   line "phase6-parity finalize: #{p6st.success? ? 'PASS' : "FAIL (exit #{p6st.exitstatus})"}"
+  mark('phase6-finalize')
 
   # Cleanup: delete orphan workbooks from spec-iteration retries (keep the live one).
   _, clst = sigma_run!(['ruby', File.join(HERE, 'cleanup-orphan-workbooks.rb'),
                         '--workdir', WORK, '--keep', wb_id], allow_fail: true)
   line 'WARN: orphan cleanup reported failures — assert-phase6-ran will gate on it' unless clst.success?
+  mark('cleanup-orphans')
 
   # The census-aware hard gate. NEVER bypassed — this command fails when it fails.
   gate = ['ruby', File.join(HERE, 'assert-phase6-ran.rb'), '--tableau', WORK, '--workbook-id', wb_id]
   gate += ['--allow-extract'] if state['extract_mode']
   gate += ['--allow-missing-tiles', opts[:allow_missing_tiles].to_s] if opts[:allow_missing_tiles]
   _, gst = sigma_run!(gate, allow_fail: true)
+  mark('assert-phase6-ran')
 
   if gst.exitstatus == 7
     census = (JSON.parse(File.read(File.join(WORK, 'parity-final.json')))['tile_census'] rescue {}) || {}
@@ -244,6 +268,7 @@ if opts[:finalize]
   # ---------------------------------------------------------------------------
   enhance_requested = opts[:enhance] || state['enhance_requested']
   enhance_line = nil
+  $t_mark = Time.now # Phase E timing starts here (mark('phaseE') at each terminal)
   if enhance_requested && !all_green
     enhance_line = 'SKIPPED — gates not green (Phase E only clones a parity-verified workbook)'
   elsif enhance_requested
@@ -264,6 +289,8 @@ if opts[:finalize]
       puts 'then re-run this exact --finalize command adding:'
       puts "  --enhance --enhance-accept <id,id,...>   # or: --enhance-accept all-low-risk"
       puts '================================================================================='
+      mark('phaseE')
+      phase_summary
       exit 14
     else
       _, ast = sigma_run!(['ruby', File.join(HERE, 'enhance-apply.rb'),
@@ -281,6 +308,7 @@ if opts[:finalize]
     end
   end
 
+  mark('phaseE') if enhance_requested
   pf = (JSON.parse(File.read(File.join(WORK, 'parity-final.json'))) rescue {})
   puts
   puts '================ RESULT ================'
@@ -291,19 +319,70 @@ if opts[:finalize]
   puts "ENHANCE     : #{enhance_line}" if enhance_line
   puts "STATUS      : #{all_green ? 'GREEN' : 'NOT GREEN'}"
   puts '======================================='
+  phase_summary
   exit(all_green ? 0 : 3)
 end
 
 # ---------------------------------------------------------------------------
-# Phase 1 — Discover (Tableau side). Chains tableau-discover + parse-twb-layout
-# + extract-calc-fields + extract-custom-sql + scan-workbook-gaps.
+# Phase 1 — Discover (Tableau side), INTERLEAVED. tableau-discover.rb (its own
+# unified 5-fetch pool) + scan-workbook-gaps run as a BACKGROUND lane; the
+# pure-Sigma-side phases (1.6 DM-reuse scan + 2 warehouse columns — read-only,
+# no Sigma objects created) run concurrently in the foreground. The lanes JOIN
+# before anything that consumes discovery output (calc fields, gap gate, view
+# CSVs, decisions checkpoint) — every designed stop/gate fires exactly as in
+# the serial flow, just sooner.
 # ---------------------------------------------------------------------------
 hdr(1, 'Discover')
+$t_mark = Time.now
+twb = File.join(WORK, 'workbook-content.twb')
 disc = ['ruby', File.join(HERE, 'tableau-discover.rb'), '--out', WORK]
 disc += opts[:wb_id] ? ['--workbook-id', opts[:wb_id]] : ['--workbook-name', opts[:wb_name]]
-run!(['bash', '-c',
-      "eval \"$(#{File.join(HERE, 'get-tableau-token.sh')})\" && " +
-      disc.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')])
+disc_sh = disc.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')
+scan_sh = ['ruby', File.join(HERE, 'scan-workbook-gaps.rb'), twb]
+          .map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')
+disc_log = File.join(WORK, 'phase1-discover.log')
+File.write(disc_log, '')
+# Gap scan runs in the lane as soon as its input (the .twb) is ready — i.e.
+# right after discovery lands it. Scan failure is tolerated (same as before);
+# discovery failure is the lane's exit code.
+lane_cmd = "eval \"$(#{File.join(HERE, 'get-tableau-token.sh')})\" && #{disc_sh}; rc=$?; " \
+           "if [ $rc -eq 0 ] && [ -f '#{twb}' ]; then #{scan_sh} || true; fi; exit $rc"
+lane = { started: Time.now, status: nil }
+lane[:pid] = Process.spawn('bash', '-c', lane_cmd, %i[out err] => [disc_log, 'a'])
+line "Tableau discovery + gap scan: BACKGROUND lane (pid #{lane[:pid]}, log #{File.basename(disc_log)})"
+line 'Sigma-side phases 1.6 + 2 run concurrently; lanes join before discovery output is consumed.'
+
+lane_done = lambda do
+  next true if lane[:status]
+  if (st = Process.wait2(lane[:pid], Process::WNOHANG))
+    lane[:status] = st[1]
+    lane[:ended] = Time.now
+    true
+  else
+    false
+  end
+end
+print_lane_log = lambda do
+  File.read(disc_log).each_line { |l| puts "   │ #{l.rstrip}" } if File.exist?(disc_log)
+end
+# Wait for a lane artifact (tableau-discover writes them atomically). Returns
+# false when the lane exits without producing it.
+lane_wait_for = lambda do |path, what, timeout = 600|
+  t0 = Time.now
+  until File.exist?(path)
+    if lane_done.call
+      return File.exist?(path)
+    end
+    abort "FATAL: timed out (#{timeout}s) waiting for #{what} from the discovery lane" if Time.now - t0 > timeout
+    sleep 0.1
+  end
+  true
+end
+
+unless lane_wait_for.call(File.join(WORK, 'get-workbook.json'), 'get-workbook.json')
+  print_lane_log.call
+  abort "FATAL: discovery lane exited (#{lane[:status]&.exitstatus}) before producing get-workbook.json"
+end
 
 gw = JSON.parse(File.read(File.join(WORK, 'get-workbook.json')))
 wb = gw['workbook'] || gw
@@ -315,9 +394,8 @@ views = (wb.dig('views', 'view') || [])
 views = [views] unless views.is_a?(Array)
 line "workbook '#{wb_name}' (#{wb_luid}): #{views.size} view(s)#{has_extracts ? ', hasExtracts=true' : ''}"
 
-twb = File.join(WORK, 'workbook-content.twb')
 layout_json = File.join(WORK, 'dashboard-layout.json')
-have_twb = File.exist?(twb)
+have_twb = lane_wait_for.call(twb, 'workbook-content.twb')
 if have_twb
   run!(['ruby', File.join(HERE, 'parse-twb-layout.rb'), twb, layout_json])
   dash = JSON.parse(File.read(layout_json))
@@ -332,77 +410,9 @@ else
   line 'no .twb content (MCP-only datasource?) — chart-kind/calc discovery degraded'
 end
 
-calc_path = File.join(WORK, 'calc-fields.json')
-calcs = []
-if wb_luid
-  cf = ['ruby', File.join(HERE, 'extract-calc-fields.rb'),
-        '--workbook-luid', wb_luid, '--out', calc_path]
-  cf += ['--twb', twb] if have_twb
-  _, st = run!(['bash', '-c',
-                "eval \"$(#{File.join(HERE, 'get-tableau-token.sh')})\" && " +
-                cf.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')], allow_fail: true)
-  if File.exist?(calc_path)
-    cfj = JSON.parse(File.read(calc_path)) rescue {}
-    calcs = cfj['calcs'] || []
-    n_csql = calcs.count { |c| c['requires_custom_sql'] }
-    line "#{calcs.size} calc field(s); #{n_csql} require Custom SQL (window/LOD)"
-  end
-end
-
-custom_sql = []
-csql_path = File.join(WORK, 'custom-sql.json')
-if wb_luid && have_twb
-  csql_cmd = ['ruby', File.join(HERE, 'extract-custom-sql.rb'),
-              '--workbook-luid', wb_luid, '--twb', twb, '--out', csql_path]
-  run!(['bash', '-c',
-        "eval \"$(#{File.join(HERE, 'get-tableau-token.sh')})\" && " +
-        csql_cmd.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')], allow_fail: true)
-  custom_sql = (JSON.parse(File.read(csql_path)) rescue []) if File.exist?(csql_path)
-  custom_sql = [] unless custom_sql.is_a?(Array)
-end
-
-gaps = []
-gap_report_md = nil
-if have_twb
-  run!(['ruby', File.join(HERE, 'scan-workbook-gaps.rb'), twb], allow_fail: true)
-  gj = Dir[File.join(WORK, '*gaps*report*.json')].first || Dir[File.join(WORK, '*gaps*.json')].first
-  if gj && File.exist?(gj)
-    gap_report_md = gj.sub(/\.json$/, '.md')
-    gaps = (JSON.parse(File.read(gj))['detected_features'] || []) rescue []
-    bys = gaps.group_by { |g| g['status'] }.transform_values(&:size)
-    line "gap scan: #{bys.map { |k, v| "#{v} #{k}" }.join(', ')}"
-  end
-end
-
-# GAP-SCAN HARD GATE: ❌-unhandled features mean part of the workbook cannot be
-# migrated by this skill yet. Abort WITH the report unless the human accepts the
-# degradation explicitly via --force. (auto/hint/manual statuses flow into the
-# decisions checkpoint below instead.)
-unhandled_gaps = gaps.select { |g| g['status'].to_s == 'unhandled' }
-if unhandled_gaps.any? && !opts[:force]
-  puts
-  puts '==================== GAP-SCAN STOP ===================='
-  puts "#{unhandled_gaps.size} ❌-unhandled feature(s) detected — these do NOT migrate:"
-  unhandled_gaps.each { |g| puts "  - #{g['name']} (×#{g['count']}): #{g['blurb']}" }
-  puts ''
-  puts "Full report: #{gap_report_md || '(see workdir *gaps-report.md)'}"
-  puts 'Options: close the gap via the gap-scout subagent (scripts/gap-scout.md),'
-  puts 'restructure the workbook in Tableau, or re-run with --force to accept the'
-  puts 'degradation (the features above will be missing from the Sigma workbook).'
-  puts '======================================================='
-  puts 'No Sigma objects were created.'
-  exit 11
-elsif unhandled_gaps.any?
-  line "--force: proceeding past #{unhandled_gaps.size} ❌-unhandled feature(s) — they will NOT migrate"
-end
-
-# EMPTY-VIEW-CSV preflight (honesty stop): a view whose CSV exported 0 data rows
-# produces NO chart — the tile silently drops and the census gate stops the
-# --finalize pass. Surface it NOW as a decision instead of a surprise later.
-empty_csvs = Dir[File.join(WORK, 'views', '*.csv')].select do |c|
-  (File.readlines(c).reject { |l| l.strip.empty? }.size rescue 0) <= 1
-end.map { |c| File.basename(c, '.csv') }
-line "WARN: #{empty_csvs.size} view CSV(s) came back EMPTY: #{empty_csvs.join(', ')}" if empty_csvs.any?
+# calc fields / custom-SQL / gap gate / empty-CSV preflight all consume
+# discovery-lane output — they run AFTER the lane join below. The spec
+# generation here only needs the .twb (already landed).
 
 # ---------------------------------------------------------------------------
 # Spec generation. The DEFAULT path is MECHANICAL (no agent hand-authoring):
@@ -430,6 +440,8 @@ mechanical = !have_specs
 conv = nil
 if mechanical
   unless have_twb
+    sleep 0.1 until lane_done.call # reap the background lane before aborting
+    print_lane_log.call
     abort <<~MSG
       FATAL: mechanical conversion needs the workbook .twb (for the data model +
       chart signals), but none was downloaded (MCP-only datasource?). Either
@@ -464,13 +476,211 @@ if mechanical
   conv_fact = MechanicalSpecs.pick_fact(conv['model'])
   conv_base = conv_fact ? MechanicalSpecs.base_of(conv['model'], conv_fact) : nil
   pre = conv_fact ? MechanicalSpecs.derive_master(conv_fact, (conv_fact['name'] || 'Order Fact'), conv_base) : { 'untranslated_metrics' => [] }
+  pre_untranslated = pre['untranslated_metrics'] || []
+  # plotted_untranslated (the CSV-header match) is computed after the lane join
+  # — it needs the view CSVs.
+end
+mark('phase1-foreground')
+
+# ---------------------------------------------------------------------------
+# Phase 1.6 — DM-reuse scan (find-or-pick-dm). Default = BUILD NEW; candidates
+# are printed so a human can opt in with --reuse-dm. Non-destructive.
+# Pure Sigma-side — runs CONCURRENTLY with the background discovery lane.
+# ---------------------------------------------------------------------------
+hdr('1.6', 'DM-reuse scan (concurrent with discovery)')
+reuse_dm_id = nil
+dm_match = {}
+src_model = mechanical ? conv['model'] : (have_specs ? Specs.dm_spec : nil)
+if opts[:skip_reuse]
+  line 'skipped (--skip-reuse-scan)'
+elsif src_model.nil?
+  line 'no spec source to derive a signature from — building new'
+else
+  sig_els = (src_model['pages'] || []).flat_map { |p| p['elements'] || [] }
+  sig_tables = sig_els.map do |e|
+    s = e['source'] || {}
+    next 'CUSTOM_SQL' if s['kind'] == 'sql'
+    pth = s['path']
+    pth.is_a?(Array) ? pth.join('.').upcase : nil
+  end.compact.uniq
+  sig_cols = sig_els.flat_map { |e| (e['columns'] || []).map { |c| c['name'] } }.compact.uniq
+  sig_meas = sig_els.flat_map do |e|
+    (e['metrics'] || []).map { |m| { 'col' => m['name'], 'derivation' => m['aggregation'] || m['derivation'] } }
+  end
+  sig_path = File.join(WORK, 'workbook-signature.json')
+  File.write(sig_path, JSON.pretty_generate(
+    'tableau_workbook' => wb_name, 'warehouse_tables' => sig_tables,
+    'referenced_columns' => sig_cols, 'measures' => sig_meas))
+  match_path = File.join(WORK, 'dm-match.json')
+  sigma_run!(['ruby', File.join(HERE, 'find-or-pick-dm.rb'),
+              '--workbook-signature', sig_path, '--out', match_path],
+             allow_fail: true) # exit 1 = no candidate ≥ min-score (normal: build new)
+  dm_match = (JSON.parse(File.read(match_path)) rescue {})
+  cands = (dm_match['candidates'] || []).first(3)
+  if cands.any?
+    line 'top candidate(s) — default is BUILD NEW; pass --reuse-dm to opt in:'
+    cands.each { |c| line "  score #{format('%.2f', c['score'] || 0)}  #{c['dm_id']}  '#{c['dm_name']}'" }
+  else
+    line 'no existing DM covers this workbook — building new'
+  end
+end
+if opts[:reuse_dm]
+  reuse_dm_id = opts[:reuse_dm] == :recommended ? dm_match['recommended_dm_id'] : opts[:reuse_dm]
+  abort 'FATAL: --reuse-dm: the picker found no candidate ≥ min-score; pass an explicit ' \
+        '--reuse-dm <dataModelId> or drop the flag to build new' unless reuse_dm_id
+  line "REUSING data model #{reuse_dm_id} — Phase 3 build+POST will be skipped."
+  line "  #{dm_match['warning']}" if dm_match['warning']
+  line '  NOTE: master-column formulas are derived against the reused DM\'s readback labels;'
+  line '  if its shape differs (separate dim elements), the workbook gate will stop with the'
+  line '  agent-path handoff (exit 4) — run SKILL.md Phase 1.5b (inspect-dm-shape.rb) then.'
+end
+mark('phase1.6-dm-scan')
+
+# ---------------------------------------------------------------------------
+# Phase 2 — Discover warehouse column names (per table) for the DM build.
+# Pure Sigma-side — runs CONCURRENTLY with the background discovery lane.
+# ---------------------------------------------------------------------------
+hdr(2, 'Discover warehouse columns (concurrent with discovery)')
+db = opts[:db] || 'CSA'
+schema = opts[:schema] || 'TJ'
+# Table set: from the generator's DM spec when available, else inferred from the
+# datasource's logical tables.
+wh_tables =
+  if mechanical
+    (conv['model']['pages'] || []).flat_map { |p| p['elements'] || [] }
+      .select { |e| e.dig('source', 'kind') == 'warehouse-table' }
+      .map { |e| e.dig('source', 'path')&.last }.compact.uniq
+  elsif have_specs
+    Specs.dm_spec['pages'].flat_map { |p| p['elements'] }
+         .map { |e| e.dig('source', 'path')&.last }.compact.uniq
+  else
+    md = (JSON.parse(File.read(File.join(WORK, 'ds-metadata.json'))) rescue {})
+    fields = md['data'] || []
+    fields.flat_map { |f| (f['name'] || '').scan(/\b([A-Z][A-Z0-9_]*(?:_DIM|_FACT))\b/) }
+          .flatten.uniq
+  end
+wh_tables = [] if wh_tables.nil?
+if wh_tables.empty?
+  line 'no warehouse tables resolved from metadata; relying on spec generator'
+else
+  wh_tables.each do |t|
+    _, st = sigma_run!(['ruby', File.join(HERE, 'discover-columns.rb'),
+                        '--connection-id', opts[:conn],
+                        '--table-path', "#{db}.#{schema}.#{t}",
+                        '--out', File.join(WORK, "cols-#{t}.json")], allow_fail: true)
+    cj = (JSON.parse(File.read(File.join(WORK, "cols-#{t}.json"))) rescue nil)
+    n = cj && cj['columns'] ? cj['columns'].size : '?'
+    line "#{db}.#{schema}.#{t}: #{n} columns#{st.success? ? '' : ' (not in catalog — Custom SQL fallback may be needed)'}"
+  end
+end
+mark('phase2-columns')
+
+# ---------------------------------------------------------------------------
+# Phase 1 (join) — wait for the background Tableau lane, then run everything
+# that consumes its output: calc fields, custom-SQL scan, the gap-scan HARD
+# GATE, the empty-view-CSV preflight, and the plotted-untranslated check.
+# Every designed stop below is byte-identical to the serial flow.
+# ---------------------------------------------------------------------------
+puts
+puts '── Phase 1 (join) · Tableau discovery lane ──'
+sleep 0.1 until lane_done.call
+mark('join-wait')
+print_lane_log.call
+unless lane[:status].success?
+  abort "FATAL: Tableau discovery failed (exit #{lane[:status].exitstatus}) — see lane log above"
+end
+PHASE_T['phase1-lane(bg)'] = (lane[:ended] - lane[:started])
+tjs = (JSON.parse(File.read(File.join(WORK, 'timings.json'))) rescue nil)
+line "discovery lane: #{(lane[:ended] - lane[:started]).round(1)}s wall" \
+     "#{tjs ? " (tableau-discover #{tjs['total_seconds']}s, pool=#{tjs['pool']}; per-task breakdown in timings.json)" : ''}"
+
+calc_path = File.join(WORK, 'calc-fields.json')
+calcs = []
+if wb_luid
+  cf = ['ruby', File.join(HERE, 'extract-calc-fields.rb'),
+        '--workbook-luid', wb_luid, '--out', calc_path]
+  cf += ['--twb', twb] if have_twb
+  _, st = run!(['bash', '-c',
+                "eval \"$(#{File.join(HERE, 'get-tableau-token.sh')})\" && " +
+                cf.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')], allow_fail: true)
+  if File.exist?(calc_path)
+    cfj = JSON.parse(File.read(calc_path)) rescue {}
+    calcs = cfj['calcs'] || []
+    n_csql = calcs.count { |c| c['requires_custom_sql'] }
+    line "#{calcs.size} calc field(s); #{n_csql} require Custom SQL (window/LOD)"
+  end
+end
+
+custom_sql = []
+csql_path = File.join(WORK, 'custom-sql.json')
+if wb_luid && have_twb
+  csql_cmd = ['ruby', File.join(HERE, 'extract-custom-sql.rb'),
+              '--workbook-luid', wb_luid, '--twb', twb, '--out', csql_path]
+  run!(['bash', '-c',
+        "eval \"$(#{File.join(HERE, 'get-tableau-token.sh')})\" && " +
+        csql_cmd.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')], allow_fail: true)
+  custom_sql = (JSON.parse(File.read(csql_path)) rescue []) if File.exist?(csql_path)
+  custom_sql = [] unless custom_sql.is_a?(Array)
+end
+
+# Gap scan already ran in the discovery lane (right after the .twb landed);
+# parse its report here. Lane scan failure degrades the same way the serial
+# allow_fail run did: gaps stays empty.
+gaps = []
+gap_report_md = nil
+if have_twb
+  gj = Dir[File.join(WORK, '*gaps*report*.json')].first || Dir[File.join(WORK, '*gaps*.json')].first
+  if gj && File.exist?(gj)
+    gap_report_md = gj.sub(/\.json$/, '.md')
+    gaps = (JSON.parse(File.read(gj))['detected_features'] || []) rescue []
+    bys = gaps.group_by { |g| g['status'] }.transform_values(&:size)
+    line "gap scan: #{bys.map { |k, v| "#{v} #{k}" }.join(', ')}"
+  end
+end
+
+# GAP-SCAN HARD GATE: ❌-unhandled features mean part of the workbook cannot be
+# migrated by this skill yet. Abort WITH the report unless the human accepts the
+# degradation explicitly via --force. (auto/hint/manual statuses flow into the
+# decisions checkpoint below instead.)
+unhandled_gaps = gaps.select { |g| g['status'].to_s == 'unhandled' }
+if unhandled_gaps.any? && !opts[:force]
+  puts
+  puts '==================== GAP-SCAN STOP ===================='
+  puts "#{unhandled_gaps.size} ❌-unhandled feature(s) detected — these do NOT migrate:"
+  unhandled_gaps.each { |g| puts "  - #{g['name']} (×#{g['count']}): #{g['blurb']}" }
+  puts ''
+  puts "Full report: #{gap_report_md || '(see workdir *gaps-report.md)'}"
+  puts 'Options: close the gap via the gap-scout subagent (scripts/gap-scout.md),'
+  puts 'restructure the workbook in Tableau, or re-run with --force to accept the'
+  puts 'degradation (the features above will be missing from the Sigma workbook).'
+  puts '======================================================='
+  puts 'No Sigma objects were created.'
+  mark('phase1-join')
+  phase_summary
+  exit 11
+elsif unhandled_gaps.any?
+  line "--force: proceeding past #{unhandled_gaps.size} ❌-unhandled feature(s) — they will NOT migrate"
+end
+
+# EMPTY-VIEW-CSV preflight (honesty stop): a view whose CSV exported 0 data rows
+# produces NO chart — the tile silently drops and the census gate stops the
+# --finalize pass. Surface it NOW as a decision instead of a surprise later.
+empty_csvs = Dir[File.join(WORK, 'views', '*.csv')].select do |c|
+  (File.readlines(c).reject { |l| l.strip.empty? }.size rescue 0) <= 1
+end.map { |c| File.basename(c, '.csv') }
+line "WARN: #{empty_csvs.size} view CSV(s) came back EMPTY: #{empty_csvs.join(', ')}" if empty_csvs.any?
+
+# PLOTTED metrics whose formula did not fully translate — deferred from spec
+# generation (needs the lane's view CSVs to know what is actually charted).
+if mechanical
   csv_headers = Dir[File.join(WORK, 'views', '*.csv')].flat_map do |c|
     (CSV.read(c).first rescue nil) || []
   end.compact.map { |h| h.to_s.strip }.uniq
-  plotted_untranslated = (pre['untranslated_metrics'] || []).select do |nm|
+  plotted_untranslated = pre_untranslated.select do |nm|
     csv_headers.any? { |h| h.casecmp?(nm) || h.sub(/^(sum|avg|min|max|median|distinct count|count) of /i, '').casecmp?(nm) }
   end
 end
+mark('phase1-join')
 
 # ---------------------------------------------------------------------------
 # DECISIONS CHECKPOINT — surface the genuine human questions ONLY. Mechanical
@@ -638,7 +848,7 @@ if questions.any? && !opts[:yes] && answers.nil?
   block = {
     'status' => 'decisions_needed',
     'workbook' => wb_name,
-    'phases_completed' => ['1 Discover'],
+    'phases_completed' => ['1 Discover', '1.6 DM-reuse scan (read-only)', '2 Warehouse columns (read-only)'],
     'note' => 'Deterministic mechanical steps (DM/workbook POST, layout, parity) are NOT asked about. ' \
               'Re-run with --yes to accept all defaults, or --answers \'{"<id>":"<choice>"}\' to override.',
     'open_questions' => questions
@@ -649,6 +859,7 @@ if questions.any? && !opts[:yes] && answers.nil?
   puts '======================================================='
   puts
   puts "#{questions.size} decision(s) need a human. No Sigma objects were created."
+  phase_summary
   exit 10
 end
 
@@ -666,95 +877,7 @@ if questions.any?
 else
   line 'no open questions — running straight through'
 end
-
-# ---------------------------------------------------------------------------
-# Phase 1.6 — DM-reuse scan (find-or-pick-dm). Default = BUILD NEW; candidates
-# are printed so a human can opt in with --reuse-dm. Non-destructive.
-# ---------------------------------------------------------------------------
-hdr('1.6', 'DM-reuse scan')
-reuse_dm_id = nil
-dm_match = {}
-src_model = mechanical ? conv['model'] : (have_specs ? Specs.dm_spec : nil)
-if opts[:skip_reuse]
-  line 'skipped (--skip-reuse-scan)'
-elsif src_model.nil?
-  line 'no spec source to derive a signature from — building new'
-else
-  sig_els = (src_model['pages'] || []).flat_map { |p| p['elements'] || [] }
-  sig_tables = sig_els.map do |e|
-    s = e['source'] || {}
-    next 'CUSTOM_SQL' if s['kind'] == 'sql'
-    pth = s['path']
-    pth.is_a?(Array) ? pth.join('.').upcase : nil
-  end.compact.uniq
-  sig_cols = sig_els.flat_map { |e| (e['columns'] || []).map { |c| c['name'] } }.compact.uniq
-  sig_meas = sig_els.flat_map do |e|
-    (e['metrics'] || []).map { |m| { 'col' => m['name'], 'derivation' => m['aggregation'] || m['derivation'] } }
-  end
-  sig_path = File.join(WORK, 'workbook-signature.json')
-  File.write(sig_path, JSON.pretty_generate(
-    'tableau_workbook' => wb_name, 'warehouse_tables' => sig_tables,
-    'referenced_columns' => sig_cols, 'measures' => sig_meas))
-  match_path = File.join(WORK, 'dm-match.json')
-  sigma_run!(['ruby', File.join(HERE, 'find-or-pick-dm.rb'),
-              '--workbook-signature', sig_path, '--out', match_path],
-             allow_fail: true) # exit 1 = no candidate ≥ min-score (normal: build new)
-  dm_match = (JSON.parse(File.read(match_path)) rescue {})
-  cands = (dm_match['candidates'] || []).first(3)
-  if cands.any?
-    line 'top candidate(s) — default is BUILD NEW; pass --reuse-dm to opt in:'
-    cands.each { |c| line "  score #{format('%.2f', c['score'] || 0)}  #{c['dm_id']}  '#{c['dm_name']}'" }
-  else
-    line 'no existing DM covers this workbook — building new'
-  end
-end
-if opts[:reuse_dm]
-  reuse_dm_id = opts[:reuse_dm] == :recommended ? dm_match['recommended_dm_id'] : opts[:reuse_dm]
-  abort 'FATAL: --reuse-dm: the picker found no candidate ≥ min-score; pass an explicit ' \
-        '--reuse-dm <dataModelId> or drop the flag to build new' unless reuse_dm_id
-  line "REUSING data model #{reuse_dm_id} — Phase 3 build+POST will be skipped."
-  line "  #{dm_match['warning']}" if dm_match['warning']
-  line '  NOTE: master-column formulas are derived against the reused DM\'s readback labels;'
-  line '  if its shape differs (separate dim elements), the workbook gate will stop with the'
-  line '  agent-path handoff (exit 4) — run SKILL.md Phase 1.5b (inspect-dm-shape.rb) then.'
-end
-
-# ---------------------------------------------------------------------------
-# Phase 2 — Discover warehouse column names (per table) for the DM build.
-# ---------------------------------------------------------------------------
-hdr(2, 'Discover warehouse columns')
-db = opts[:db] || 'CSA'
-schema = opts[:schema] || 'TJ'
-# Table set: from the generator's DM spec when available, else inferred from the
-# datasource's logical tables.
-wh_tables =
-  if mechanical
-    (conv['model']['pages'] || []).flat_map { |p| p['elements'] || [] }
-      .select { |e| e.dig('source', 'kind') == 'warehouse-table' }
-      .map { |e| e.dig('source', 'path')&.last }.compact.uniq
-  elsif have_specs
-    Specs.dm_spec['pages'].flat_map { |p| p['elements'] }
-         .map { |e| e.dig('source', 'path')&.last }.compact.uniq
-  else
-    md = (JSON.parse(File.read(File.join(WORK, 'ds-metadata.json'))) rescue {})
-    fields = md['data'] || []
-    fields.flat_map { |f| (f['name'] || '').scan(/\b([A-Z][A-Z0-9_]*(?:_DIM|_FACT))\b/) }
-          .flatten.uniq
-  end
-wh_tables = [] if wh_tables.nil?
-if wh_tables.empty?
-  line 'no warehouse tables resolved from metadata; relying on spec generator'
-else
-  wh_tables.each do |t|
-    _, st = sigma_run!(['ruby', File.join(HERE, 'discover-columns.rb'),
-                        '--connection-id', opts[:conn],
-                        '--table-path', "#{db}.#{schema}.#{t}",
-                        '--out', File.join(WORK, "cols-#{t}.json")], allow_fail: true)
-    cj = (JSON.parse(File.read(File.join(WORK, "cols-#{t}.json"))) rescue nil)
-    n = cj && cj['columns'] ? cj['columns'].size : '?'
-    line "#{db}.#{schema}.#{t}: #{n} columns#{st.success? ? '' : ' (not in catalog — Custom SQL fallback may be needed)'}"
-  end
-end
+mark('decisions')
 
 # ---------------------------------------------------------------------------
 # Phase 3 — Build + POST the data model.
@@ -846,6 +969,7 @@ unless reuse_dm_id
   fact_eid = fact['id']
   line "dataModelId = #{dm_id}  (fact element '#{fact['name']}' = #{fact_eid})"
 end
+mark('phase3-dm')
 
 # ---------------------------------------------------------------------------
 # Phase 4 — Build + POST the workbook.
@@ -943,11 +1067,14 @@ rescue WorkbookBuildError => e
   puts '   2. Otherwise fall back to the agent path: rebuild the workbook via the'
   puts "      skill's agent-authored flow (see SKILL.md) against this DM."
   puts '   The data model is posted and ready to attach either way.'
+  mark('phase4-workbook')
+  phase_summary
   exit 4
 end
 wb_ids = JSON.parse(File.read(wb_ids_path))
 wb_id = wb_ids['workbookId']
 line "workbookId = #{wb_id}"
+mark('phase4-workbook')
 
 # ---------------------------------------------------------------------------
 # Phase 5 — Layout. Prefer the generator's layout_xml; else auto-build from the
@@ -975,6 +1102,7 @@ if File.exist?(layout_path)
   line(pst.success? ? "layout applied to workbook #{wb_id}" :
        'WARN: layout PUT rejected (Invalid element position) — keeping default stacked layout; charts unaffected')
 end
+mark('phase5-layout')
 
 # ---------------------------------------------------------------------------
 # Phase 6 — Parity, PASS 1 of 2. Structural hard signals first (live /columns
@@ -1023,6 +1151,8 @@ unless structural_ok
   puts "workbookId  : #{wb_id}"
   puts "PARITY      : FAIL (structural — #{err_cols.size} error column(s); fix before the value pass)"
   puts '======================================='
+  mark('phase6-pass1')
+  phase_summary
   exit 3
 end
 
@@ -1046,4 +1176,6 @@ puts '(--finalize runs phase6 finalize + orphan cleanup + the census-aware'
 puts ' assert-phase6-ran hard gate; exit 0 there is the ONLY green exit.)'
 puts 'PHASE E     : requested (--enhance) — runs at --finalize AFTER all gates are green' if opts[:enhance]
 puts '=================================================================='
+mark('phase6-pass1')
+phase_summary
 exit 12
