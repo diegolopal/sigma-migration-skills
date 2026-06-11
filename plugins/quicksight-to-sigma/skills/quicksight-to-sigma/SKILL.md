@@ -42,7 +42,7 @@ Exit 0 = parity + hard gate green; exit 10 = a gate (converter MCP / parity coll
 **QuickSight (AWS CLI).**
 - The `describe-analysis-definition`, `describe-dashboard-definition`, and `describe-data-set` APIs are **Enterprise-edition only**. A Standard-edition account rejects them — there is no extraction path on Standard. Confirm the edition first.
 - QuickSight's **identity region is often `us-east-1`** even when the data lives elsewhere; the analysis/dataset/data-source resources are read from the identity region. Pass `--region us-east-1` unless you know the account is regionalized differently.
-- Auth is whatever the AWS CLI is already configured with: a named `--profile`, SSO (`aws sso login`), or — for Okta-fronted orgs — `gimme-aws-creds` writing a profile. The discovery script just shells out to `aws quicksight ...`.
+- Auth is whatever the AWS CLI / boto3 is already configured with: a named `--profile`, SSO (`aws sso login`), or — for Okta-fronted orgs — `gimme-aws-creds` writing a profile. The discovery script uses an **in-process boto3 client when boto3 is importable** (one session for the whole run) and only **falls back to shelling out to `aws quicksight ...`** when it isn't — boto3 is NOT a hard dependency, and `QS_FORCE_CLI=1` forces the CLI path.
 - You need the account id (`aws sts get-caller-identity`) and the analysis (or dashboard) id.
 
 **Sigma.** Same as the other migration skills: `SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET` → `scripts/get-token.sh` exchanges them for a `SIGMA_API_TOKEN`. You also need a **Sigma connection** that reaches the same warehouse the QuickSight datasets query (its `connection_id` feeds the converter), and a target **folder id**.
@@ -62,6 +62,13 @@ Pulls `describe-analysis-definition` (or `-dashboard-definition`) + `describe-da
 - `datasets/<id>.json` — one per dataset (PhysicalTableMap, LogicalTableMap/transforms, calc fields, output columns).
 - `datasources/<id>.json` — one per source (the `Type` tells you Snowflake / Redshift / Athena / S3 / SaaS).
 - `signals.json` — normalized: per-sheet visuals (type + VisualId + title + referenced ColumnNames), calc fields, parameters, datasets, sources. Drives the convert + workbook + layout phases.
+- `timings.json` — per-call wall clock + transport; **always written**.
+
+### Fast discovery (designed for 20-40 dashboard estates sharing datasets)
+- **In-process boto3 transport.** Each `aws` CLI subprocess pays a 0.4-0.7s interpreter-startup tax (measured ~0.7s wall); a 1-analysis discovery makes 4-5 calls and an estate re-pays it per dashboard. With boto3 importable, ONE session serves every call; the CLI fallback keeps zero-dependency installs working (identical call/response shapes — boto3 responses are normalized: datetimes → ISO strings, `ResponseMetadata` stripped).
+- **Estate-level dataset cache** (`/tmp/qs-estate-cache/<acct>__<region>/`, override `QS_ESTATE_CACHE`): describe responses cached keyed **DataSetArn + LastUpdatedTime** — shared datasets are described ONCE per estate, not per dashboard. Freshness is validated against ONE `list-data-sets` call per process; any LastUpdatedTime mismatch (or a denied/empty listing) re-describes. **Data sources are described once, lazily** and cached without a probe (they change rarely). `--no-cache` bypasses, `--refresh-cache` forces re-describe.
+- **Batch mode**: `--analysis-ids a,b,c --pool 4` (cap 8) runs per-analysis discovery in parallel into `<out-dir>/<id>/`, sharing the estate cache with single-flight de-duplication (concurrent threads needing the same dataset trigger exactly one describe).
+- **Test coverage (live AWS is IAM-blocked — see below)**: `python3 scripts/tests/test-quicksight-discover.py` — 11 tests covering both transports (fake-boto3 injection + stubbed CLI), datetime normalization, cache hit/invalidation/single-flight, batch mode, and the offline fixture path. **Still awaiting live-AWS validation**: real boto3 session/profile auth, real `list-data-sets` pagination + permissions, Enterprise-edition `describe-*-definition` latency, and measured before/after numbers on a real estate. The mocked harness + the `--from-fixtures` E2E (`migrate-quicksight.rb`, parity 5/5 strict) are the offline proof.
 
 ## Phase 3 — Convert (MCP gate)
 

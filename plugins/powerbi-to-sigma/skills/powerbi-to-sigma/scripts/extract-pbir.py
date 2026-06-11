@@ -77,47 +77,27 @@ def _stacking(vtype):
 
 
 def _fetch_pbir(ws, report, out_dir):
-    """Download a report's PBIR parts into out_dir via Fabric getDefinition."""
-    import truststore; truststore.inject_into_ssl()  # corp TLS inspection — mandatory
-    import requests, msal
-    cache = msal.SerializableTokenCache()
-    if os.path.exists(CACHE):
-        cache.deserialize(open(CACHE).read())
-    app = msal.PublicClientApplication(CLIENT_ID, authority=AUTHORITY, token_cache=cache)
-    tok = None
-    for a in app.get_accounts():
-        r = app.acquire_token_silent(SCOPES, account=a)
-        if r and "access_token" in r:
-            tok = r["access_token"]; break
-    if not tok:
-        flow = app.initiate_device_flow(scopes=SCOPES)
-        print(f">>> Go to {flow['verification_uri']} and enter code {flow['user_code']}", file=sys.stderr)
-        tok = app.acquire_token_by_device_flow(flow).get("access_token")
-    if cache.has_state_changed:
-        open(CACHE, "w").write(cache.serialize())
+    """Download a report's PBIR parts into out_dir via Fabric getDefinition.
+
+    Fast discovery: LRO polling is 0.5s-first + backoff (pbi_fabric.lro) instead
+    of sleeping the full Retry-After before the first status check; a per-task
+    timings.json lands next to the parts."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import pbi_fabric as fab  # injects truststore (corp TLS inspection — mandatory)
+    tm = fab.Timings()
+    tok = tm.timed("auth", lambda: fab.get_token())
     if not tok:
         sys.exit("AUTH FAIL — no token")
-    h = {"Authorization": f"Bearer {tok}", "Content-Type": "application/json"}
-    url = f"{FAB_BASE}/workspaces/{ws}/reports/{report}/getDefinition"
-    r = requests.post(url, headers=h)
-    if r.status_code == 202:  # long-running op
-        loc = r.headers["Location"]; ra = int(r.headers.get("Retry-After", "3"))
-        for _ in range(60):
-            time.sleep(ra)
-            sr = requests.get(loc, headers=h); st = sr.json().get("status")
-            if st == "Succeeded":
-                r = requests.get(loc + "/result", headers=h); break
-            if st in ("Failed", "Undetermined"):
-                sys.exit(f"LRO failed: {sr.text[:400]}")
-        else:
-            sys.exit("LRO timeout")
-    if r.status_code != 200:
-        sys.exit(f"getDefinition -> {r.status_code}: {r.text[:400]}")
-    for p in r.json().get("definition", {}).get("parts", []):
-        fp = os.path.join(out_dir, p["path"])
-        os.makedirs(os.path.dirname(fp), exist_ok=True)
-        open(fp, "wb").write(base64.b64decode(p["payload"]))
-    print(f"[extract-pbir] fetched PBIR -> {out_dir}", file=sys.stderr)
+    try:
+        defn = tm.timed("report-def", lambda: fab.fetch_definition(
+            tok, ws, "reports", report, None, label="report getDefinition"))
+    except RuntimeError as e:
+        sys.exit(str(e))
+    fab.write_parts(defn, out_dir, flatten=False)
+    t = tm.write(os.path.join(out_dir, "timings.json"), status="ok", report=report)
+    print(f"[extract-pbir] fetched PBIR -> {out_dir} "
+          f"({t['totalSeconds']}s: " + "  ".join(f"{x['task']}={x['seconds']}s" for x in t["tasks"]) + ")",
+          file=sys.stderr)
 
 
 def _role_bindings(query_state):

@@ -106,16 +106,21 @@ if [[ $START -le 1 ]]; then
     fi
   fi
 
-  # ---- stage 1.5: SOURCE-FRESHNESS PREFLIGHT (bead fmte) -------------------
+  # ---- stage 1.5: SOURCE-FRESHNESS PREFLIGHT (bead fmte) — NON-BLOCKING ----
   # Import-mode models are frozen snapshots; Sigma reads the live warehouse.
-  # Capture the dataset's refresh history (incl. FAILED refreshes / expired
-  # creds) + a cheap executeQueries row-count/max-date snapshot NOW so the
-  # stage-7 parity is LED by the staleness banner. Best-effort: never fatal.
-  if [[ -n "$WS" && -n "$DATASET" ]]; then
-    echo "== [1.5/7] SOURCE-FRESHNESS PREFLIGHT =="
+  # The preflight is only CONSUMED at stage 7 parity, so it runs as a
+  # BACKGROUND LANE concurrent with convert/post/build (3-8s of PBI round-trips
+  # off the critical path); its log is replayed before stage 7. Best-effort:
+  # never fatal. If freshness.json already exists (resume), it is reused.
+  if [[ -n "$WS" && -n "$DATASET" && ! -f "$WORK/freshness.json" ]]; then
+    echo "== [1.5/7] SOURCE-FRESHNESS PREFLIGHT (non-blocking) =="
     "$PY" "$HERE/pbi-freshness.py" --workspace "$WS" --dataset "$DATASET" \
       ${BIM:+--tmsl "$BIM"} --out "$WORK/freshness.json" \
-      || echo "  (freshness preflight failed — continuing without it)"
+      >"$WORK/freshness.log" 2>&1 &
+    FRESH_PID=$!
+    echo "  launched in background (pid $FRESH_PID) — consumed at stage 7 parity"
+  elif [[ -f "$WORK/freshness.json" ]]; then
+    echo "== [1.5/7] SOURCE-FRESHNESS PREFLIGHT: reusing existing freshness.json =="
   fi
 fi
 
@@ -188,6 +193,12 @@ if [[ $START -le 6 ]]; then
 fi
 
 if [[ $START -le 7 ]]; then
+  # join the non-blocking stage-1.5 freshness lane before parity consumes it
+  if [[ -n "${FRESH_PID:-}" ]]; then
+    wait "$FRESH_PID" 2>/dev/null || true
+    [[ -f "$WORK/freshness.log" ]] && sed 's/^/  /' "$WORK/freshness.log"
+    [[ -f "$WORK/freshness.json" ]] || echo "  (freshness preflight produced no freshness.json — continuing without it)"
+  fi
   echo "== [7/7] PARITY (DAX vs Sigma — MCP gate) =="
   if [[ -n "$WS" && -n "$DATASET" && -f "$WORK/chart-dax.json" ]]; then
     WB_ID=$(grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' "$WORK/wb-post.txt" | head -1 || true)
