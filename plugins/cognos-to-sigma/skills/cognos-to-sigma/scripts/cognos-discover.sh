@@ -12,6 +12,11 @@
 # Grab COGNOS_COOKIE + COGNOS_XSRF from the browser: DevTools → Network → any
 # `coreBundle.js`-initiated `bi/v1/...` request → Copy as cURL (the -b cookie and
 # the X-XSRF-Token header). Session is short-lived; re-grab when it 401s.
+#
+# MORE THAN A COUPLE OF OBJECTS? Use cognos-batch-fetch.sh instead — it pulls
+# the WHOLE estate in one hot-session window (4-wide, resumable disk cache) and
+# its `one` mode serves single module/report fetches from that cache when the
+# modificationTime is unchanged (1 request instead of a re-fetch).
 set -euo pipefail
 : "${COGNOS_BASE:?set COGNOS_BASE}"; : "${COGNOS_COOKIE:?set COGNOS_COOKIE}"; : "${COGNOS_XSRF:?set COGNOS_XSRF}"
 cmd="${1:-}"; id="${2:-}"
