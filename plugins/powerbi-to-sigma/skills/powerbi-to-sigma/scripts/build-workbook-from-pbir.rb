@@ -121,6 +121,74 @@ def qr_leaf(qr, fallback = 'Value')
   leaf.empty? ? fallback : leaf
 end
 
+# ---------------------------------------------------------------------------
+# Derived element titles (phase-e layout-quality fix): classic report.json
+# visuals routinely carry NO objects.title, and the old fallback surfaced the
+# RAW visual id ("291ef87d16c50d7a3808") as the chart's display name. Derive a
+# human title from the visual's projections instead — a raw id must NEVER
+# surface as a display name (layout_lint.rb fails the build if one does).
+# ---------------------------------------------------------------------------
+
+# Humanized leaf for titles: strip agg wrappers + date-hierarchy "Variation"
+# tails, underscores -> spaces, ALL-CAPS warehouse names -> Title Case (short
+# acronyms like ZIP/ID stay upcased).
+def title_leaf(qr, fallback = nil)
+  s = qr.to_s.strip
+  # "T.COL.Variation.Date Hierarchy.Month" -> the base column "T.COL"
+  s = Regexp.last_match(1) if s =~ /\A(.+?)\.Variation\..+\z/i
+  leaf = qr_leaf(s, nil)
+  return fallback if leaf.nil? || leaf.empty?
+  words = leaf.gsub(/_+/, ' ').strip.split(/\s+/)
+  words.map { |w| w =~ /\A[A-Z0-9]+\z/ && w.length > 3 ? w.capitalize : w }.join(' ')
+end
+
+# True when a dimension queryRef is date-shaped (date hierarchy / date-named
+# column) — those visuals read better as "<Measure> Over Time".
+def dateish_qr?(qr)
+  qr.to_s =~ /variation|hierarchy|\b(date|month|year|quarter|week|day)\b/i
+end
+
+# "Absence Count by Department" / "Hours by Location" / "Hires Over Time" —
+# derived purely from the visual's role projections. Returns nil only when the
+# visual has no usable bindings (caller falls back to the kind label).
+def derived_title(rec, kind)
+  b = rec['bindings'] || {}
+  vals = b['Values'] || b['Y'] || []
+  dims = b['Category'] || b['Axis'] || b['X'] || b['Group'] || b['Rows'] || b['Fields'] || []
+  case kind
+  when 'kpi-chart'
+    title_leaf(vals.first || dims.first)
+  when 'table'
+    leaves = (b['Values'] || []).map { |q| title_leaf(q) }.compact.uniq
+    return nil if leaves.empty?
+    leaves.length > 3 ? "#{leaves.first(3).join(', ')} +#{leaves.length - 3}" : leaves.join(', ')
+  when 'pivot-table'
+    v = title_leaf(vals.first)
+    r = title_leaf((b['Rows'] || b['Category'] || []).first)
+    c = title_leaf((b['Columns'] || []).first)
+    return nil unless v
+    [v, r && "by #{r}", c && "and #{c}"].compact.join(' ')
+  when 'scatter-chart'
+    x = title_leaf((b['X'] || b['Values'] || []).first)
+    y = title_leaf((b['Y'] || []).first)
+    x && y ? "#{y} vs #{x}" : (y || x)
+  else # bar/line/area/combo/pie/donut
+    dim = dims.first || (b['Legend'] || []).first
+    v = title_leaf(vals.first || (b['Y2'] || []).first)
+    d = title_leaf(dim)
+    return v || d if v.nil? || d.nil?
+    dateish_qr?(dim) ? "#{v} Over Time" : "#{v} by #{d}"
+  end
+end
+
+# Last-resort label per Sigma kind — still human-readable, never an id.
+KIND_LABEL = {
+  'kpi-chart' => 'KPI', 'bar-chart' => 'Bar Chart', 'line-chart' => 'Line Chart',
+  'area-chart' => 'Area Chart', 'combo-chart' => 'Combo Chart',
+  'scatter-chart' => 'Scatter Plot', 'pie-chart' => 'Pie Chart',
+  'donut-chart' => 'Donut Chart', 'table' => 'Table', 'pivot-table' => 'Pivot Table'
+}.freeze
+
 # PBI numeric format string (from signals 'formats' or master-map field 'format')
 # -> Sigma column format hash. Best-effort; only emits when a format is known.
 # Sigma column format shape is { kind, formatString } (matches the converter's
@@ -268,8 +336,11 @@ def build_element(rec, fields, masters, extra_data = [])
   eid  = "el-#{short(vid)}"
   vfmts = rec['formats'] || {}
   # bead 14w(e): element name comes from the PBI visual title, not the raw id.
+  # When the source visual has no explicit title (the classic-report norm),
+  # derive one from its projections — NEVER surface the raw visual id as the
+  # display name (phase-e layout-quality fix; layout_lint.rb gates this).
   title = rec['title'].to_s.strip
-  name  = title.empty? ? vid : title
+  name  = title.empty? ? (derived_title(rec, kind) || KIND_LABEL[kind] || 'Chart') : title
 
   if kind == 'text'
     body = rec['text'] ? "## #{rec['text']}" : '## '
@@ -634,6 +705,15 @@ content_pages = signals['pages'].map do |pg|
   { 'id' => "page-#{pg['page_id']}", 'name' => pg['page_title'], 'elements' => els }
 end
 data_elements += extra_data_elements
+
+# Derived titles can collide (two untitled visuals over the same projections) —
+# suffix duplicates so every element keeps a distinct human-readable name.
+seen_names = Hash.new(0)
+content_pages.flat_map { |p| p['elements'] }.each do |el|
+  next unless el['name'].is_a?(String) && !el['name'].empty?
+  n = (seen_names[el['name']] += 1)
+  el['name'] = "#{el['name']} (#{n})" if n > 1
+end
 
 # ---- 24-col grid layout (research/powerbi-visual-layout.md §4) -------------
 # Built BEFORE the spec is assembled so the layout XML can be EMBEDDED into the
