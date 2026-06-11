@@ -42,7 +42,12 @@ Chains the scripted spine (discover → scan-workbook-gaps → discover-columns 
 find-or-pick-dm → DM build/validate/post → build-charts-from-signals → workbook
 post-and-readback → build-dashboard-layout + put-layout → phase6-parity →
 cleanup-orphan-workbooks + assert-phase6-ran) and STOPS with exact instructions
-wherever agent judgment is genuinely required. Exit codes: `10` = OPEN QUESTIONS
+wherever agent judgment is genuinely required. Phase 1 is **interleaved**:
+Tableau discovery + gap scan run as a background lane while the pure-Sigma-side
+read-only phases (1.6 DM-reuse scan, 2 warehouse columns) run concurrently; the
+lanes join before anything consumes discovery output, so every designed
+stop/gate fires exactly as in the serial flow. A `PHASE TIMINGS` summary line
+prints at every terminal exit so the speedup stays visible. Exit codes: `10` = OPEN QUESTIONS
 (re-run with `--yes`/`--answers`), `11` = ❌-unhandled gap-scan features (close via
 gap-scout or `--force`), `12` = pass 1 done, parity PENDING (collect mcp-v2 actuals,
 then `--finalize`), `4` = DM posted but the workbook layer needs the agent path,
@@ -89,7 +94,7 @@ which calc translation, which layout) — not orchestration.
 | `scripts/get-token.sh` | Exchange `SIGMA_CLIENT_ID`/`SIGMA_CLIENT_SECRET` for `SIGMA_API_TOKEN` (~1h TTL) |
 | `scripts/setup-tableau.rb` | One-time Tableau PAT setup (only needed for PAT mode — see `refs/tableau-rest.md`) |
 | `scripts/get-tableau-token.sh` | One-shot signin → exports `TABLEAU_AUTH_TOKEN` + `TABLEAU_SITE_ID` |
-| `scripts/tableau-discover.rb` | PAT-mode Phase 1 discovery in one CLI: workbook + views + VDS metadata + GraphQL + .twb content |
+| `scripts/tableau-discover.rb` | PAT-mode Phase 1 discovery in one CLI: workbook + views + VDS metadata + GraphQL + .twb content. ONE unified fetch pool (default 5, `--pool N`, longest-job-first) with 429/timeout backoff + 401 re-mint; always writes per-task `timings.json`. Measured 61.8s → 13.7–18.9s on the 7-view reference workbook |
 | `scripts/scan-workbook-gaps.rb` | **Phase 0a (mandatory):** scan a `.twb` and emit `gaps-report.md` + `gaps.json` categorising every feature into ✅ auto / ⚠️ hint / 🛠 manual / ❌ unhandled. Run BEFORE any other phase. |
 | `scripts/gap-scout.md` | **Phase 0a-scout:** subagent prompt + protocol for resolving ❌ Unhandled gaps. Main agent spawns one scout per gap via the Agent tool. |
 | `scripts/validate-sigma-formula.rb` | Scout primitive: POST a tiny test workbook with a candidate formula, read back column types, return JSON `{ status: ok|error }`. Auto-expands the DM element's columns onto the test master so candidate refs to real data resolve. |
@@ -171,17 +176,17 @@ eval "$(scripts/get-token.sh)"
 
 ### Tableau access — two modes
 
-The skill supports two transports for Tableau-side discovery. **Prefer MCP** when
-it's available; the PAT path is a fallback.
+The skill supports two transports for Tableau-side discovery. **Prefer the
+API/PAT path** — it is dramatically faster (measured on "Orders Conversion
+Test", 7 views: **61.8s serial → 13.7–18.9s** with the unified fetch pool, zero
+rate-limiting at pool 5). The MCP is the **no-PAT fallback only** (each MCP
+fetch is a separate agent tool turn; the PAT CLI does everything in one
+process).
 
 | Mode | When to use | Setup |
 |---|---|---|
-| **MCP** | `mcp__tableau__*` tools are loaded in the session | None — host handles auth |
-| **PAT (REST)** | MCP tools not available, OR you need `.twb` content (layout-hint extraction, embedded datasources) | `ruby scripts/setup-tableau.rb` once, then `eval "$(scripts/get-tableau-token.sh)"` per session |
-
-**Detection at session start:** try `mcp__tableau__list-workbooks`. If the tool is
-loaded and responds, you're in MCP mode. If it errors with "tool not found", fall
-back to PAT mode.
+| **PAT (REST)** — preferred | A Tableau PAT is available (run `setup-tableau.rb` once). Also the only path to `.twb` content (layout-hint extraction, embedded datasources) | `ruby scripts/setup-tableau.rb` once, then `eval "$(scripts/get-tableau-token.sh)"` per session |
+| **MCP** — fallback | No PAT can be provisioned, and `mcp__tableau__*` tools are loaded in the session | None — host handles auth |
 
 **PAT mode in one command:**
 
@@ -189,22 +194,34 @@ back to PAT mode.
 eval "$(scripts/get-tableau-token.sh)"
 ruby scripts/tableau-discover.rb \
   --workbook-id <luid> \
-  --out /tmp/<name>
+  --out /tmp/<name>   # [--pool N] (default 5)
 ```
 
 Produces the same artifacts as MCP-driven Phase 1 in a single run: `get-workbook.json`,
 `workbook-content.twb`, `ds-metadata.json` + `graphql-fields.json` (VDS field list + GraphQL
-formulas), `views/*.csv` (fetched concurrently), and the dashboard PNG. Downstream scripts
-in Phases 2–6 are unchanged. Full endpoint inventory and gotchas in `refs/tableau-rest.md`.
+formulas), `views/*.csv`, the dashboard PNG, **and `timings.json`** (per-task
+start/duration/attempts — always written; it's the evidence trail for any future
+"discovery is slow" report). Downstream scripts in Phases 2–6 are unchanged.
+Full endpoint inventory and gotchas in `refs/tableau-rest.md`.
 
 `--datasource-name` / `--datasource-luid` are **optional** — the script parses the
 downloaded `.twb` for the first non-Parameters `<datasource caption='X'>` and looks it up
 on the site automatically. Pass `--no-auto-ds` to disable, or `--datasource-luid` to force
-a specific datasource when the workbook has multiple.
+a specific datasource when the workbook has multiple (`--datasource-luid` must be the
+**full UUID** — the REST filter has no prefix matching).
 
-View CSV fetches run in parallel (4 concurrent threads, with one auto-retry on 401 after a
-1.5s backoff per view — see `tableau-discover.rb` line ~145). The dashboard PNG is fetched solo
-afterward to avoid VizQL session contention.
+**How the pool works (and why 5):** every fetch after the initial workbook GET
+(.twb, VDS read-metadata, GraphQL fields, all view CSVs, dashboard PNG) goes
+through ONE shared pool of 5 threads, enqueued longest-job-first — the PNG
+render is the longest single fetch, so it starts at t≈0 and hides behind the
+CSV batch. **5 is the measured sweet spot; 8 risks long-tail stragglers** — at
+8 threads a contended VizQL session parked one CSV fetch for ~40s (56s total
+run vs. 13.7–18.9s at 5). The pool keeps 429/timeout exponential backoff and
+single-flight 401 re-mint machinery as insurance even though neither fired at
+pool 5 in validation. Also note Tableau's **~60s server-side render cache**:
+a view rendered within the last minute returns much faster, so back-to-back
+runs land at the fast end of the range and cold-cache runs at the slow end —
+don't read a 5s spread between runs as a regression.
 
 > **One signin attempt only.** Tableau Cloud invalidates a PAT after 4 consecutive failed
 > signins. `get-tableau-token.sh` runs exactly once; never wrap it in a retry loop.
