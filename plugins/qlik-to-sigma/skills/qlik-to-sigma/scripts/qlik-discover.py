@@ -189,20 +189,40 @@ def enumerate_master(app, ctx_args, kind, pool):
             defs = body.get("qFieldDefs") or []
             expr, label = (defs[0] if defs else ""), body.get("title")
         title = (props.get("qMetaDef") or {}).get("title") or it.get("title") or label or oid
-        return {"title": title, "expr": expr or ""}
+        # keep the library id: charts reference master items by qLibraryId
+        # (md-*/mm-*) and the workbook builder must resolve id -> expr/title
+        return {"id": oid, "title": title, "expr": expr or ""}
 
     return [shape(it, props) for it, props in zip(items, prop_list)]
 
 
 # ---- load-script → tables/fields (best-effort) ----
+def split_fields(s):
+    """Split a LOAD field list on top-level commas only (paren-depth aware), so
+    function-built fields like `Dual(MONTH_NAME, MONTH_NUMBER) AS MONTH` stay
+    one token instead of shedding a bogus duplicate column."""
+    parts, depth, cur = [], 0, []
+    for ch in s:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            parts.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        parts.append("".join(cur))
+    return parts
+
 def parse_script(qvs):
     tables = []
     # Match  Label:\n LOAD <fields> (FROM|RESIDENT|SQL|AUTOGENERATE|INLINE)
-    for m in re.finditer(r'(\w+)\s*:\s*\n\s*LOAD\b(.*?)(?:\bFROM\b|\bRESIDENT\b|\bSQL\b|\bAUTOGENERATE\b|\bINLINE\b)',
+    for m in re.finditer(r'(\w+)\s*:\s*\n\s*LOAD\b(.*?)(?:\bFROM\b|\bRESIDENT\b|\bSQL\b|\bSELECT\b|\bAUTOGENERATE\b|\bINLINE\b)',
                          qvs, re.IGNORECASE | re.DOTALL):
         name, body = m.group(1), m.group(2)
         fields = []
-        for tok in body.split(","):
+        for tok in split_fields(body):
             tok = tok.strip().strip(";").strip()
             if not tok: continue
             mm = re.search(r'\bAS\s+"?([A-Za-z0-9_]+)"?\s*$', tok, re.IGNORECASE)  # alias wins
@@ -422,6 +442,15 @@ def main():
             "measures":   [ (mm.get("qSortBy") or {}) for mm in hc.get("qMeasures", []) ],
         }
         qdims, qmeas = hc.get("qDimensions", []), hc.get("qMeasures", [])
+        if not qdims and not qmeas:
+            # map objects carry their hypercube on a layer (gaLayers[].qHyperCubeDef),
+            # not the top-level object -- surface the first layer that has one
+            for layer in (props.get("gaLayers") or []):
+                lhc = layer.get("qHyperCubeDef") or {}
+                if lhc.get("qDimensions") or lhc.get("qMeasures"):
+                    hc = lhc
+                    qdims, qmeas = lhc.get("qDimensions", []), lhc.get("qMeasures", [])
+                    break
         charts.append({
             "id": oid, "vizType": qtype,
             "title": (props.get("qMetaDef") or {}).get("title") or (props.get("title")),

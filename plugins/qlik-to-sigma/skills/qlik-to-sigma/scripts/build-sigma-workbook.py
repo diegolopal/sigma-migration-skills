@@ -42,7 +42,7 @@ With --dry-run nothing is POSTed.
 
 Env (live mode): SIGMA_BASE_URL + SIGMA_API_TOKEN.
 """
-import json, os, re, sys, argparse, urllib.request
+import json, os, re, sys, time, argparse, urllib.request
 
 MASTER_ID, MASTER = "m-master", "Master"
 KEEP_UNMATCHED = os.environ.get("QLIK_KEEP_UNMATCHED", "") == "1"
@@ -51,7 +51,8 @@ KPI_MIN_ROWS = 5       # Sigma kpi-chart clips its title below ~5 grid rows
 TEMPORAL = re.compile(r"DATE|MONTH|YEAR|QUARTER|WEEK|DAY", re.I)
 NATIVE = {"barchart": "bar-chart", "linechart": "line-chart", "piechart": "pie-chart",
           "combochart": "combo-chart", "scatterplot": "scatter-chart",
-          "table": "table", "kpi": "kpi-chart", "pivot-table": "pivot-table"}
+          "table": "table", "kpi": "kpi-chart", "pivot-table": "pivot-table",
+          "map": "region-map"}
 
 _ids = {}
 def nid(prefix):
@@ -63,10 +64,17 @@ def api_post(path, body):
     req = urllib.request.Request(BASE + path, data=json.dumps(body).encode(), method="POST",
         headers={"Authorization": "Bearer " + TOK, "Content-Type": "application/json",
                  "Accept": "application/json"})
-    try:
-        return urllib.request.urlopen(req).read().decode()
-    except urllib.error.HTTPError as e:
-        print("HTTP", e.code, e.read().decode()[:800], file=sys.stderr); raise
+    for attempt in range(6):
+        try:
+            return urllib.request.urlopen(req).read().decode()
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode()
+            if e.code == 429 and attempt < 5:  # Cloudflare 1015 rate limit: transient, retryable
+                wait = min(120, 30 * (2 ** attempt))
+                print(f"HTTP 429 on POST {path} -- backing off {wait}s (attempt {attempt+1}/6)", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            print("HTTP", e.code, detail[:800], file=sys.stderr); raise
 
 def sigma_fmt(qfmt, name=""):
     """Qlik qNumFormat.qFmt -> Sigma formatString. Falls back to a name heuristic."""
@@ -106,14 +114,24 @@ def translate_measure(expr, resolve):
         if d is None: unresolved.append(f)
         return f"[{MASTER}/{d}]"
     def set_analysis(m):
-        agg, cf, val, xf = m.group(1).capitalize(), m.group(2), m.group(3).strip(), m.group(4)
-        val = val.strip("'\"")
-        lit = val if re.fullmatch(r"-?\d+(\.\d+)?", val) else f'"{val}"'
-        inner = f"If({ref(cf)} = {lit}, {ref(xf)})"
+        agg, cf, op, vals_raw, xf = (m.group(1).capitalize(), m.group(2),
+                                     m.group(3), m.group(4), m.group(5))
+        conds = []
+        for val in (v.strip() for v in vals_raw.split(",")):
+            val = val.strip("'\"")
+            if not val or re.search(r"[*?<>=$()]", val):
+                # search mask / $(var) / operator inside the set: no clean
+                # row-wise equivalent -- flag instead of emitting wrong semantics
+                unresolved.append(vals_raw); return m.group(0)
+            lit = val if re.fullmatch(r"-?\d+(\.\d+)?", val) else f'"{val}"'
+            conds.append(f"{ref(cf)} {'<>' if op == '-=' else '='} {lit}")
+        cond = (" and " if op == "-=" else " or ").join(conds)
+        if len(conds) > 1: cond = f"({cond})"
+        inner = f"If({cond}, {ref(xf)})"
         return f"CountDistinct({inner})" if agg == "Count" and m.group(0).upper().find("DISTINCT") >= 0 \
             else f"{agg}({inner})"
-    # 1) simple Set Analysis  Agg({<F={v}>} [DISTINCT] X)
-    e = re.sub(r"\b(Sum|Avg|Min|Max|Count)\s*\(\s*\{\s*<\s*([A-Za-z0-9_]+)\s*=\s*\{([^}]*)\}\s*>\s*\}\s*(?:DISTINCT\s+)?([A-Za-z0-9_]+)\s*\)",
+    # 1) simple Set Analysis  Agg({<F={v,...}>} [DISTINCT] X)  (also F-={...} exclusion)
+    e = re.sub(r"\b(Sum|Avg|Min|Max|Count)\s*\(\s*\{\s*<\s*([A-Za-z0-9_]+)\s*(-?=)\s*\{([^}]*)\}\s*>\s*\}\s*(?:DISTINCT\s+)?([A-Za-z0-9_]+)\s*\)",
                set_analysis, e, flags=re.I)
     # 2) Count(DISTINCT X)
     e = re.sub(r"\bCount\s*\(\s*DISTINCT\s+([A-Za-z0-9_]+)\s*\)",
@@ -123,7 +141,7 @@ def translate_measure(expr, resolve):
                lambda m: f"{m.group(1).capitalize()}({ref(m.group(2))})", e, flags=re.I)
     if unresolved: return None
     # anything left that looks like a bare Qlik field/function = untranslated
-    leftovers = re.sub(r"\[[^\]]*\]|CountDistinct|Sum|Avg|Min|Max|Count|If", "", e)
+    leftovers = re.sub(r'"[^"]*"|\[[^\]]*\]|\b(?:CountDistinct|Sum|Avg|Min|Max|Count|If|and|or)\b', "", e)
     if re.search(r"[A-Za-z_]{2,}", leftovers): return None
     return e
 
@@ -225,6 +243,25 @@ def build_element(c, resolve, warnings):
         # Aggregating table needs explicit groupings or it renders 1 row/source row
         el["groupings"] = [{"id": nid("g"), "groupBy": dim_ids, "calculations": mids}]
         if sort: el["groupings"][0]["sort"] = [{"columnId": sort[0], "direction": sort[1]}]
+        return el
+    if kind == "region-map":
+        # Qlik map layer dim -> Sigma region-map; only emit when the region
+        # grain is recognizable (else flag, never guess a wrong regionType)
+        dname = (dims_raw[0] or "").upper()
+        rtype = "us-state" if "STATE" in dname else ("country" if "COUNTRY" in dname else None)
+        if rtype is None:
+            warnings.append(f"skip '{title}' (map): region grain '{dims_raw[0]}' not recognized (us-state/country)")
+            return None
+        el["region"] = {"id": dim_ids[0], "regionType": rtype}
+        el["color"] = {"by": "scale", "column": mids[0]}
+        return el
+    if kind == "pivot-table":
+        # cross-tab: first dim -> rowsBy, remaining dims -> columnsBy,
+        # measures -> values (bare column-id strings; rowsBy/columnsBy = {id})
+        el["values"] = mids
+        el["rowsBy"] = [{"id": dim_ids[0]}]
+        if len(dim_ids) > 1:
+            el["columnsBy"] = [{"id": d} for d in dim_ids[1:]]
         return el
     if kind == "pie-chart":
         el["value"] = {"id": mids[0]}; el["color"] = {"id": dim_ids[0]}
@@ -346,6 +383,34 @@ def main():
     a = ap.parse_args()
 
     charts = {c["id"]: c for c in json.load(open(a.charts))}
+
+    # Resolve master-item LIBRARY IDS (md-*/mm-*) on chart hypercubes: charts
+    # that use a master dimension/measure carry only its qLibraryId; substitute
+    # the master item's expr (and default the label to its title) so the chart
+    # builds instead of skipping with "not on the denorm element".
+    workdir = os.path.dirname(os.path.abspath(a.charts))
+    def _master(fname):
+        fp = os.path.join(workdir, fname)
+        items = json.load(open(fp)) if os.path.exists(fp) else []
+        return {it["id"]: it for it in items if isinstance(it, dict) and it.get("id")}
+    mdims, mmeas = _master("dimensions.json"), _master("measures.json")
+    for c in charts.values():
+        dims = c.get("dimensions") or []
+        dlabels = c.get("dimLabels") or [None] * len(dims)
+        for i, d in enumerate(dims):
+            hit = mdims.get(d[0] if isinstance(d, list) else d)
+            if hit:
+                dims[i] = [hit["expr"]]
+                if i < len(dlabels) and not dlabels[i]: dlabels[i] = hit["title"]
+        if dims: c["dimLabels"] = dlabels
+        meas = c.get("measures") or []
+        mlabels = c.get("measureLabels") or [None] * len(meas)
+        for i, mx in enumerate(meas):
+            hit = mmeas.get(mx) if isinstance(mx, str) else None
+            if hit:
+                meas[i] = hit["expr"]
+                if i < len(mlabels) and not mlabels[i]: mlabels[i] = hit["title"]
+        if meas: c["measureLabels"] = mlabels
     sheets = json.load(open(a.layout)) if a.layout and os.path.exists(a.layout) else []
     denorm = json.load(open(a.denorm))["element"]
     denorm_cols = [(c["name"], (re.search(r"\[Custom SQL/(.+)\]", c["formula"]) or [None, c["name"]])[1])
