@@ -1,7 +1,7 @@
 # AGENTS.md — sigma-migration-skills
 
 Migration skills for moving BI tools (**Tableau, Power BI, Qlik, ThoughtSpot,
-QuickSight, Looker, Cognos**) to
+QuickSight, Looker, Cognos, MicroStrategy**) to
 **Sigma**: per-tool *converters* (source → Sigma data model + workbook, with
 warehouse parity verification) and read-only *assessments* (tenant inventory →
 migration-readiness readout + shortlist).
@@ -37,6 +37,8 @@ reading the relevant `SKILL.md` and executing its scripts.
 | Scope/assess a Looker instance | `looker-assessment` | `plugins/looker-to-sigma/skills/looker-assessment/` |
 | Convert an IBM Cognos data module + report → Sigma | `cognos-to-sigma` | `plugins/cognos-to-sigma/skills/cognos-to-sigma/` |
 | Scope/assess a Cognos Analytics instance | `cognos-assessment` | `plugins/cognos-to-sigma/skills/cognos-assessment/` |
+| Convert a MicroStrategy dossier + semantic model → Sigma | `microstrategy-to-sigma` | `plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/` |
+| Scope/assess a MicroStrategy (Strategy One) instance | `microstrategy-assessment` | `plugins/microstrategy-to-sigma/skills/microstrategy-assessment/` |
 | Land a Tableau published-datasource/extract in Snowflake or Databricks | `tableau-vds-to-cdw` | `plugins/tableau-to-sigma/skills/tableau-vds-to-cdw/` |
 
 Assessments are read-only (never write to the source or post to Sigma); run one

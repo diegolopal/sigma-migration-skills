@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace-manifest.json",
   "name": "sigma-migration-skills",
-  "description": "Skills for migrating BI tools (Tableau, Power BI, Qlik, ThoughtSpot, QuickSight, Looker, Cognos) to Sigma — converters + assessments, validated end-to-end with warehouse parity.",
+  "description": "Skills for migrating BI tools (Tableau, Power BI, Qlik, ThoughtSpot, QuickSight, Looker, Cognos, MicroStrategy) to Sigma — converters + assessments, validated end-to-end with warehouse parity.",
   "version": "1.0.0",
   "owner": { "name": "Thomas Wells" },
   "metadata": { "pluginRoot": "./plugins" },
@@ -54,6 +54,13 @@
       "description": "IBM Cognos Analytics → Sigma — Data Module JSON → Sigma data model, report-spec XML → Sigma workbook (crosstab→pivot, RAVE2 charts, maps), Cognos expression DSL translation, with parity verification. Bundles cognos-to-sigma + cognos-assessment.",
       "category": "migration",
       "keywords": ["cognos", "ibm-cognos", "data-module", "report-studio", "migration", "bi"]
+    },
+    {
+      "name": "microstrategy-to-sigma",
+      "source": "./microstrategy-to-sigma",
+      "description": "MicroStrategy (Strategy One) → Sigma — dossier + classic semantic model (attributes/facts/metrics over a star schema) → Sigma data model + workbook, with deterministic reproduction of Analytical-Engine row-collapse quirks and row-level parity verification. Bundles microstrategy-to-sigma + microstrategy-assessment.",
+      "category": "migration",
+      "keywords": ["microstrategy", "strategy-one", "dossier", "migration", "bi"]
     }
   ]
 }
