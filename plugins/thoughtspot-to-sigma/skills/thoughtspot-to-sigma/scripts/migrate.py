@@ -34,7 +34,7 @@ Env:
   TS_DB, TS_SCHEMA                          warehouse db/schema for the model's tables
   TS_WORKDIR                                default for --workdir (else ./ts-migration)
 """
-import argparse, json, os, re, ssl, subprocess, sys, urllib.request, urllib.error
+import argparse, json, os, re, ssl, subprocess, sys, time, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import yaml, ts_common, apply_layouts
 yaml.SafeLoader.add_constructor("tag:yaml.org,2002:value", lambda l, n: l.construct_scalar(n))
@@ -169,6 +169,51 @@ def migrate_liveboard(lb_doc, dm, denorm_id, denorm_name, resolver, prefix, fall
     apply_layouts.apply(wb, tiles=tiles)
     return wb, display, len(specs), tiles
 
+def collect_liveboards(a, model_name):
+    """Liveboard candidate selection + TML export — runs as a LANE concurrent
+    with convert + DM POST (main joins it before workbook builds). Estate-scale
+    behavior (an org with 40+ liveboards must not cost 40+ serial exports):
+
+      1. explicit --liveboard ids       → cached parallel export of exactly those
+      2. dependency API                 → ts_lib.dependents(model): the server
+         names the liveboards that READ this model; only those are exported
+         (parallel, disk-cached). VERIFIED LIVE 2026-06-11.
+      3. fallback (PATCH POINT)         → when dependents() returns None (older
+         TS builds with no dependent_objects in metadata/search), fall back to
+         export-ALL-then-grep — still parallel + cached, but O(org-size). If
+         you hit this on a customer estate, verify their TS version's
+         dependency endpoint and extend ts_lib.dependents() accordingly.
+
+    Returns [(edoc, fallback_name)]."""
+    import ts_lib
+    log = lambda m: print("  " + m.lstrip())
+    if a.liveboard:
+        heads = {h["id"]: h for h in ts_lib.search_headers("LIVEBOARD")}
+        items = [heads.get(i) or {"id": i, "name": i, "modified": None} for i in a.liveboard]
+    else:
+        deps = ts_lib.dependents(a.model)
+        org = ts_lib.search_headers("LIVEBOARD")
+        if deps is None:
+            # ── PATCH POINT: dependency API unusable on this TS build ──
+            log(f"dependency API unavailable — falling back to export-all-then-grep "
+                f"({len(org)} liveboard(s) in org; parallel + cached)")
+            out = []
+            for it, edoc, err in ts_lib.export_tml_many(org, log=log):
+                if not err and edoc and model_name in edoc:
+                    out.append((edoc, it.get("name") or it["id"]))
+            return out
+        log(f"dependency API: {len(deps)} liveboard(s) read this model "
+            f"(org has {len(org)} — exporting candidates only)")
+        items = deps
+    out = []
+    for it, edoc, err in ts_lib.export_tml_many(items, log=log):
+        if err:
+            log(f"✗ liveboard {it['id']}: export failed: {err}")
+            continue
+        out.append((edoc, it.get("name") or it["id"]))
+    return out
+
+
 def migrate_answer(ans_id, dm, denorm_id, denorm_name, resolver, prefix, folder, wd):
     """A standalone Answer is a single viz — build a one-element workbook."""
     import ts_lib
@@ -220,6 +265,19 @@ def main():
     print(f"Model '{model_name}': {len(resolver)} resolvable columns  ·  workdir {wd}")
 
     folder = need_env("SIGMA_FOLDER_ID")[0]
+
+    # ── Liveboard selection + TML export LANE: starts BEFORE convert + DM POST
+    #    and runs concurrent with them (pure TS-side reads vs pure Sigma-side
+    #    writes — no shared state). Joined right before the workbook builds.
+    #    On the MCP-fallback exit(3) path the lane still completes before the
+    #    process exits (non-daemon thread), so its exports land in the TML
+    #    disk cache and the --converted resume run gets all cache hits.
+    lb_lane = None
+    if not (offline or a.liveboard_tml):
+        from concurrent.futures import ThreadPoolExecutor
+        t_lane = time.time()
+        lb_lane = ThreadPoolExecutor(max_workers=1).submit(collect_liveboards, a, model_name)
+
     if a.reuse_dm:
         dm = a.reuse_dm
         denorm_id, denorm_name = find_denorm(dm)
@@ -228,27 +286,14 @@ def main():
         conv = convert_model(model_tml, wd, a.converted)
         dm, denorm_id, denorm_name = build_dm(conv, f"{prefix}{model_name} (from ThoughtSpot)", folder)
 
-    # pick Liveboards: offline TML files, explicit ids, or every Liveboard that references the model
+    # pick Liveboards: offline TML files, or join the export lane
     targets = []                                       # (lb_doc, fallback_name)
     if a.liveboard_tml:
         targets = [(open(p).read(), os.path.basename(p)) for p in a.liveboard_tml]
-    elif offline:
-        pass                                           # offline with no liveboard TML → DM only
-    else:
-        import ts_lib
-        if a.liveboard:
-            for lb_id in a.liveboard:
-                edoc, e = ts_lib.export_tml(lb_id, "LIVEBOARD")
-                if e:
-                    print(f"  ✗ liveboard {lb_id}: export failed: {e}"); continue
-                targets.append((edoc, lb_id))
-        else:
-            for lb in ts_lib.search("LIVEBOARD"):
-                edoc, e = ts_lib.export_tml(lb["metadata_id"], "LIVEBOARD")
-                if e:
-                    continue
-                if model_name in edoc:
-                    targets.append((edoc, lb["metadata_name"]))
+    elif lb_lane:
+        targets = lb_lane.result()
+        print(f"  Liveboard TML lane: {len(targets)} ready in {time.time() - t_lane:.1f}s "
+              f"(ran concurrent with convert + DM POST)")
     print(f"Migrating {len(targets)} Liveboard(s)…")
 
     # persist each Liveboard TML so downstream phases (parity expected-side,
