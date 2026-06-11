@@ -65,6 +65,33 @@ python3 scripts/migrate.py --model <TS_MODEL_ID> [--liveboard <ID> ...] \
 ```
 `migrate.py` runs the whole pipeline with **no hardcoded ids or paths** and
 migrates every Liveboard that reads the model (or just the `--liveboard` ones).
+
+### Discovery speed (customer scale — 20-40+ liveboard estates)
+Liveboard selection used to **export every Liveboard TML in the org** serially
+and grep for the model name — O(org-size), measured 19.2s on a 33-liveboard
+trial org and linear from there (a 200-liveboard org ≈ 2 min per model).
+Re-engineered 2026-06-11:
+- **Dependency API first**: `ts_lib.dependents(model_id)` asks `metadata/search`
+  (`include_dependent_objects`) which liveboards READ the model — verified live
+  (13 candidates of 33 org liveboards) — so only candidates are exported.
+- **Parallel + disk-cached TML export**: `ts_lib.export_tml_many()` exports
+  candidates on a ThreadPool(4) with a disk cache keyed
+  `(metadata_id, modified-epoch-ms)` (`$TS_TML_CACHE`, default
+  `~/.sigma-migration/ts-tml-cache`; hits/misses logged). Measured:
+  **19.2s → 1.7s cold / 0.2s warm**, and re-runs after the MCP-converter
+  exit-3 resume are all cache hits.
+- **Concurrent lane**: the selection + export runs as a lane UNDER convert +
+  DM POST in `migrate.py` (joined before workbook builds), so on warm paths it
+  costs ~0 wall-clock.
+- **One keep-alive session per thread** (`http.client`): no per-request TLS
+  handshake. (The TS Cloud edge WAF rejects UA-less requests with an HTML 403
+  — `ts_lib` always sends a User-Agent.)
+- **Fallback (patch point)**: when `dependents()` returns `None` (older TS
+  builds without `dependent_objects` in `metadata/search`), `migrate.py`
+  falls back to export-all-then-grep — still parallel + cached, but
+  O(org-size), and it SAYS so. If a customer estate hits this, extend
+  `ts_lib.dependents()` for their TS version (the patch point is marked in
+  `collect_liveboards`, `scripts/migrate.py`).
 All artifacts (manifest, TML, parity files) land in `--workdir`
 (default `$TS_WORKDIR` or `./ts-migration`, created if missing). `--name` is a
 prefix applied to BOTH the data model and every workbook; workbooks and pages

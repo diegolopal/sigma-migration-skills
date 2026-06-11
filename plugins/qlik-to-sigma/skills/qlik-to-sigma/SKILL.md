@@ -89,6 +89,32 @@ Assemble into the converter's input JSON (`refs/example-converter-input.json`):
 `{appName, tables:[{name, noOfRows, fields:[{name}]}], masterMeasures:[{title,qDef}], masterDimensions:[]}`.
 **Use the post-rename Qlik field names** so relationships come out clean.
 
+### Discovery speed & safety (customer scale — 20-40+ apps)
+Discovery is **fully parallel and strictly read-only** (re-engineered 2026-06-11):
+- All engine/REST fetches share one pool (`--pool`, default 8) bounded by a
+  single global semaphore — the per-object `properties` loop was the serial
+  bottleneck (46 × ~1.2s). Measured on the 46-object fixture app:
+  **57.3s serial → 12.5s full / 8.4s with `--defer-snapshot`** (≈4.6×). Per-app
+  cost scales with pool width, not object count — a 40-app estate's discovery
+  drops from ~38 min to ~6 min of source-side wall clock.
+- **Zero app writes**: master items are enumerated via read-only
+  `qlik app measure/dimension ls` + per-item `properties`. The old temp
+  MeasureList/DimensionList object briefly SAVED the app — bumping
+  `modifiedDate` on every discovery (verified live: old run bumps it, three
+  new-mode runs leave it untouched). Discovery never reloads, never writes.
+- **Engine-snapshot lane**: the KPI/max-date/bucket evals (`snapshot.json`) are
+  consumed only at the Phase-6 freshness banner, and in-memory totals can't
+  change without a reload — so `migrate-qlik.rb` runs discovery with
+  `--defer-snapshot` and computes the snapshot via `--snapshot-only` as a
+  background lane under Phases 2-5.
+- **Throttle handling (never silent)**: Qlik Cloud throttles new engine
+  sessions after rapid bursts ("could not connect to engine"). Transient
+  errors retry with exponential backoff; anything still missing after a pooled
+  + serial second pass **aborts discovery (exit 4)** rather than silently
+  building a workbook with missing sheets/charts. `timings.json` (and
+  `timings-snapshot.json`) record per-stage wall-clock + retry counts on every
+  run.
+
 ### Phase 1.5 — SOURCE-FRESHNESS PREFLIGHT (never skip)
 Before ANY side-by-side, compare the app's `lastReloadTime` + in-memory snapshot
 against the live warehouse. Qlik shows a **reload-time snapshot**; Sigma queries the
@@ -209,10 +235,10 @@ the likely cause. (First run matched to the cent; staleness-explained deltas don
 ## Scripts
 | Script | Phase | Purpose |
 |---|---|---|
-| `scripts/qlik-discover.py` | 1 | Extract data model (load script), master measures/dimensions (Engine MeasureList/DimensionList), and sheets/charts from any app → `converter-input.json`. **Validated.** |
+| `scripts/qlik-discover.py` | 1 | Extract data model (load script), master measures/dimensions (read-only `measure/dimension ls` + properties), and sheets/charts from any app → `converter-input.json`. Pooled (`--pool 8`), strictly read-only, `--defer-snapshot`/`--snapshot-only` lanes, `timings.json` evidence. **Validated (57.3s → 12.5s on the 46-object fixture app).** |
 | `scripts/qlik-dm-signature.py` | 2.5 | Converter-input JSON → DM-reuse signature (`{warehouse_tables, referenced_columns, measures}`) for `find-or-pick-dm.rb`. **Validated live.** |
 | `scripts/vendor/find-or-pick-dm.rb` | 2.5 | Scan existing Sigma DMs and recommend reuse (score = 0.7·column + 0.2·table + 0.1·metric overlap; `--auto-pick` with tie-window safety). Shared vendor-neutral copy (canonical: tableau-to-sigma). Non-destructive. |
-| `scripts/migrate-qlik.rb` | ALL | **The one command** — chains every phase below for any app/sheet; OPEN-QUESTIONS checkpoint, freshness preflight, bucket parity; `--from-discovery` + `--dry-run` = offline smoke. **Validated live 2026-06-10 (1m59s, zero hand-edits).** |
+| `scripts/migrate-qlik.rb` | ALL | **The one command** — chains every phase below for any app/sheet; OPEN-QUESTIONS checkpoint, freshness preflight, bucket parity; `--from-discovery` + `--dry-run` = offline smoke. Discovery runs as a background lane with Sigma-side prep (token, folder, DM-spec prefetch for Phase 2.5) interleaved in the foreground; the engine snapshot runs as its own lane under Phases 2-5; `PHASE TIMINGS` printed at exit. **Validated live 2026-06-11 (68s wall, zero hand-edits, GREEN incl. layout lint).** |
 | `scripts/reconcile-columns.py` | 3 | Auto-derive the Qlik-field → real-warehouse-column map from the load script's `AS` aliases + `FROM` tables (so the DM points at real columns). **Validated.** |
 | `scripts/gen-denorm-sql.py` | 3 | Turn reconcile.json into the denormalized SQL element (`real AS qlik` + inferred fact↔dim joins) — feeds `build-sigma-dm.py`. Display names match Sigma's own derivation rule. **Validated.** |
 | `scripts/batch-migrate.py` | 3–6 | Migrate many apps in one pass (one Sigma workbook each, reusing a SHARED DM) — for tenant-scale demos. For distinct apps, run `migrate-qlik.rb` per app. **Validated on 5 apps.** |
@@ -225,11 +251,13 @@ the likely cause. (First run matched to the cent; staleness-explained deltas don
 | `refs/example-converter-input.json` | 1–2 | The exact convert_qlik_to_sigma input from the first migration. |
 | `fixtures/retail-orders/` | — | Complete offline discovery+converter input set (sanitized demo app) — see `fixtures/README.md` for the offline smoke path. |
 
-`qlik-discover.py --app <id>` enumerates master items via a temporary
-`MeasureList`/`DimensionList` object (create → layout → remove; briefly saves the
-app and cleans up) — qlik-cli's `object ls` does NOT list master items. Everything
-else (incl. `qlik app eval` for the freshness snapshot) is read-only; the app is
-never reloaded.
+`qlik-discover.py --app <id>` enumerates master items via the read-only
+`qlik app measure ls` / `qlik app dimension ls` + per-item `properties`
+(qlik-cli's `object ls` does NOT list master items; the old temp
+MeasureList/DimensionList object create→rm briefly SAVED the app, bumping its
+`modifiedDate` on every discovery — eliminated 2026-06-11). Everything
+(incl. `qlik app eval` for the freshness snapshot) is read-only; the app is
+never reloaded and never written.
 
 ## Open work
 - ✅ Set Analysis (simple) → `Sum(If(...))` — auto-translated in the converter + validated live (2026-06-05). Host dim-flag measures on the denorm element.

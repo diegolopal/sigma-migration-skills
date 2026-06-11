@@ -7,7 +7,9 @@ sheet/chart inventory, the per-sheet CELL GRID (layout), the app's freshness
 metadata, and a Qlik-engine snapshot of the app's KPI totals — everything the
 downstream build steps need, with no hand-edits.
 
-    python3 qlik-discover.py --app <appId> [--context <ctx>] [--out discovery] [--skip-eval]
+    python3 qlik-discover.py --app <appId> [--context <ctx>] [--out discovery]
+                             [--pool 8] [--skip-eval]
+                             [--defer-snapshot | --snapshot-only]
 
 Outputs in --out/:
   script.qvs            raw load script (the data-model source of truth)
@@ -21,20 +23,96 @@ Outputs in --out/:
   app-meta.json         REST item record: name, lastReloadTime, hasSectionAccess,
                         isDirectQueryMode — feeds the source-freshness preflight
   snapshot.json         Qlik-engine eval of every sheet KPI expression + Max() of
-                        date-ish fact fields — the app's IN-MEMORY totals, used to
-                        report staleness vs the live warehouse before any parity
+                        date-ish fact fields + per-chart distinct-bucket counts —
+                        the app's IN-MEMORY totals, used to report staleness vs
+                        the live warehouse before any parity
   converter-input.json  ready for convert_qlik_to_sigma (tables + masterMeasures + masterDimensions)
+  timings.json          ALWAYS written — per-stage wall-clock + retry counts, the
+                        evidence trail for any future "discovery is slow" report
+                        (--snapshot-only writes timings-snapshot.json instead)
+
+PERFORMANCE (measured on app ec9a73e3, 46 objects, 2026-06-11): the serial
+version took ~55-64s; almost all of it was the per-object `properties` loop
+(46 × ~1.2s engine round-trips) plus the serial KPI/max-date evals. Everything
+network-bound now runs through ONE shared thread pool (--pool, default 8 —
+measured 4.7× on the properties batch; each qlik-cli call opens its own
+engine session so calls are independent). Customer apps at 40+ objects scale
+linearly in pool width, not object count.
+
+Snapshot deferral: the engine snapshot (KPI evals + max-date + bucket counts)
+is only CONSUMED at the orchestrator's Phase-6 freshness banner, and the app's
+in-memory totals cannot change without a reload — so `--defer-snapshot` skips
+it here and `--snapshot-only` computes JUST it (reading charts.json etc. from
+--out) as a background lane concurrent with Phases 2-4. snapshot.json is
+written atomically so a polling orchestrator never observes a half-written file.
 
 Requires qlik-cli on PATH and an active context (`qlik context use <ctx>`).
-Master items are enumerated via a temporary MeasureList/DimensionList object
-(create → layout → remove); this briefly saves the app and cleans up after.
-All other access is read-only; the app is NEVER reloaded.
+Discovery is STRICTLY READ-ONLY: master items are enumerated via
+`qlik app measure ls` / `qlik app dimension ls` + per-item `properties`
+(the old temp MeasureList/DimensionList object create→rm briefly SAVED the
+app — bumping its modifiedDate on every discovery; eliminated 2026-06-11).
+The app is NEVER reloaded and NEVER written.
+
+Transient engine failures ("session closed", "could not connect to engine",
+websocket drops, 429s) are retried with exponential backoff — expected
+occasionally at 8-wide concurrency, and Qlik Cloud throttles NEW engine
+sessions after rapid bursts (observed live 2026-06-11: back-to-back pool-8
+runs → "could not connect to engine" on 3/46 objects). Any per-object fetch
+still empty after the pooled pass is retried SERIALLY after a cooldown, and
+discovery ABORTS (exit 4) if anything is still missing — an incomplete
+charts.json must never silently become an incomplete Sigma workbook.
 """
-import json, os, re, subprocess, sys, argparse, tempfile, secrets, string
+import json, os, re, subprocess, sys, argparse, threading, time
+from concurrent.futures import ThreadPoolExecutor
+
+T0 = time.time()
+STAGES = {}          # stage name -> seconds (timings.json evidence trail)
+RETRIES = {"n": 0}
+_LOCK = threading.Lock()
+# Global cap on CONCURRENT qlik-cli engine sessions (set from --pool in main).
+# Several pmaps run at once (master measures + dimensions + top-level fetches),
+# so without one shared gate the burst is pools ADDED together (~19 sessions) —
+# which is what trips Qlik Cloud's new-session throttle. One semaphore makes
+# --pool the true total, whatever shape the fan-out has.
+_SEM = threading.Semaphore(8)
+
+TRANSIENT_RX = re.compile(
+    r"session closed|socket: close|websocket|connection reset|broken pipe"
+    r"|unexpected EOF|timed? ?out|temporarily unavailable"
+    r"|could not connect to engine|too many (requests|sessions)|429|rate limit", re.I)
+
+
+class stage:
+    """Record a stage's wall-clock into STAGES (concurrent stages overlap)."""
+    def __init__(self, name): self.name = name
+    def __enter__(self): self.t0 = time.time(); return self
+    def __exit__(self, *_):
+        with _LOCK:
+            STAGES[self.name] = round(STAGES.get(self.name, 0.0) + time.time() - self.t0, 3)
+
+
+def qlik_run(args, attempts=4):
+    """Run qlik-cli with retry + exponential backoff on transient engine
+    errors. Safe to retry: discovery is read-only. Backoff is exponential
+    (1s/2s/4s) because Qlik Cloud throttles new engine sessions after rapid
+    bursts — a fixed 0.5s retry just re-hits the throttle."""
+    out = None
+    for attempt in range(attempts):
+        with _SEM:
+            out = subprocess.run(["qlik", *args], capture_output=True, text=True)
+        if out.returncode == 0:
+            return out
+        if attempt < attempts - 1 and TRANSIENT_RX.search((out.stderr or "") + (out.stdout or "")):
+            with _LOCK:
+                RETRIES["n"] += 1
+            time.sleep(min(8.0, 2.0 ** attempt))
+            continue
+        return out
+    return out
+
 
 def qlik(*args, parse_json=True):
-    cmd = ["qlik", *args]
-    out = subprocess.run(cmd, capture_output=True, text=True)
+    out = qlik_run(list(args))
     if out.returncode != 0 and parse_json:
         sys.stderr.write(f"WARN {' '.join(args)} -> {out.stderr[:160]}\n")
     if not parse_json:
@@ -44,38 +122,77 @@ def qlik(*args, parse_json=True):
     except json.JSONDecodeError:
         return None
 
-def tmpid():
-    return "disc-" + "".join(secrets.choice(string.ascii_lowercase) for _ in range(8))
 
-def enumerate_master(app, ctx_args, kind):
-    """kind: 'measure' or 'dimension'. Returns list of {title, expr}."""
-    oid = tmpid()
-    if kind == "measure":
-        props = {"qInfo": {"qId": oid, "qType": "MeasureList"},
-                 "qMeasureListDef": {"qType": "measure",
-                     "qData": {"title": "/qMetaDef/title", "expr": "/qMeasure/qDef"}}}
-        layout_key, expr_field = "qMeasureList", "expr"
-    else:
-        props = {"qInfo": {"qId": oid, "qType": "DimensionList"},
-                 "qDimensionListDef": {"qType": "dimension",
-                     "qData": {"title": "/qMetaDef/title", "expr": "/qDim/qFieldDefs"}}}
-        layout_key, expr_field = "qDimensionList", "expr"
-    f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
-    json.dump(props, f); f.close()
-    subprocess.run(["qlik", "app", "object", "set", f.name, "-a", app, *ctx_args],
-                   capture_output=True, text=True)
-    lay = qlik("app", "object", "layout", oid, "-a", app, *ctx_args)
-    subprocess.run(["qlik", "app", "object", "rm", oid, "-a", app, *ctx_args],
-                   capture_output=True, text=True)
-    os.unlink(f.name)
-    items = ((lay or {}).get(layout_key) or {}).get("qItems", [])
-    res = []
-    for it in items:
-        d = it.get("qData", {})
-        e = d.get(expr_field)
-        if isinstance(e, list): e = e[0] if e else ""
-        res.append({"title": d.get("title") or it.get("qInfo", {}).get("qId"), "expr": e or ""})
+def awrite(path, obj):
+    """Atomic JSON write — orchestrators poll for these files from a
+    concurrent lane and must never observe a half-written artifact."""
+    tmp = f"{path}.tmp.{os.getpid()}"
+    with open(tmp, "w") as f:
+        json.dump(obj, f, indent=2)
+    os.replace(tmp, path)
+
+
+def pmap(fn, items, pool):
+    """Parallel map preserving order. Submitted from the main thread only —
+    no nested submit-and-wait, so no executor deadlock."""
+    if not items:
+        return []
+    with ThreadPoolExecutor(max_workers=max(1, pool)) as ex:
+        return list(ex.map(fn, items))
+
+
+def pmap_complete(fetch, items, pool, key, what):
+    """pmap `fetch` (which returns a truthy dict or None) over items, then
+    retry any empty result SERIALLY after a cooldown — Qlik Cloud throttles
+    new engine sessions after rapid bursts, and the pooled pass can lose a few
+    items even with per-call retries (observed live: 3/46 object `properties`
+    failed with 'could not connect to engine'). ABORTS (exit 4) if anything is
+    still missing: a silently incomplete discovery (missing sheets/charts)
+    must never become a silently incomplete Sigma workbook."""
+    res = pmap(fetch, items, pool)
+    missing = [i for i, r in enumerate(res) if not r]
+    if missing:
+        sys.stderr.write(f"WARN {what}: {len(missing)}/{len(items)} pooled fetch(es) empty — "
+                         f"serial retry after 5s cooldown (engine session throttle)\n")
+        time.sleep(5)
+        for i in missing:
+            res[i] = fetch(items[i])
+    still = [str(key(items[i])) for i, r in enumerate(res) if not r]
+    if still:
+        sys.stderr.write(f"FATAL {what}: no properties for {len(still)} item(s) after pooled + "
+                         f"serial retries: {', '.join(still[:8])}\n"
+                         f"       The engine is refusing new sessions (throttle/capacity). "
+                         f"Re-run, or use a smaller --pool (e.g. 4).\n")
+        sys.exit(4)
     return res
+
+
+# ---- master items: READ-ONLY enumeration (measure/dimension ls + properties) ----
+def enumerate_master(app, ctx_args, kind, pool):
+    """kind: 'measure' or 'dimension'. Returns list of {title, expr}.
+    `qlik app {measure,dimension} ls` is read-only (verified: returns
+    [{qId,title}]); the expression comes from per-item `properties`
+    (qMeasure.qDef / qDim.qFieldDefs), fetched in parallel."""
+    items = qlik("app", kind, "ls", "-a", app, "--json", *ctx_args) or []
+
+    prop_list = pmap_complete(
+        lambda it: qlik("app", kind, "properties", it.get("qId"), "-a", app, *ctx_args),
+        items, pool, key=lambda it: it.get("qId"), what=f"master-{kind} properties")
+
+    def shape(it, props):
+        oid = it.get("qId")
+        if kind == "measure":
+            body = props.get("qMeasure") or {}
+            expr, label = body.get("qDef"), body.get("qLabel")
+        else:
+            body = props.get("qDim") or {}
+            defs = body.get("qFieldDefs") or []
+            expr, label = (defs[0] if defs else ""), body.get("title")
+        title = (props.get("qMetaDef") or {}).get("title") or it.get("title") or label or oid
+        return {"title": title, "expr": expr or ""}
+
+    return [shape(it, props) for it, props in zip(items, prop_list)]
+
 
 # ---- load-script → tables/fields (best-effort) ----
 def parse_script(qvs):
@@ -98,43 +215,180 @@ def parse_script(qvs):
             tables.append({"name": name, "noOfRows": 0, "fields": [{"name": f} for f in fields]})
     return tables
 
+
 def qlik_eval(app, ctx_args, expr):
     """Evaluate one expression via the engine (read-only). Returns the raw value string or None."""
-    out = subprocess.run(["qlik", "app", "eval", expr, "-a", app, *ctx_args],
-                         capture_output=True, text=True)
+    out = qlik_run(["app", "eval", expr, "-a", app, *ctx_args])
     lines = [l for l in out.stdout.splitlines() if l.strip()]
     return lines[1].strip() if out.returncode == 0 and len(lines) >= 2 else None
+
+
+def bucket_expr(dims):
+    """The distinct-bucket-count expression Phase 6 compares per chart —
+    MUST stay in sync with migrate-qlik.rb's bucket parity (same string)."""
+    if len(dims) == 1:
+        return f"Count(distinct [{dims[0]}])"
+    return "Count(distinct " + "&'|'&".join(f"[{d}]" for d in dims) + ")"
+
+
+def compute_snapshot(app, ctx, charts, tables, app_meta, pool, skip_eval):
+    """The Qlik-engine snapshot (source-freshness preflight input): every
+    on-sheet KPI expression, Max() of date-ish fact fields, and per-chart
+    distinct-bucket counts — all evaluated against the app's IN-MEMORY data
+    (cannot change without a reload, hence safely deferrable). All evals run
+    through the shared pool."""
+    snapshot = {"lastReloadTime": app_meta.get("lastReloadTime"),
+                "kpis": [], "maxDates": [], "buckets": []}
+    if skip_eval:
+        return snapshot
+
+    kpi_jobs, seen = [], set()
+    for c in charts:
+        if not (c["sheet"] and c["measures"] and not c["dimensions"]):
+            continue
+        expr = c["measures"][0]
+        if not expr or expr in seen:
+            continue
+        seen.add(expr)
+        kpi_jobs.append((expr, c["title"] or (c["measureLabels"] or [None])[0]))
+
+    date_jobs = []
+    if tables:
+        fact = max(tables, key=lambda t: sum(1 for f in t["fields"] if f["name"].upper().endswith("_KEY")))
+        date_jobs = [f["name"] for f in fact["fields"] if "DATE" in f["name"].upper()][:2]
+
+    # per-chart bucket counts (deduped by expr): Phase 6's bucket parity used to
+    # eval these serially against the engine at the end of the run — precompute
+    # them here so the deferred-snapshot lane absorbs that cost too.
+    bucket_jobs, bseen = [], set()
+    for c in charts:
+        dims = [(d[0] if isinstance(d, list) else d) for d in (c.get("dimensions") or [])]
+        dims = [d for d in dims if d]
+        if not (c.get("sheet") and dims and c.get("measures")):
+            continue
+        expr = bucket_expr(dims)
+        if expr in bseen:
+            continue
+        bseen.add(expr)
+        bucket_jobs.append(expr)
+
+    jobs = [("kpi", e, t) for e, t in kpi_jobs] + \
+           [("maxDate", f"Max({f})", f) for f in date_jobs] + \
+           [("bucket", e, None) for e in bucket_jobs]
+    vals = pmap(lambda j: qlik_eval(app, ctx, j[1]), jobs, pool)
+    for (kind, expr, label), val in zip(jobs, vals):
+        if kind == "kpi":
+            snapshot["kpis"].append({"expr": expr, "title": label, "value": val})
+        elif kind == "maxDate":
+            snapshot["maxDates"].append({"field": label, "value": val})
+        else:
+            snapshot["buckets"].append({"expr": expr, "value": val})
+    return snapshot
+
+
+def write_timings(out_dir, mode, pool, n_objects=None):
+    name = "timings-snapshot.json" if mode == "snapshot-only" else "timings.json"
+    awrite(os.path.join(out_dir, name),
+           {"mode": mode, "pool": pool, "total_seconds": round(time.time() - T0, 3),
+            "objects": n_objects, "retries": RETRIES["n"],
+            "stages": dict(sorted(STAGES.items()))})
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--app", required=True)
     ap.add_argument("--context")
     ap.add_argument("--out", default="discovery")
+    ap.add_argument("--pool", type=int, default=8,
+                    help="shared fetch/eval pool width (default 8 — measured 4.7x on the "
+                         "per-object properties batch; 'session closed' retries cover the "
+                         "occasional dropped engine session)")
     ap.add_argument("--skip-eval", action="store_true",
-                    help="skip the Qlik-engine snapshot evals (snapshot.json)")
+                    help="skip the Qlik-engine snapshot evals (snapshot.json gets empty lists)")
+    ap.add_argument("--defer-snapshot", action="store_true",
+                    help="write everything EXCEPT snapshot.json — run --snapshot-only later "
+                         "(or concurrently) to produce it; in-memory totals can't change "
+                         "without a reload, so deferral is exact")
+    ap.add_argument("--snapshot-only", action="store_true",
+                    help="compute ONLY snapshot.json from an existing --out dir "
+                         "(charts.json / converter-input.json / app-meta.json)")
     a = ap.parse_args()
+    global _SEM
+    _SEM = threading.Semaphore(max(1, a.pool))  # ONE cap across every pmap
     ctx = ["--context", a.context] if a.context else []
     os.makedirs(a.out, exist_ok=True)
 
-    # 1) load script
-    script = qlik("app", "script", "get", "-a", a.app, *ctx, parse_json=False)
+    # ---- snapshot-only lane: read prior artifacts, eval, write atomically ----
+    if a.snapshot_only:
+        with stage("snapshot"):
+            charts = json.load(open(os.path.join(a.out, "charts.json")))
+            conv = json.load(open(os.path.join(a.out, "converter-input.json")))
+            app_meta = json.load(open(os.path.join(a.out, "app-meta.json"))) \
+                if os.path.exists(os.path.join(a.out, "app-meta.json")) else {}
+            snapshot = compute_snapshot(a.app, ctx, charts, conv.get("tables") or [],
+                                        app_meta, a.pool, a.skip_eval)
+            awrite(os.path.join(a.out, "snapshot.json"), snapshot)
+        write_timings(a.out, "snapshot-only", a.pool)
+        print(f"snapshot: {len(snapshot['kpis'])} KPI(s), {len(snapshot['maxDates'])} max-date(s), "
+              f"{len(snapshot['buckets'])} bucket count(s) in {time.time() - T0:.1f}s "
+              f"(pool={a.pool}, retries={RETRIES['n']}) -> {a.out}/snapshot.json")
+        return
+
+    # ---- full discovery: ONE shared pool covers every engine/REST fetch ----
+    # Independent top-level fetches (script, REST item record, master-item ls,
+    # object ls) start together; the per-object/per-item properties batches are
+    # then mapped over the same pool width.
+    results = {}
+    def _script():
+        with stage("script"):
+            results["script"] = qlik("app", "script", "get", "-a", a.app, *ctx, parse_json=False)
+
+    def _items():
+        with stage("app-meta"):
+            items = qlik("item", "ls", "--resourceType", "app", "--limit", "200", *ctx) or []
+            rec = next((i for i in items if i.get("resourceId") == a.app), {})
+            results["app_meta"] = rec.get("resourceAttributes") or {}
+
+    def _measures():
+        with stage("master-measures"):
+            results["measures"] = enumerate_master(a.app, ctx, "measure", a.pool)
+
+    def _dimensions():
+        with stage("master-dimensions"):
+            results["dimensions"] = enumerate_master(a.app, ctx, "dimension", a.pool)
+
+    def _objects():
+        with stage("object-ls"):
+            results["objs"] = qlik("app", "object", "ls", "-a", a.app, "--json", *ctx) or []
+
+    with stage("parallel-fetch"):
+        with ThreadPoolExecutor(max_workers=5) as top:
+            futs = [top.submit(f) for f in (_script, _items, _measures, _dimensions, _objects)]
+            for f in futs:
+                f.result()
+
+        # per-object properties — the dominant cost (46 × ~1.2s serial on the
+        # fixture app); pool-8 measured 4.7×. Each qlik-cli call is its own
+        # engine session, so width is bounded by tenant session limits, not
+        # correctness; transient 'session closed' is retried in qlik_run.
+        objs = results["objs"]
+        with stage("object-properties"):
+            prop_list = pmap_complete(
+                lambda o: qlik("app", "object", "properties", o.get("qId"), "-a", a.app, *ctx),
+                objs, a.pool, key=lambda o: o.get("qId"), what="object properties")
+        all_props = {o.get("qId"): p for o, p in zip(objs, prop_list)}
+
+    script = results["script"] or ""
     open(os.path.join(a.out, "script.qvs"), "w").write(script)
     tables = parse_script(script)
+    measures, dims_raw = results["measures"], results["dimensions"]
+    awrite(os.path.join(a.out, "measures.json"), measures)
+    awrite(os.path.join(a.out, "dimensions.json"), dims_raw)
+    app_meta = results["app_meta"]
+    awrite(os.path.join(a.out, "app-meta.json"), app_meta)
 
-    # 2) master measures + dimensions
-    measures = enumerate_master(a.app, ctx, "measure")
-    dims_raw = enumerate_master(a.app, ctx, "dimension")
-    json.dump(measures, open(os.path.join(a.out, "measures.json"), "w"), indent=2)
-    json.dump(dims_raw, open(os.path.join(a.out, "dimensions.json"), "w"), indent=2)
-
-    # 3) sheets + chart objects (+ the per-sheet CELL GRID for layout)
-    objs = qlik("app", "object", "ls", "-a", a.app, "--json", *ctx) or []
-    charts, sheets, obj_sheet = [], [], {}
-    all_props = {}
-    for o in objs:
-        oid = o.get("qId")
-        all_props[oid] = qlik("app", "object", "properties", oid, "-a", a.app, *ctx) or {}
     # sheets first, so each chart can be annotated with its sheet
+    charts, sheets, obj_sheet = [], [], {}
     for o in objs:
         oid, qtype = o.get("qId"), o.get("qType")
         if qtype != "sheet": continue
@@ -150,7 +404,7 @@ def main():
                        "columns": props.get("columns", 24), "rows": props.get("rows", 12),
                        "cells": cells})
     sheets.sort(key=lambda s: (s["rank"] is None, s["rank"]))
-    json.dump(sheets, open(os.path.join(a.out, "layout.json"), "w"), indent=2)
+    awrite(os.path.join(a.out, "layout.json"), sheets)
 
     for o in objs:
         oid, qtype = o.get("qId"), o.get("qType")
@@ -180,51 +434,44 @@ def main():
             "measureFmts": [ (mm.get("qDef", {}).get("qNumFormat") or {}).get("qFmt") for mm in qmeas ],
             "sort": sort,
         })
-    json.dump(charts, open(os.path.join(a.out, "charts.json"), "w"), indent=2)
+    awrite(os.path.join(a.out, "charts.json"), charts)
 
-    # 4) app metadata (freshness + security + mode) via the REST item record
-    items = qlik("item", "ls", "--resourceType", "app", "--limit", "200", *ctx) or []
-    rec = next((i for i in items if i.get("resourceId") == a.app), {})
-    app_meta = rec.get("resourceAttributes") or {}
-    json.dump(app_meta, open(os.path.join(a.out, "app-meta.json"), "w"), indent=2)
-
-    # 5) Qlik-engine snapshot (source-freshness preflight input): evaluate every
-    #    on-sheet KPI expression + Max() of date-ish fact fields IN THE APP's
-    #    in-memory data. Comparing these against the live warehouse tells the user
-    #    up front whether Qlik is stale ("Sigma will show more data").
-    snapshot = {"lastReloadTime": app_meta.get("lastReloadTime"), "kpis": [], "maxDates": []}
-    if not a.skip_eval:
-        seen = set()
-        kpi_like = [c for c in charts if c["sheet"] and c["measures"] and not c["dimensions"]]
-        for c in kpi_like:
-            expr = c["measures"][0]
-            if not expr or expr in seen: continue
-            seen.add(expr)
-            val = qlik_eval(a.app, ctx, expr)
-            snapshot["kpis"].append({"expr": expr, "title": c["title"] or c["measureLabels"][0], "value": val})
-        # date-ish fields on the (heuristic) fact table = the table with the most *_KEY fields
-        if tables:
-            fact = max(tables, key=lambda t: sum(1 for f in t["fields"] if f["name"].upper().endswith("_KEY")))
-            datey = [f["name"] for f in fact["fields"] if "DATE" in f["name"].upper()][:2]
-            for fld in datey:
-                val = qlik_eval(a.app, ctx, f"Max({fld})")
-                snapshot["maxDates"].append({"field": fld, "value": val})
-    json.dump(snapshot, open(os.path.join(a.out, "snapshot.json"), "w"), indent=2)
-
-    # 6) converter input (feed the Qlik MODEL field names; simple dims are skipped by converter)
+    # converter input (feed the Qlik MODEL field names; simple dims are skipped by converter)
     CALC = re.compile(r'^=|\b(If|Sum|Count|Avg|Concat|Year|Month|Day|Left|Right|Upper|Lower|Trim)\s*\(', re.I)
     master_dims = [{"title": d["title"], "fieldDef": d["expr"]} for d in dims_raw if CALC.search(d["expr"] or "")]
     conv = {"appName": app_meta.get("name") or a.app, "tables": tables,
             "masterMeasures": [{"title": m["title"], "qDef": m["expr"]} for m in measures],
             "masterDimensions": master_dims}
-    json.dump(conv, open(os.path.join(a.out, "converter-input.json"), "w"), indent=2)
+    awrite(os.path.join(a.out, "converter-input.json"), conv)
+
+    # engine snapshot — inline unless deferred (a --snapshot-only lane picks it up)
+    snapshot = None
+    if a.defer_snapshot:
+        # ensure no STALE snapshot.json survives from a prior run — the
+        # orchestrator polls for this file as the lane-completion signal.
+        try:
+            os.unlink(os.path.join(a.out, "snapshot.json"))
+        except FileNotFoundError:
+            pass
+    else:
+        with stage("snapshot"):
+            snapshot = compute_snapshot(a.app, ctx, charts, tables, app_meta, a.pool, a.skip_eval)
+        awrite(os.path.join(a.out, "snapshot.json"), snapshot)
+
+    mode = "defer-snapshot" if a.defer_snapshot else "full"
+    write_timings(a.out, mode, a.pool, n_objects=len(objs))
 
     on_sheet = sum(1 for c in charts if c["sheet"])
     print(f"tables={len(tables)} measures={len(measures)} dimensions={len(dims_raw)} "
           f"(calc={len(master_dims)}) charts={len(charts)} (on-sheet={on_sheet}) sheets={len(sheets)} -> {a.out}/")
-    if snapshot["kpis"]:
+    if snapshot and snapshot["kpis"]:
         print("snapshot:", "; ".join(f"{k['title']}={k['value']}" for k in snapshot["kpis"][:6]))
+    elif a.defer_snapshot:
+        print("snapshot: DEFERRED (run --snapshot-only as a concurrent lane; "
+              "consumed at the Phase-6 freshness banner)")
     print(f"lastReloadTime={app_meta.get('lastReloadTime', '?')}")
+    print(f"timing: {time.time() - T0:.1f}s wall (pool={a.pool}, retries={RETRIES['n']}; "
+          f"per-stage breakdown in timings.json)")
     print("Next: scripts/migrate-qlik.rb runs the whole pipeline from this directory in one command.")
 
 if __name__ == "__main__":

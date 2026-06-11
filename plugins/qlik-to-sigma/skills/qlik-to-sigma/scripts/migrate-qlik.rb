@@ -9,7 +9,17 @@
 # This script does NOT re-implement any phase — it chains the per-phase scripts
 # (each independently usable + artifact-driven):
 #   qlik-discover.py            (Phase 1 — model, charts, sheet CELL GRIDS, app
-#                                freshness meta + Qlik-engine KPI snapshot)
+#                                freshness meta + Qlik-engine KPI snapshot.
+#                                Runs as a BACKGROUND lane with --defer-snapshot
+#                                while the pure-Sigma-side prep — token mint,
+#                                folder resolve, DM list+spec prefetch — runs
+#                                concurrently in the foreground; the engine
+#                                snapshot then runs as its OWN background lane
+#                                under Phases 2-4 and is consumed only at the
+#                                Phase-6 freshness banner. In-memory app totals
+#                                cannot change without a reload, so the deferral
+#                                is exact. Measured: 54.8s serial discovery →
+#                                ~12s lane + ~4s snapshot hidden under the build.)
 #   convertQlikToSigma()        (Phase 2 — the sigma-data-model-mcp converter, via node shim)
 #   reconcile-columns.py + gen-denorm-sql.py + build-sigma-dm.py
 #                               (Phase 3 — star repointed via reconcile + denorm
@@ -47,8 +57,62 @@ require 'fileutils'
 require 'open3'
 require 'time'
 
+$stdout.sync = true # lane/foreground progress lines interleave correctly
+
 HERE = __dir__
 $LOAD_PATH.unshift File.expand_path('vendor/lib', HERE)
+
+# Phase-timing summary — printed at every terminal exit so the discovery
+# interleave speedup stays visible in every run (regressions show up in the
+# first slow report instead of an investigation).
+START_T = Time.now
+PHASE_T = {}
+$t_mark = Time.now
+def mark(key)
+  now = Time.now
+  PHASE_T[key] = (PHASE_T[key] || 0.0) + (now - $t_mark)
+  $t_mark = now
+end
+
+def phase_summary
+  return if PHASE_T.empty?
+  puts
+  puts "PHASE TIMINGS  #{PHASE_T.map { |k, v| "#{k}=#{v.round(1)}s" }.join('  ')}  " \
+       "total=#{(Time.now - START_T).round(1)}s"
+end
+
+# Background lanes (discovery / engine snapshot). Artifacts are written
+# atomically by qlik-discover.py, so polling for them is safe.
+def spawn_lane(cmd, log)
+  File.write(log, '')
+  { started: Time.now, log: log, status: nil,
+    pid: Process.spawn(*cmd, %i[out err] => [log, 'a']) }
+end
+
+def lane_done?(lane)
+  return true if lane.nil? || lane[:status]
+  if (st = Process.wait2(lane[:pid], Process::WNOHANG))
+    lane[:status] = st[1]
+    lane[:ended] = Time.now
+    true
+  else
+    false
+  end
+end
+
+def join_lane(lane, label, timeout: 600)
+  t0 = Time.now
+  until lane_done?(lane)
+    abort "FATAL: #{label} lane timed out (#{timeout}s)" if Time.now - t0 > timeout
+    sleep 0.1
+  end
+  lane
+end
+
+def print_lane_log(lane)
+  return unless lane && File.exist?(lane[:log])
+  File.read(lane[:log]).each_line { |l| puts "   │ #{l.rstrip}" }
+end
 
 opts = { context: 'sigma-migration', database: 'CSA', schema: 'TJ' }
 OptionParser.new do |o|
@@ -107,10 +171,19 @@ end
 TOTAL = 6
 
 # ---------------------------------------------------------------------------
-# Phase 1 — Discover (qlik-cli: load script, master items, charts, sheet grids,
-#                     app freshness meta + Qlik-engine KPI snapshot)
+# Phase 1 — Discover (qlik-cli), INTERLEAVED. qlik-discover.py (its own pooled
+# fetcher, --defer-snapshot) runs as a BACKGROUND lane while the pure-Sigma-
+# side prep (token mint, folder resolve, DM list+spec prefetch for the
+# Phase-2.5 reuse scan — all READ-ONLY, no Sigma objects created) runs
+# concurrently in the foreground. The lanes JOIN before anything consumes
+# discovery output. The Qlik-engine snapshot then runs as its OWN lane under
+# Phases 2-4 (in-memory totals can't change without a reload) and is consumed
+# at the Phase-6 freshness banner.
 # ---------------------------------------------------------------------------
 hdr(1, TOTAL, 'Discover')
+$t_mark = Time.now
+snap_lane = nil
+prep = {}
 if opts[:from]
   %w[script.qvs measures.json charts.json converter-input.json].each do |f|
     abort "FATAL: --from-discovery dir missing #{f}" unless File.exist?(File.join(opts[:from], f))
@@ -120,9 +193,87 @@ if opts[:from]
   end
   puts "   reusing discovery artifacts from #{opts[:from]}"
 else
-  run!(['python3', File.join(HERE, 'qlik-discover.py'),
-        '--app', opts[:app], '--context', opts[:context], '--out', WORK])
+  disc_lane = spawn_lane(['python3', File.join(HERE, 'qlik-discover.py'),
+                          '--app', opts[:app], '--context', opts[:context],
+                          '--out', WORK, '--defer-snapshot'],
+                         File.join(WORK, 'phase1-discover.log'))
+  puts "   Qlik discovery: BACKGROUND lane (pid #{disc_lane[:pid]}, log phase1-discover.log;"
+  puts "   engine snapshot deferred to its own lane). Sigma-side prep runs concurrently."
+
+  if opts[:dry_run]
+    puts '   Sigma-side prep skipped (--dry-run)'
+  else
+    begin
+      require 'sigma_rest'
+      Sigma.auth_token # mint once — exported via ENV to every child script
+      puts '   ✓ Sigma token ready'
+      # Folder resolve (read-only; same preference order as build-sigma-dm.py's
+      # pick_folder: editable TEST/MIGRATION folder, else first editable).
+      folders = (Sigma.request(:get, '/v2/files?typeFilters=folder&limit=200')['entries'] rescue []) || []
+      editable = folders.select do |f|
+        f['type'] == 'folder' && (%w[edit contribute].include?(f['permission']) || f['permission'].nil?)
+      end
+      pick = editable.find { |f| f['name'].to_s.upcase =~ /TEST|MIGRATION/ } || editable.first
+      if pick
+        prep[:folder_id], prep[:folder_name] = pick['id'], pick['name']
+        puts "   ✓ folder resolved: '#{pick['name']}' (#{pick['id']})" \
+             "#{opts[:folder] ? ' — overridden by --folder' : ''}"
+      end
+      # DM list + spec prefetch — warms the Phase-2.5 reuse scan so it costs ~0
+      # at scan time (mirrors find-or-pick-dm.rb's own list/sort/limit logic).
+      all_dms, page = [], nil
+      loop do
+        qs = 'limit=100' + (page ? "&page=#{page}" : '')
+        data = (Sigma.request(:get, "/v2/dataModels?#{qs}") rescue {})
+        rows = data['entries'] || data['dataModels'] || []
+        break if rows.empty?
+        all_dms.concat(rows)
+        break if all_dms.size >= 500
+        page = data['nextPage']
+        break if page.nil? || page.to_s.empty?
+      end
+      top = all_dms.sort_by { |dm| [-(Time.parse(dm['updatedAt'].to_s).to_i rescue 0), dm['name'].to_s] }
+                   .first(25)
+      specs, smu, sq = {}, Mutex.new, Queue.new
+      top.each { |dm| sq << dm }
+      Array.new(5) do
+        Thread.new do
+          loop do
+            dm = (sq.pop(true) rescue nil) or break
+            dm_id = dm['dataModelId'] || dm['id']
+            next unless dm_id
+            # spec endpoint may answer YAML — store the RAW body; the scan
+            # (find-or-pick-dm.rb --specs-cache) parses JSON-else-YAML itself.
+            raw = (Sigma.request(:get, "/v2/dataModels/#{dm_id}/spec", accept: '*/*') rescue nil)
+            smu.synchronize { specs[dm_id] = raw } if raw && !raw.to_s.empty?
+          end
+        end
+      end.each(&:join)
+      File.write(File.join(WORK, 'dm-specs-cache.json'),
+                 JSON.generate('fetched_at' => Time.now.utc.iso8601,
+                               'dms' => all_dms, 'specs' => specs))
+      puts "   ✓ prefetched #{specs.size}/#{all_dms.size} DM spec(s) → dm-specs-cache.json (feeds Phase 2.5)"
+    rescue StandardError => e
+      puts "   Sigma-side prep degraded (#{e.class}: #{e.message[0, 120]}) — later phases fall back to inline resolution"
+    end
+  end
+  mark('phase1-prep(fg)')
+
+  join_lane(disc_lane, 'discovery')
+  print_lane_log(disc_lane)
+  abort "FATAL: qlik discovery failed (exit #{disc_lane[:status].exitstatus}) — see lane log above" \
+    unless disc_lane[:status].success?
+  PHASE_T['phase1-discovery(bg)'] = (disc_lane[:ended] - disc_lane[:started])
+
+  # Engine-snapshot lane: runs under Phases 2-4, joined at Phase 6. Read-only.
+  snap_lane = spawn_lane(['python3', File.join(HERE, 'qlik-discover.py'),
+                          '--app', opts[:app], '--context', opts[:context],
+                          '--out', WORK, '--snapshot-only'],
+                         File.join(WORK, 'phase1-snapshot.log'))
+  puts "   engine-snapshot lane started (pid #{snap_lane[:pid]}) — runs under Phases 2-4," \
+       ' consumed at the Phase-6 freshness banner'
 end
+mark('phase1')
 
 conv_input = JSON.parse(File.read(File.join(WORK, 'converter-input.json')))
 charts     = JSON.parse(File.read(File.join(WORK, 'charts.json')))
@@ -152,6 +303,8 @@ if (lr = app_meta['lastReloadTime'])
   if (snapshot['kpis'] || []).any?
     puts "      Qlik in-memory snapshot: " +
          snapshot['kpis'].map { |k| "#{k['title']}=#{k['value']}" }.join(' · ')
+  elsif snap_lane
+    puts '      Qlik in-memory KPI snapshot: evaluating in a background lane — consumed at Phase 6.'
   end
   if stale_days >= 1
     puts "      → The Qlik snapshot is ~#{stale_days.ceil} day(s) old. Sigma queries the LIVE warehouse"
@@ -191,6 +344,41 @@ cstats = conv['stats'] || {}
 puts "   #{cstats['elements']} element(s), #{cstats['columns']} column(s), " \
      "#{cstats['metrics']} metric(s), #{cstats['relationships']} relationship(s); " \
      "#{conv_warnings.size} converter warning(s)"
+mark('phase2-convert')
+
+# ---------------------------------------------------------------------------
+# Phase 2.5 — DM-reuse scan (non-destructive; candidates PRINTED, default =
+# BUILD NEW). Consumes the dm-specs-cache.json prefetched concurrently with
+# discovery, so the scan itself costs ~0 network. Reuse stays an explicit
+# human decision — see SKILL.md Phase 2.5.
+# ---------------------------------------------------------------------------
+hdr('2.5', TOTAL, 'DM-reuse scan')
+if opts[:dry_run]
+  puts '   skipped (--dry-run: no Sigma access)'
+else
+  begin
+    sig_path = File.join(WORK, 'dm-signature.json')
+    run!(['python3', File.join(HERE, 'qlik-dm-signature.py'),
+          '--model', File.join(WORK, 'converter-input.json'),
+          '--database', opts[:database], '--schema', opts[:schema], '--out', sig_path])
+    match_path = File.join(WORK, 'dm-match.json')
+    fp_cmd = ['ruby', File.join(HERE, 'vendor', 'find-or-pick-dm.rb'),
+              '--workbook-signature', sig_path, '--out', match_path]
+    cache_path = File.join(WORK, 'dm-specs-cache.json')
+    fp_cmd += ['--specs-cache', cache_path] if File.exist?(cache_path)
+    _, _fp_st = Open3.capture2e(*fp_cmd) # exit 1 = no candidate ≥ min-score (normal)
+    cands = ((JSON.parse(File.read(match_path))['candidates'] rescue nil) || []).first(3)
+    if cands.any?
+      puts '   top candidate(s) — default is BUILD NEW; to reuse, follow SKILL.md Phase 2.5:'
+      cands.each { |c| puts "     score #{format('%.2f', c['score'] || 0)}  #{c['dm_id']}  '#{c['dm_name']}'" }
+    else
+      puts '   no existing DM covers this app — building new'
+    end
+  rescue StandardError => e
+    puts "   DM-reuse scan unavailable (#{e.message[0, 100]}) — building new"
+  end
+end
+mark('phase2.5-dm-scan')
 
 # ---------------------------------------------------------------------------
 # DECISIONS CHECKPOINT — surface the genuine Qlik human questions ONLY
@@ -247,9 +435,10 @@ end
 
 # (e) folder not supplied
 unless opts[:folder] || opts[:dry_run]
+  resolved = prep[:folder_id] ? "'#{prep[:folder_name]}' (#{prep[:folder_id]}) — pre-resolved during discovery" \
+                              : 'the first editable folder (prefers a TEST/MIGRATION folder)'
   questions << { 'id' => 'folder', 'severity' => 'required',
-                 'detail' => 'No Sigma --folder supplied; DM + workbook will land in the first editable folder ' \
-                             '(prefers a TEST/MIGRATION folder).',
+                 'detail' => "No Sigma --folder supplied; DM + workbook will land in #{resolved}.",
                  'options' => ['supply --folder <id>', 'proceed into auto-resolved folder'],
                  'default' => 'proceed into auto-resolved folder' }
 end
@@ -274,6 +463,12 @@ if questions.any? && !opts[:yes] && answers.nil?
   puts '======================================================='
   puts
   puts "#{questions.size} decision(s) need a human. No Sigma objects were created."
+  if snap_lane && !lane_done?(snap_lane)
+    puts '   (waiting for the background engine-snapshot lane so the discovery dir is complete'
+    puts "    — re-run with --from-discovery #{WORK} to skip re-discovery)"
+    join_lane(snap_lane, 'snapshot', timeout: 300)
+  end
+  phase_summary
   exit 10
 end
 
@@ -289,6 +484,8 @@ if questions.any?
     chosen = (answers && answers[q['id']]) || q['default']
     if chosen.to_s.start_with?('abort')
       puts "   '#{q['id']}' answered abort — stopping before any Sigma object is created."
+      join_lane(snap_lane, 'snapshot', timeout: 300) if snap_lane
+      phase_summary
       exit 10
     end
   end
@@ -313,7 +510,11 @@ dm_cmd = ['python3', File.join(HERE, 'build-sigma-dm.py'),
           '--denorm', denorm_out, '--measures', File.join(WORK, 'measures.json'),
           '--name', "#{base_name} (Qlik→Sigma)",
           '--out', File.join(WORK, 'dm-result.json'), '--spec-out', File.join(WORK, 'dm-spec.json')]
-dm_cmd += ['--folder', opts[:folder]] if opts[:folder]
+# --folder: explicit flag wins; else the folder pre-resolved concurrently with
+# discovery (identical preference order), saving build-sigma-dm.py the lookup.
+if (fid = opts[:folder] || prep[:folder_id])
+  dm_cmd += ['--folder', fid]
+end
 dm_cmd << '--dry-run' if opts[:dry_run]
 run!(dm_cmd)
 dm_res = JSON.parse(File.read(File.join(WORK, 'dm-result.json')))
@@ -321,6 +522,7 @@ DM_ID = dm_res['dataModelId']
 puts "   dataModelId = #{DM_ID || '(dry-run)'}  denorm element #{dm_res['denormElementId']}  " \
      "#{dm_res['starElements']} star element(s), #{dm_res['metricsKept']} metric(s)" \
      "#{dm_res['metricsDropped'].to_a.any? ? "; dropped: #{dm_res['metricsDropped'].join(', ')}" : ''}"
+mark('phase3-dm')
 
 # ---------------------------------------------------------------------------
 # Phase 4 — Build workbook (one Sigma page per Qlik sheet, from charts.json)
@@ -334,7 +536,7 @@ wb_cmd = ['python3', File.join(HERE, 'build-sigma-workbook.py'),
           '--out', File.join(WORK, 'wb-result.json'), '--spec-out', File.join(WORK, 'wb-spec.json'),
           '--layout-out', File.join(WORK, 'layout.xml'),
           '--element-map', File.join(WORK, 'element-map.json')]
-wb_cmd += ['--folder', (opts[:folder] || dm_res['folderId'])] if opts[:folder] || dm_res['folderId']
+wb_cmd += ['--folder', (opts[:folder] || dm_res['folderId'] || prep[:folder_id])] if opts[:folder] || dm_res['folderId'] || prep[:folder_id]
 wb_cmd << '--dry-run' if opts[:dry_run]
 run!(wb_cmd)
 wb_res = JSON.parse(File.read(File.join(WORK, 'wb-result.json')))
@@ -342,6 +544,7 @@ WB_ID = wb_res['workbookId']
 emap  = JSON.parse(File.read(File.join(WORK, 'element-map.json')))
 puts "   workbookId = #{WB_ID || '(dry-run)'}  (#{wb_res['pages']} page(s), #{wb_res['elements']} element(s), " \
      "#{wb_res['kpis']} KPI(s))"
+mark('phase4-wb')
 
 # ---------------------------------------------------------------------------
 # Phase 5 — Layout (the Qlik sheet cell grids, mapped onto Sigma's 24-col grid)
@@ -354,11 +557,28 @@ else
         '--workbook', WB_ID, '--layout', File.join(WORK, 'layout.xml')])
   puts "   layout applied (#{sheets.size} Qlik sheet grid(s) → 24-col Sigma grid, row-scale ≥2)"
 end
+mark('phase5-layout')
 
 # ---------------------------------------------------------------------------
 # Phase 6 — Parity (freshness banner FIRST, then columns + values + buckets)
 # ---------------------------------------------------------------------------
 hdr(6, TOTAL, 'Parity')
+# Join the engine-snapshot lane (started at Phase 1, ran under Phases 2-5).
+# The freshness banner + bucket parity below consume it; in-memory totals
+# can't have changed (no reload happens anywhere in this pipeline).
+if snap_lane
+  join_lane(snap_lane, 'snapshot', timeout: 300)
+  PHASE_T['snapshot-lane(bg)'] = (snap_lane[:ended] - snap_lane[:started])
+  if snap_lane[:status].success?
+    snapshot = (JSON.parse(File.read(File.join(WORK, 'snapshot.json'))) rescue {})
+    puts "   engine-snapshot lane joined (#{(snap_lane[:ended] - snap_lane[:started]).round(1)}s, " \
+         "ran under Phases 2-5): #{(snapshot['kpis'] || []).size} KPI(s), " \
+         "#{(snapshot['buckets'] || []).size} bucket count(s)"
+  else
+    print_lane_log(snap_lane)
+    puts '   snapshot lane FAILED — falling back to live engine evals below'
+  end
+end
 if opts[:dry_run]
   puts '   DRY RUN: skipping live parity. Artifacts:'
   %w[dm-spec.json wb-spec.json layout.xml element-map.json].each { |f| puts "     #{File.join(WORK, f)}" }
@@ -366,6 +586,7 @@ if opts[:dry_run]
   puts '================ RESULT (dry run) ================'
   puts "specs       : #{WORK}"
   puts '=================================================='
+  phase_summary
   exit 0
 end
 
@@ -450,12 +671,17 @@ end
 puts
 puts '   ── BUCKET COUNTS (per chart, Sigma rows vs Qlik engine) ──'
 bucket_warns = 0
+# Bucket counts were precomputed by the snapshot lane (same expr strings —
+# see qlik-discover.py bucket_expr); live eval is only the fallback.
+snapshot_buckets = (snapshot['buckets'] || []).to_h { |b| [b['expr'], b['value']] }
 emap.reject { |e| e['kind'] == 'kpi-chart' }.each do |e|
   dims = e['qlik']['dims']
   next if dims.empty?
   expr = dims.size == 1 ? "Count(distinct [#{dims[0]}])" :
            "Count(distinct #{dims.map { |d| "[#{d}]" }.join("&'|'&")})"
-  qcount = opts[:app] ? numish(qlik_eval(opts[:app], opts[:context], expr))&.to_i : nil
+  qraw = snapshot_buckets[expr]
+  qraw = qlik_eval(opts[:app], opts[:context], expr) if qraw.nil? && opts[:app]
+  qcount = numish(qraw)&.to_i
   scount = csv_for[e['elementId']] ? csv_rows(csv_for[e['elementId']]).size : nil
   status = if qcount && scount && qcount == scount
              'MATCH'
@@ -470,6 +696,7 @@ end
 
 divergent = kpi_results.count('DIVERGENT')
 parity_ok = err_cols.empty? && entries.size.positive? && divergent.zero?
+mark('phase6-parity')
 
 # ---------------------------------------------------------------------------
 # Summary
@@ -484,4 +711,5 @@ puts "PARITY      : #{parity_ok ? 'GREEN' : 'RED'} — #{entries.size} cols reso
 puts "freshness   : Qlik last reload #{app_meta['lastReloadTime'] || '?'} (#{stale_days} days ago)" if stale_days
 puts "warnings    : #{conv_warnings.size} converter, #{(wb_res['warnings'] || []).size} workbook-build" if conv_warnings.any? || (wb_res['warnings'] || []).any?
 puts '======================================='
+phase_summary
 exit(parity_ok ? 0 : 3)

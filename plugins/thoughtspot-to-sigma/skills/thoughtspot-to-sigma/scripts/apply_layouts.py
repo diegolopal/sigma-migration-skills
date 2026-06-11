@@ -49,6 +49,51 @@ def _gc(cid, r0, r1, inner):
             f'gridRow="{r0} / {r1}" gridTemplateColumns="repeat(24, 1fr)" '
             f'gridTemplateRows="auto">\n{inner}\n</GridContainer>')
 
+GRID_COLS = 24
+MIN_BAND_FILL = 0.60     # must mirror lib/layout_lint.rb MIN_BAND_FILL
+
+
+def _band_fill(items):
+    covered = [False] * GRID_COLS
+    for it in items:
+        for c in range(it[1], it[2]):
+            if 1 <= c <= GRID_COLS:
+                covered[c - 1] = True
+    return sum(covered) / GRID_COLS
+
+
+def _reflow_bands(bands):
+    """Python port of lib/layout.rb reflow_bands (tableau/pbi/quicksight
+    plugins, phase-e layout quality): when any band's items cover <60% of the
+    grid columns — e.g. a half-width trailing Liveboard tile — redistribute
+    the page's items across the same number of bands evenly and tile each band
+    edge-to-edge at its original height. Pages whose bands all fill >=60% keep
+    the source-tile geometry exactly. Keeps the layout-lint gate
+    (lib/layout_lint.rb, 'band under-filled') GREEN by construction."""
+    if not any(_band_fill(b["items"]) < MIN_BAND_FILL for b in bands):
+        return bands
+    heights = [b["r1"] - b["r0"] for b in bands]
+    items = [it for b in bands for it in sorted(b["items"], key=lambda i: (i[3], i[1]))]
+    k = len(items)
+    nb = min(len(bands), k)
+    base, rem = divmod(k, nb)
+    sizes = [base + (1 if bi >= nb - rem else 0) for bi in range(nb)]
+    out, idx, cursor = [], 0, 1
+    fallback_h = max([h for h in heights if h] or [8])
+    for bi, n in enumerate(sizes):
+        band_items = items[idx:idx + n]
+        idx += n
+        h = max(heights[bi] if bi < len(heights) and heights[bi] else fallback_h, 4)
+        new_items = [[it[0],
+                      1 + int(GRID_COLS * j / n + 0.5),
+                      1 + int(GRID_COLS * (j + 1) / n + 0.5),
+                      cursor, cursor + h]
+                     for j, it in enumerate(band_items)]
+        out.append({"r0": cursor, "r1": cursor + h, "items": new_items})
+        cursor += h
+    return out
+
+
 def banded_page(page_id, items, title):
     """items: [eid, c0, c1, r0, r1] page-absolute. Header band + one container
     per row band (children relative; relative TS proportions preserved inside).
@@ -58,7 +103,6 @@ def banded_page(page_id, items, title):
     extra.append({"id": "band-hdrtext", "kind": "text",
                   "body": f'# <span style="color: #FFFFFF">{title}</span>'})
     children.append(_gc("band-hdr", 1, 1 + HEADER_ROWS, _le("band-hdrtext", 1, 25, 1, 1 + HEADER_ROWS)))
-    offset = HEADER_ROWS + (1 - min(i[3] for i in items) if items else 0)
     bands = []
     for it in sorted(items, key=lambda i: (i[3], i[1])):
         if bands and it[3] < bands[-1]["r1"]:
@@ -66,6 +110,8 @@ def banded_page(page_id, items, title):
             bands[-1]["r1"] = max(bands[-1]["r1"], it[4])
         else:
             bands.append({"r0": it[3], "r1": it[4], "items": [it]})
+    bands = _reflow_bands(bands)
+    offset = HEADER_ROWS + (1 - min(b["r0"] for b in bands)) if bands else HEADER_ROWS
     for n, b in enumerate(bands, 1):
         cid = f"band-{n}"
         extra.append({"id": cid, "kind": "container"})
