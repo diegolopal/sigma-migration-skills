@@ -142,6 +142,39 @@ def resolve_folder(arg):
     return pick["id"]
 
 
+def surface_converter_warnings(wd, warns):
+    """Print converter warnings PROMINENTLY after Phase 3 — layered/derived
+    LookML (cross-view ${view.SQL_TABLE_NAME} refs, incremental PDTs, CTE
+    fragments) produces 🔶 action-required warnings that must never scroll by
+    unnoticed. Pattern guide: refs/layered-lookml.md."""
+    if not warns:
+        return
+    loud = [w for w in warns if w.startswith("🔶")]
+    review = [w for w in warns if w.startswith("⚠")]
+    other = [w for w in warns if w not in loud and w not in review]
+    if loud:
+        print(f"\n   ════════ 🔶 ACTION REQUIRED — {len(loud)} converter warning(s) ════════")
+        for w in loud:
+            print("   " + w)
+        if any("UNRESOLVED VIEW" in w for w in loud):
+            print("   ► UNRESOLVED VIEW: the emitted SQL contains LOOKER_SCRATCH.* placeholder")
+            print("     tables and will NOT run. Add the named .view.lkml file(s) to --lookml-dir")
+            print("     and re-run (cross-view refs resolve across the whole directory), or")
+            print("     repoint the placeholder at the real warehouse table.")
+        if any("materialization" in w.lower() for w in loud):
+            print("   ► MATERIALIZATION HANDOFF: this view was a persisted/incremental PDT in")
+            print("     Looker. After the DM posts, enable a materialization schedule on the")
+            print("     flagged element (Sigma UI → Materialization tab, or the API).")
+        print("   " + "═" * 64)
+    if review:
+        print(f"\n   ⚠ review — {len(review)} warning(s):")
+        for w in review:
+            print("   " + w)
+    if other:
+        print(f"   ℹ {len(other)} informational warning(s) — full list: {os.path.join(wd, 'dm-spec-warnings.json')}")
+    print("   layered/derived LookML pattern guide: refs/layered-lookml.md")
+
+
 def export_csv(wb_id, element_id, timeout=240):
     res = json.loads(sigma("POST", f"/v2/workbooks/{wb_id}/export",
                            {"elementId": element_id, "format": {"type": "csv"}}))
@@ -416,6 +449,7 @@ const files = JSON.parse(readFileSync({json.dumps(os.path.join(wd, "_lookml-file
 const res = convertLookMLToSigma(files, {{ connectionId: {json.dumps(conn)},
   exploreName: {json.dumps(explore)}, joinStrategy: 'relationships' }});
 writeFileSync({json.dumps(dm_spec_path)}, JSON.stringify(res.model, null, 2));
+writeFileSync({json.dumps(os.path.join(wd, "dm-spec-warnings.json"))}, JSON.stringify(res.warnings || [], null, 2));
 console.error('stats:', JSON.stringify(res.stats));
 (res.warnings || []).forEach(w => console.error('  WARN ' + w));
 """)
@@ -435,6 +469,25 @@ console.error('stats:', JSON.stringify(res.stats));
      2. Save the tool's JSON output to {wd}/converted.json
      3. RE-RUN THIS COMMAND with:  --converted {wd}/converted.json""")
             return 3
+
+    # Surface converter warnings prominently (🔶 = action required — unresolved
+    # cross-view refs / materialization handoffs; ⚠ = review). Never buried.
+    if not a.reuse_dm:
+        conv_warns = []
+        if a.converted:
+            try:
+                conv_warns = json.load(open(a.converted)).get("warnings") or []
+            except Exception:
+                conv_warns = []
+            json.dump(conv_warns, open(os.path.join(wd, "dm-spec-warnings.json"), "w"), indent=2)
+        else:
+            wpath = os.path.join(wd, "dm-spec-warnings.json")
+            if os.path.exists(wpath):
+                try:
+                    conv_warns = json.load(open(wpath))
+                except Exception:
+                    conv_warns = []
+        surface_converter_warnings(wd, conv_warns)
 
     # ── Phase 3.5 — DM-reuse check (printed; default = BUILD NEW) ─────────────
     hdr(3, TOTAL, "DM-reuse check (3.5)")
