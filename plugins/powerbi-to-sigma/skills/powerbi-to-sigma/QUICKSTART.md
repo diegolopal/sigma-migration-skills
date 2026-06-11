@@ -123,9 +123,20 @@ ruby scripts/migrate-powerbi.rb \
   --pbir   /path/to/Report.json \
   --connection <SIGMA_CONN_UUID> --database <DB> --schema <SCHEMA> \
   --ref-dm <referenceDataModelId> \
-  [--name "Sales Overview (from Power BI)"] [--folder <id>] [--yes]
+  [--name "Sales Overview (from Power BI)"] [--folder <id>] [--yes] \
+  [--enhance [--enhance-accept all-low-risk]]   # Phase E (opt-in, default OFF)
 # exit 0 = done (parity pass) · 10 = decisions needed · 3 = parity fail
+# exit 14 = parity PASS + Phase E proposals pending --enhance-accept
 ```
+
+**Phase E (opt-in) — Enhance.** After parity passes, `--enhance` scans the source
+signals + built workbook and proposes trial-validated enhancements (period-comparison
+KPIs, grain switcher restoring the PBI date drill, selection controls, map
+restoration, null-label/freshness polish). Nothing is applied without
+`--enhance-accept`; accepted items land on a **clone** named "<name> — Enhanced"
+(the parity workbook is never touched), one at a time, each gated by an
+untouched-element parity spot-check that auto-reverts on any shift. See the
+SKILL.md "Phase E (opt-in) — Enhance" section.
 
 **Phase-by-phase** (`scripts/run.sh`, or drive the scripts directly) when you want to
 inspect or hand-tune each stage. The phases:

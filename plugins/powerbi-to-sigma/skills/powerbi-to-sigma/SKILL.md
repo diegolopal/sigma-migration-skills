@@ -102,6 +102,67 @@ python3 scripts/build-bookmark-workbooks.py --signals $WORK/signals.json \
 - Validated 2026-06-02 on Retail Trends: Overview(8)/KPIs-Only(3)/Trend-Spotlight(1) → 3 workbooks, screenshot-verified.
 - `build-bookmark-workbooks.py` is **shared** (lives in `tableau-to-sigma/scripts`, symlinked here) and **vendor-neutral**: `--build-script` selects the signals→workbook builder; a normalized state's `filters: {col:[vals]}` is baked as a `list` filter (`{columnId, kind:list, mode:include, values}`) onto the Data-page **master** so every chart inherits it (page-filter semantics — verified end-to-end). Tableau's analog (Custom Views) feeds the same builder via `tableau-to-sigma/scripts/extract-custom-views.py` — note: Tableau REST exposes custom-view *metadata* only, not filter *values* (opaque state), so Tableau filter recovery needs the view-data-diff technique.
 
+## Phase E (opt-in) — Enhance
+
+**OFF by default, everywhere.** Phase E never runs in batch/headless mode
+without the explicit `--enhance` flag on `migrate-powerbi.rb`, and it only
+ever starts from a **parity-verified** workbook (Phase 6 PASS). It is powered
+by the shared engine vendored byte-identically into the covered plugins
+(`scripts/enhance-scan.rb` + `scripts/enhance-apply.rb` — md5 discipline,
+same as `escalate-gap.py`).
+
+```bash
+ruby scripts/migrate-powerbi.rb ... --yes \
+  --enhance                       # scan only → exit 14 with proposals
+# present each candidate to the user (one AskUserQuestion checklist), then:
+ruby scripts/migrate-powerbi.rb ... --yes \
+  --enhance --enhance-accept all-low-risk    # or: id1,id2,...
+```
+
+The contract (trial-validated, 2026-06-10):
+
+1. **Clone-first.** `enhance-apply.rb` GETs the parity workbook's spec and
+   POSTs it as `"<name> — Enhanced"`. The 1:1 parity artifact is **never
+   written** (the report records its `updatedAt` before/after as proof).
+2. **Scan-then-propose.** `enhance-scan.rb` reads source signals (workdir
+   artifacts: `signals.json`, `freshness.json`) + the built spec + live
+   element exports, and emits `enhancements.json` — each candidate
+   `{id, category, evidence, proposed, risk, verdict_hint, patch}`.
+   **Nothing applies without acceptance**: interactive runs present a per-item
+   checklist (AskUserQuestion); headless runs pass `--enhance-accept id1,id2`
+   or `--enhance-accept all-low-risk`.
+3. **Apply + parity-unchanged gate.** Accepted items apply **one at a time**
+   to the clone; after each, 2-3 untouched elements are spot-queried on the
+   clone AND the original at the same instant (live-drift-proof) — any shift
+   auto-reverts that item and flags it in `enhance-report.json`
+   (applied/skipped/reverted + evidence).
+
+Detector catalog (trial-validated; nothing speculative):
+
+- **comparison-enrichment** — date-grouped master + revenue-like measure →
+  latest-period KPI + delta-% KPI pair. KPI value columns INLINE the full
+  `Sum(If(D = Max(D), v, Null))` expression — cross-column aggregate refs
+  silently misevaluate in kpi-charts.
+- **interactivity-recovery** — (a) list **selection controls** on
+  reasonable-cardinality dims wired to the shared master (empty default =
+  identical render); (b) **grain switcher** — segmented control + DateTrunc
+  switch restoring the PBI date-hierarchy drill intent, default = parity
+  grain; (c) **drill switcher** — segmented control + `If()` dimension switch
+  where a finer dim exists (medium risk: heuristic hierarchy pairing);
+  (d) **map restoration** — an `azureMap`/`filledMap` visual the migration
+  approximated as a bar → point-map with `Switch()` centroid synthesis
+  (medium risk: centroids must be filled into the patch before apply).
+- **fidelity-polish** — null-bucket labeling (`Coalesce → "No <Dim>"`),
+  month/date axis canonicalization (`MakeDate`; medium risk on multi-year
+  sources — intentionally un-pools), stale-source freshness note (time-boxed
+  wording, fed by the Phase 2.5 freshness preflight), title corrections from
+  source captions.
+
+**Descoped — emitted as propose-in-UI notes, never spec changes** (all
+trial-proven spec-unsupported): DM-metric promotion (metric refs don't resolve
+through a workbook table), chart-as-filter (`useAsFilter` silently dropped on
+readback), pie percent labels (`valueFormat:'percent'` silently dropped).
+
 ## Reverse direction — author INTO Power BI
 The Fabric API is symmetric: `POST .../semanticModels` (TMSL parts) + `POST .../reports` (PBIR) create live items. Same device-code token (`user_impersonation` covers writes). Needs a Fabric-capacity workspace. See `scripts/fabric-auth-check.py` for the write-capability/capacity check.
 
@@ -117,6 +178,8 @@ The conversion is script-driven (mirrors `tableau-to-sigma/scripts/`). `scripts/
 | `convert-model.rb` | 2–3 convert/post | MODE A prints the exact `convert_powerbi_to_sigma` MCP call for a `model.bim`; MODE B takes the converter output and applies the 3 fixups (schemaVersion + folderId/ownerId via a ref-DM harvest + base-element names) → postable DM spec. |
 | `build-workbook-from-pbir.rb` | 4 build | `signals.json` + a `master-map.json` → full workbook spec + 24-col layout XML. Applies the measure-translation patterns in `refs/measure-patterns.md`; **line charts default to a single series** (`beads-sigma-c07`) unless PBI bound a Series/Legend role. **Carries the PBI visual sort** (`f972` — PBIR `query.sortDefinition` / classic `prototypeQuery.OrderBy` → chart `xAxis.sort`/`color.sort`; grouped table → `groupings[0].sort` — element-level sort is rejected on grouped tables). Analog of `build-charts-from-signals.rb`. |
 | `phase6-parity-pbi.rb` | 7 parity | executeQueries(DAX) adapter: `--emit-dax` runs the PBI side and writes the parity plan's `expected` rows; `--finalize` injects Sigma actuals and runs the shared `verify-parity.rb`. The PBI analog of Tableau's view-CSV parity adapter. |
+| `enhance-scan.rb` | E scan (opt-in) | **Phase E part 1 — SCAN (read-only).** Source signals + built spec + live element exports → `enhancements.json` candidates `{id, category, evidence, proposed, risk, verdict_hint, patch}` + descoped propose-in-UI notes. Shared Phase-E engine, vendored byte-identical across plugins (md5 discipline). |
+| `enhance-apply.rb` | E apply (opt-in) | **Phase E part 2 — APPLY (accept-only, clone-first).** Clones the parity workbook as `"<name> — Enhanced"` (1:1 artifact never written), applies ONLY `--accept`-ed candidates one at a time, each gated by an untouched-element clone-vs-original spot-check (auto-revert on shift). Writes `enhance-report.json`. Byte-identical twin of the tableau copy. |
 
 The agent authors one PBI-specific artifact: `master-map.json` (maps each PBI Entity → a Data-page master element and each `Entity.Field` queryRef → `{ref, agg}`), which encodes the DM element ids + DAX-measure→Sigma-aggregator decisions. Everything else is mechanical.
 

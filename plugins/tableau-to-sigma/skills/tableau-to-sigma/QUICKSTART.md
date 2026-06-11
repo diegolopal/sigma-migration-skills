@@ -328,6 +328,16 @@ ruby scripts/assert-phase6-ran.rb --tableau /tmp/<name>
 
 Exit 0 means the conversion may declare GREEN. Any non-zero exit means downgrade to YELLOW or RED with a documented reason.
 
+**Phase E (opt-in) — Enhance.** Once everything is GREEN you can opt into the
+enhancement pass: add `--enhance` to the `migrate-tableau.rb --finalize` command to
+scan for trial-validated upgrades (period-comparison KPIs, selection controls, grain
+and drill switchers, null-label/title/freshness polish). The scan stops with exit
+`14` and a proposal list; nothing is applied until you re-run with
+`--enhance-accept all-low-risk` (or an explicit id list). Accepted items land on a
+**clone** named "<name> — Enhanced" — the parity-verified workbook is never touched —
+and every applied item is gated by an untouched-element spot-check that auto-reverts
+on any shift. See the SKILL.md "Phase E (opt-in) — Enhance" section.
+
 ![Footer](assets/sigma_footer.png)
 <!-- END OF SECTION -->
 
