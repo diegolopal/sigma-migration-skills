@@ -297,7 +297,18 @@ candidates = dm_signatures.map do |dm|
     'extra_columns_sample' => extra_cols_norm.first(5).map(&caption_of),
     'raw_element_count' => dm[:raw_element_count]
   }
-end.sort_by { |c| -c['score'] }
+end
+
+# Tie-break: identical scores are common (duplicate / derived DMs sourcing the
+# same tables and column set). Prefer a DM whose name matches the source
+# workbook, then the one with the fewest extra columns — otherwise ordering is
+# arbitrary and the recommendation can land on a sprawling lookalike instead
+# of the purpose-built twin.
+sig_name_norm = normalize_col(sig['tableau_workbook'] || sig['workbook'] || '')
+candidates = candidates.sort_by do |c|
+  name_mismatch = (!sig_name_norm.empty? && normalize_col(c['dm_name']) == sig_name_norm) ? 0 : 1
+  [-c['score'], name_mismatch, c['extra_columns'] || 0]
+end
 
 best = candidates.first
 second = candidates[1]
@@ -309,7 +320,11 @@ second = candidates[1]
 auto_pick_threshold  = opts[:auto_pick_threshold]  || 0.55
 auto_pick_tie_window = opts[:auto_pick_tie_window] || 0.05
 tie_with_second      = best && second && (best['score'] - second['score']) < auto_pick_tie_window
-auto_picked          = opts[:auto_pick] && best && best['score'] >= auto_pick_threshold && !tie_with_second
+# A same-score tie is safe to pick through when the deterministic tie-break
+# landed on an exact workbook-name match — the hazard the tie window guards
+# against is arbitrary ordering among lookalikes, which no longer applies.
+best_name_matches    = best && !sig_name_norm.empty? && normalize_col(best['dm_name']) == sig_name_norm
+auto_picked          = opts[:auto_pick] && best && best['score'] >= auto_pick_threshold && (!tie_with_second || best_name_matches)
 
 # Standard recommend path keeps the old semantics.
 recommended_via_std  = best && best['score'] >= opts[:min_score]
