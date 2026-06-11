@@ -36,12 +36,17 @@ const connectionId = process.env.SIGMA_CONNECTION_ID || 'PLACEHOLDER_CONNECTION_
 const { convertLookMLToSigma } = await import(pathToFileURL(converterSrc).href);
 
 const files = [];
-const modelFile = fs.readdirSync(dir).find(f => f.endsWith('.model.lkml'));
-if (modelFile) {
-  files.push({ name: modelFile, content: fs.readFileSync(path.join(dir, modelFile), 'utf8') });
-} else {
+// ALL model files — multi-model projects are common (the converter merges
+// explores across model files; taking only the first hides every explore
+// defined in the others).
+const modelFiles = fs.readdirSync(dir).filter(f => f.endsWith('.model.lkml')).sort();
+for (const f of modelFiles) {
+  files.push({ name: f, content: fs.readFileSync(path.join(dir, f), 'utf8') });
+}
+if (!modelFiles.length) {
   console.error(`No *.model.lkml in ${dir} — converting in VIEW-ONLY mode (standalone elements, no joins)`);
 }
+const modelFile = modelFiles.length > 0;
 // view files: views/ subdir if present, else the dir itself
 const viewsDir = fs.existsSync(path.join(dir, 'views')) ? path.join(dir, 'views') : dir;
 for (const f of fs.readdirSync(viewsDir)) {

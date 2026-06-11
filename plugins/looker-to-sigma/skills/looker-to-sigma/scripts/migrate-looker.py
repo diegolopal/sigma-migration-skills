@@ -201,6 +201,10 @@ def numify(v):
     try:
         return float(s)
     except ValueError:
+        # date-at-midnight (Sigma CSV) vs plain date (Looker JSON): same instant
+        m = re.match(r"^(\d{4}-\d{2}-\d{2})[T ]00:00:00(?:\.0+)?$", s)
+        if m:
+            return m.group(1)
         return v
 
 
@@ -309,8 +313,12 @@ def expected_offline(el, ev, rows):
     return [[d, ev.measure_value(ms[0], rs)] for d, rs in groups.items()]
 
 
-def expected_live(el):
-    """Ground truth from Looker itself: run the tile's inline query."""
+def expected_live(el, measures=None, want_label=None):
+    """Ground truth from Looker itself: run the tile's inline query.
+
+    want_label: for measure-only grids split into KPI tiles named
+    "<tile> · <Measure Label>", select the field whose display matches the
+    label (and return a single [[None, value]] row)."""
     import looker_api
     fields = el.get("fields") or []
     body = {"model": el.get("model"), "view": el.get("explore"), "fields": fields,
@@ -318,13 +326,27 @@ def expected_live(el):
     code, res = looker_api.call("POST", "/queries/run/json", body)
     if code != 200 or not isinstance(res, list):
         raise RuntimeError(f"Looker inline query -> {code}: {str(res)[:200]}")
-    # last field is the measure by tile convention; dim = first other field present
     keys = list(res[0].keys()) if res else fields
-    val_key = next((f for f in reversed(fields) if f in keys), keys[-1])
+    val_key = None
+    if want_label:
+        val_key = next((f for f in fields
+                        if disp(leaf(f)) == want_label and f in keys), None)
+        if val_key is None:
+            raise RuntimeError(f"no field matching KPI label {want_label!r}")
+        return [[None, numify(res[0][val_key])]] if res else None
+    # The Sigma chart's value axis is the tile's FIRST measure (build_workbook
+    # ms[0] — same convention as expected_offline). Compare the SAME measure:
+    # first field that is a LookML measure; fallback = last field.
+    if measures:
+        val_key = next((f for f in fields if f in measures and f in keys), None)
+    if val_key is None:
+        val_key = next((f for f in reversed(fields) if f in keys), keys[-1])
     dim_key = next((f for f in fields if f != val_key and f in keys), None)
     if dim_key is None:
         return [[None, numify(res[0][val_key])]] if res else None
-    return [[r[dim_key], numify(r[val_key])] for r in res]
+    # Sigma CSV export renders NULL dims as "" — normalize Looker's null the
+    # same way so a null-dim row doesn't strict-DIVERGE on representation.
+    return [["" if r[dim_key] is None else r[dim_key], numify(r[val_key])] for r in res]
 
 
 def main():
@@ -376,7 +398,7 @@ def main():
     if not os.path.isdir(views_dir):
         views_dir = lookml_dir
     view_files = sorted(glob.glob(os.path.join(views_dir, "*.view.lkml")))
-    measures, _dims, view_pk, _formats = build_field_index(view_files)
+    measures, _dims, view_pk, _formats, _yesno = build_field_index(view_files)
     print(f"   '{dash['title']}': {len(dash['elements'])} tile(s), {len(dash['filters'])} filter(s), "
           f"explore '{explore}' · {len(view_files)} view file(s), {len(measures)} measure(s) · workdir {wd}")
 
@@ -437,6 +459,44 @@ def main():
                  explore, dm_spec_path],
                 env={"LOOKML_DIR": lookml_dir, "CONVERTER_SRC": src,
                      "SIGMA_CONNECTION_ID": conn}, cwd=repo)
+            # ── secondary explores ────────────────────────────────────────────
+            # A dashboard's tiles can hit several explores; the converter takes
+            # ONE exploreName, so views reachable only through a secondary
+            # explore would otherwise be missing from the DM (their workbook
+            # refs then 400 with "Dependency not found"). Convert each extra
+            # explore and merge its NEW elements (normalized-name dedupe) into
+            # the primary spec.
+            def _mlnorm(s):
+                return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+            extra = [e for e in dict.fromkeys(explores) if e and e != explore]
+            if extra:
+                spec0 = json.load(open(dm_spec_path))
+                have = {_mlnorm(el.get("name")
+                                or ((el.get("source") or {}).get("path") or [""])[-1])
+                        for pg in spec0.get("pages", []) for el in pg.get("elements", [])}
+                merged = 0
+                for ex2 in extra:
+                    if _mlnorm(ex2) in have:
+                        continue
+                    sub_path = os.path.join(wd, f"dm-spec-{_mlnorm(ex2)}.json")
+                    run(["node", "--import", "tsx/esm",
+                         os.path.join(HERE, "convert_dm.mjs"), ex2, sub_path],
+                        env={"LOOKML_DIR": lookml_dir, "CONVERTER_SRC": src,
+                             "SIGMA_CONNECTION_ID": conn}, cwd=repo)
+                    sub = json.load(open(sub_path))
+                    for pg in sub.get("pages", []):
+                        for el in pg.get("elements", []):
+                            key = _mlnorm(el.get("name")
+                                          or ((el.get("source") or {}).get("path") or [""])[-1])
+                            if key in have:
+                                continue
+                            have.add(key)
+                            spec0["pages"][0]["elements"].append(el)
+                            merged += 1
+                if merged:
+                    json.dump(spec0, open(dm_spec_path, "w"), indent=2)
+                    print(f"   merged {merged} element(s) from {len(extra)} secondary "
+                          f"explore(s): {', '.join(extra)}")
         elif build:
             shim = os.path.join(wd, "_convert_lookml.mjs")
             files = [{"name": os.path.basename(f), "content": open(f).read()}
@@ -545,16 +605,29 @@ console.error('stats:', JSON.stringify(res.stats));
     els = [e for pg in dmspec.get("pages", []) for e in (pg.get("elements") or [])]
     denorm = next((e for e in els if (e.get("name") or "").endswith(" View")), None) \
         or max(els, key=lambda e: len(e.get("columns") or []))
-    print(f"   DM {dm} · denorm '{denorm['name']}' ({denorm['id']}, "
+    # Resolvable display name (mirrors sigma-ids.ts elementName fallback):
+    # explicit `name`, else warehouse path tail, else "Custom SQL" for sql
+    # elements — never KeyError on a nameless element.
+    src = denorm.get("source") or {}
+    denorm_name = denorm.get("name") \
+        or ((src.get("path") or [None])[-1]) \
+        or ("Custom SQL" if src.get("kind") == "sql" else denorm["id"])
+    print(f"   DM {dm} · denorm '{denorm_name}' ({denorm['id']}, "
           f"{len(denorm.get('columns') or [])} cols) · {len(els)} element(s)")
 
     # ── Phase 4b — Build + POST the workbook (layout XML inline) ─────────────
     hdr(4, TOTAL, "Build workbook (4b)")
     wb_spec_path = os.path.join(wd, "wb-spec.json")
+    # Full element catalog (id+name) → one master per explore for multi-explore
+    # dashboards (each explore matched to its DM element by normalized name).
+    dm_els_path = os.path.join(wd, "dm-elements.json")
+    json.dump([{"id": e["id"], "name": e.get("name")
+                or ((e.get("source") or {}).get("path") or [None])[-1]}
+               for e in els], open(dm_els_path, "w"))
     run(["python3", os.path.join(HERE, "build_workbook.py"), contract_path,
          "--views", views_dir, "--dm-id", dm, "--element-id", denorm["id"],
-         "--dm-element-name", denorm["name"], "--folder-id", folder,
-         "--out", wb_spec_path])
+         "--dm-element-name", denorm_name, "--dm-elements", dm_els_path,
+         "--folder-id", folder, "--out", wb_spec_path])
     wspec = json.load(open(wb_spec_path))
     wspec["name"] = f"{prefix}{dash['title']} (from Looker)"
     resp = sigma("POST", "/v2/workbooks/spec", wspec)       # responds in YAML
@@ -617,13 +690,18 @@ console.error('stats:', JSON.stringify(res.stats));
             vi = cidx.get(want[1], 1 if len(headers) > 1 else 0)
             actuals[cname] = [[row[di], numify(row[vi])] for row in rows]
         el = by_name.get(cname)
+        want_label = None
+        if not el and " · " in cname:
+            # measure-only grid split into KPI tiles "<tile> · <Measure Label>"
+            base_name, want_label = cname.rsplit(" · ", 1)
+            el = by_name.get(base_name)
         if not el:
             print(f"   WARN: no source tile named {cname!r} in the contract — chart will DIVERGE")
             continue
         exp = None
         if not offline:
             try:
-                exp = expected_live(el)
+                exp = expected_live(el, measures, want_label)
             except Exception as ex:
                 print(f"   WARN: Looker inline query failed for {cname!r} ({ex}); "
                       "falling back to warehouse re-aggregation")
