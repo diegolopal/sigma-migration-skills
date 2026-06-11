@@ -21,8 +21,9 @@
 #     - a reminder to fetch EXPECTED rows from Looker (inline query) or the
 #       warehouse with the same dimension + aggregation
 #
-#   The agent (or scripts/migrate-looker.py, which scripts this whole flow)
-#   then writes two JSON files keyed by chart name, each
+#   The agent (or scripts/migrate-looker.py, which scripts this whole flow —
+#   fetching BOTH sides per chart in a bounded 4-wide thread pool, see
+#   LOOKER_PARITY_WORKERS) then writes two JSON files keyed by chart name, each
 #   { "<chart name>": [[dim, val], ...], ... } :
 #     <workdir>/parity-expected.json   (Looker / warehouse ground truth)
 #     <workdir>/parity-actuals.json    (Sigma element rows)

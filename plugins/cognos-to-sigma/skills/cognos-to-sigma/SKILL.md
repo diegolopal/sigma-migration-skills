@@ -85,13 +85,35 @@ checkpoint, never silently ported or dropped).
 
 ## Phase 0 — Discover (CA REST)
 
+**Work in batch windows.** CAoC sessions die in MINUTES — never walk an estate one
+object per agent turn (each re-auth costs the human a browser round-trip). The moment
+you have a hot session, pull EVERYTHING you might need in one burst with
+`cognos-batch-fetch.sh`, then work offline from its disk cache:
+
 ```bash
 export COGNOS_BASE="https://<host>/bi/v1"
 export COGNOS_COOKIE="<cookie string>"   export COGNOS_XSRF="<x-xsrf-token>"
-scripts/cognos-discover.sh list   <folderId>          # list a folder's items
-scripts/cognos-discover.sh module <moduleId> > m.json # Data Module JSON
-scripts/cognos-discover.sh report <reportId> > r.xml  # report-spec XML
+
+# THE BATCH WINDOW — walk the tree + fetch ALL module/report specs, 4-wide
+# (hard cap — Akamai WAF; modest bursts only), into a resumable disk cache
+# (default ~/.cognos/batch-cache, override with --out / $COGNOS_CACHE_DIR):
+scripts/cognos-batch-fetch.sh batch [--root <folderId>]
+# Session died mid-run? It exits 4 with "SESSION DIED — N of M specs fetched";
+# re-auth (re-copy a HOT cookie) and re-run the SAME command — it RESUMES from
+# the manifest + cache (already-fetched specs, keyed id+modificationTime, are
+# never re-fetched). Exit 0 = the whole estate is cached.
+
+# Single-artifact runs go through the SAME cache — unchanged modificationTime
+# = cache HIT, ONE metadata request, no spec re-fetch:
+scripts/cognos-batch-fetch.sh one module <moduleId> > m.json
+scripts/cognos-batch-fetch.sh one report <reportId> > r.xml
 ```
+
+`cognos-discover.sh` (`list`/`module`/`report`) remains for ad-hoc pokes at a live
+session, but prefer the batch + cache path for anything beyond a couple of objects.
+And keep pushing for the **durable path**: a CA **API key / service credential**
+(where the tenant allows it) removes the session-death problem entirely — batch
+windows are the workaround for session-replay auth, not a substitute for asking.
 
 - Samples folder, modules, and reports are discovered by walking `GET /objects/{id}/items`.
 - **Data Module spec**: `GET /bi/v1/metadata/modules/{id}` (NOT `/modules/{id}`, which is empty).

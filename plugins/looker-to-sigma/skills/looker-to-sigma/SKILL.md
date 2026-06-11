@@ -80,7 +80,10 @@ python3 scripts/migrate-looker.py --lookml-dir /path/to/lookml \
   SOURCE-LookML-derived re-aggregation of the master's warehouse rows (offline —
   measure semantics from the `.view.lkml` `type:`, independent of the builder's
   formulas). Then `phase6-parity-looker.rb --finalize` + `assert-phase6-ran.rb`
-  run automatically.
+  run automatically. Both per-chart fetch sides run in a **bounded 4-wide thread
+  pool** (measured 24.3s → 5.8s on the 5-chart fixture); set
+  `LOOKER_PARITY_WORKERS=1` to serialize on a loaded warehouse (max is clamped
+  to 4 — warehouse-friendly bursts only).
 - Exit codes: `0` GREEN · `3` MCP convert request emitted · `10` RLS decision
   needed · `2` built but a gate FAILED. `--dry-run` = no Sigma POSTs.
 
@@ -95,7 +98,7 @@ python3 scripts/migrate-looker.py --lookml-dir /path/to/lookml \
 | `scripts/verify-parity.rb` | **Phase 4:** the comparator (strict set-compare with date-bucket canonicalization; `--extract-mode` tolerance variant). Vendored from the shared converter copy. |
 | `scripts/assert-phase6-ran.rb` | **HARD GATE** (vendored **byte-identical** from quicksight-to-sigma — keep the md5 in lockstep): parity ran + PASS, no orphan workbooks, no `type=error` columns, layout applied. `ruby scripts/assert-phase6-ran.rb --workdir <dir> --workbook-id <wb>` must **exit 0** before declaring GREEN. |
 | `scripts/get-token.sh` | Exchange `SIGMA_CLIENT_ID`/`SIGMA_CLIENT_SECRET` → `SIGMA_API_TOKEN` (~1h TTL). `eval "$(scripts/get-token.sh)"` |
-| `scripts/looker_api.py` | Minimal Looker REST API 4.0 client (no SDK). Reads `~/.looker/looker.ini`, logs in via `client_credentials`, exposes `L.call(method, path, body)`. CLI: `python3 looker_api.py whoami` / `get <path>` / `raw GET /lookml_models`. |
+| `scripts/looker_api.py` | Minimal Looker REST API 4.0 client (no SDK). Reads `~/.looker/looker.ini`, logs in via `client_credentials`, exposes `L.call(method, path, body)`. **Caches the bearer per process** (thread-safe; one login instead of one per call — ~150ms/call saved, measured 2.4x on a 10-call run) and retries once with a fresh login on 401. CLI: `python3 looker_api.py whoami` / `get <path>` / `raw GET /lookml_models`. |
 | `scripts/fetch_looker_dashboard.py` | **Phase 1 (live):** `GET /dashboards/{id}` → the normalized contract (`refs/dashboard-contract.md`). Works for UDD AND LookML dashboards. Self-contained (reads `~/.looker/looker.ini`). `tileType` is read from `query.vis_config.type` (NOT `element.type`, which is always `"vis"`); `listen` from `result_maker.filterables`; layout from the **active** layout's components. |
 | `scripts/parse_lookml_dashboard.py` | **Phase 1 (offline):** parse a `.dashboard.lookml` (YAML) → the SAME contract. Dev/test only; cannot see UDD dashboards. Requires PyYAML. |
 | `scripts/detect_rls.py` | **Phase 1 (RLS scan):** dependency-free regex scan of a LookML dir/file (and/or model JSON) for row-level-security constructs (`access_filter`, `sql_always_where`, `access_grant`, `user_attribute`). Prints a structured summary + recommended Sigma mapping per finding (or `--json`). **Prints nothing / exits 0 when there's no RLS** (zero-overhead). `python3 detect_rls.py <lookml_dir> [--json]` |
@@ -205,6 +208,11 @@ For a specific explore's field graph:
 ```bash
 python3 scripts/fetch_looker_dashboard.py <dashboard_id> /tmp/<name>/<dash>.contract.json
 ```
+
+> **Discovery speed: already sub-second.** A dashboard pull is one login (cached
+> per process) + one `GET /dashboards/{id}` — there is no estate walk to optimize.
+> For many-call sessions (parity, inventory) `looker_api.py`'s per-process token
+> cache removes the per-call login round-trip (~150ms each).
 
 This hits `GET /dashboards/{id}` and normalizes into `refs/dashboard-contract.md`. It works
 for UDD **and** LookML dashboards (the API returns both identically). Key extraction details
@@ -707,4 +715,4 @@ declaring Phase 4 green.
 | Looker LookML deploy fails "Invalid lookml syntax" | Compact `{ a: yes; b: yes; }` params | Use multi-line blocks; only `;;` terminates a `sql` |
 | LookML model 404s on query right after deploy | Model not registered | `POST /lookml_models {name, project_name, allowed_db_connection_names}` |
 | `PUT /projects/{id}` 404 when setting git remote | Wrong verb | Use `PATCH /projects/{id}` |
-| Looker dev-workspace mutation has no effect | Each `looker_api.py` call logs in fresh (new session) | For multi-step dev flows use ONE persistent session (`PATCH /session {workspace_id: dev}` then reuse the bearer) |
+| Looker dev-workspace mutation has no effect | The calls ran in separate processes/sessions (the bearer cache is per-process; a 401 re-login also starts a NEW session that resets the workspace to production) | Do the whole dev flow in ONE process — `looker_api.py`'s cached token keeps one session, so `PATCH /session {workspace_id: dev}` sticks for subsequent `call()`s; re-PATCH after any forced re-login |

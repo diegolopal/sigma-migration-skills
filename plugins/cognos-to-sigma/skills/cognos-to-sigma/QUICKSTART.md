@@ -106,9 +106,13 @@ Duration: 10
 In Claude Code, point the `cognos-to-sigma` skill at a Data Module + report. The skill
 runs these phases (`scripts/*`):
 
-1. **Discover** (`cognos-discover.sh`) — list a folder, then pull the **Data Module JSON**
-   (`GET /bi/v1/metadata/modules/{id}`) and **report-spec XML**
-   (`GET /bi/v1/objects/{id}?fields=specification`).
+1. **Discover** (`cognos-batch-fetch.sh` / `cognos-discover.sh`) — pull the **Data Module
+   JSON** (`GET /bi/v1/metadata/modules/{id}`) and **report-spec XML**
+   (`GET /bi/v1/objects/{id}?fields=specification`). For anything beyond a couple of
+   objects use `cognos-batch-fetch.sh batch`: it fetches the whole estate in one
+   hot-session window (4-wide, resumable disk cache keyed id+modificationTime) — a
+   dead session resumes instead of restarting, and single-artifact runs (`one`) are
+   served from the same cache.
 2. **Convert the Data Module** (`cli.ts <module.json>`) — query subjects → warehouse-table
    elements, items → columns/metrics, calculations → Sigma formulas (`total..for`→`SumOver`,
    `if/then/else`→`If`, date/string fns), relationships → DM relationships.
@@ -157,6 +161,8 @@ Duration: 3
   (`regionType` defaults to `country`, flagged to confirm).
 - **Workbook POST responses are YAML**, not JSON — parse the `workbookId` accordingly.
 - **Sessions:** CAoC `HTTP 441` = re-login + re-copy the full cookie; prefer a CA API key.
+  Batch everything you need into one hot-session window (`cognos-batch-fetch.sh batch`)
+  — it resumes from its disk cache after a 441 instead of restarting.
 
 ## The techniques worth carrying forward
 Duration: 1

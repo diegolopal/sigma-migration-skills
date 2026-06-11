@@ -73,6 +73,7 @@ but a parity/hard gate FAILED; other = error.
 """
 import argparse, csv, glob, io, json, os, re, statistics, subprocess, sys, time
 import urllib.request, urllib.error
+from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_workbook import build_field_index, disp, leaf
 
@@ -679,18 +680,25 @@ console.error('stats:', JSON.stringify(res.stats));
     by_name = {e.get("name"): e for e in dash["elements"]}
     ev = SourceEval(measures, view_pk, explore, mh)
     expected, actuals = {}, {}
-    for c in plan["charts"]:
+
+    # Both fetch sides are per-chart and independent — fan them out N-wide
+    # (default 4; LOOKER_PARITY_WORKERS overrides, e.g. =1 on a loaded
+    # warehouse). The Sigma CSV exports and the Looker inline queries are each
+    # network-bound; 4 concurrent queries is a modest, warehouse-friendly burst.
+    # looker_api's token cache is thread-safe (one shared login).
+    def parity_fetch(c):
         cname = c["chart"]
+        msgs = []
         headers, rows = parse_csv(export_csv(wb, c["sigma_element_id"]))
         cidx = {h: i for i, h in enumerate(headers)}
         want = c["sigma_columns"]
         if len(want) == 1:                      # KPI
             vi = cidx.get(want[0], 0)
-            actuals[cname] = [[None, numify(rows[0][vi])]] if rows else []
+            act = [[None, numify(rows[0][vi])]] if rows else []
         else:
             di = cidx.get(want[0], 0)
             vi = cidx.get(want[1], 1 if len(headers) > 1 else 0)
-            actuals[cname] = [[row[di], numify(row[vi])] for row in rows]
+            act = [[row[di], numify(row[vi])] for row in rows]
         el = by_name.get(cname)
         want_label = None
         if not el and " · " in cname:
@@ -698,19 +706,32 @@ console.error('stats:', JSON.stringify(res.stats));
             base_name, want_label = cname.rsplit(" · ", 1)
             el = by_name.get(base_name)
         if not el:
-            print(f"   WARN: no source tile named {cname!r} in the contract — chart will DIVERGE")
-            continue
+            msgs.append(f"   WARN: no source tile named {cname!r} in the contract — chart will DIVERGE")
+            return cname, act, None, msgs
         exp = None
         if not offline:
             try:
                 exp = expected_live(el, measures, want_label)
             except Exception as ex:
-                print(f"   WARN: Looker inline query failed for {cname!r} ({ex}); "
-                      "falling back to warehouse re-aggregation")
+                msgs.append(f"   WARN: Looker inline query failed for {cname!r} ({ex}); "
+                            "falling back to warehouse re-aggregation")
         if exp is None:
             exp = expected_offline(el, ev, mr)
+        return cname, act, exp, msgs
+
+    workers = max(1, min(4, int(os.environ.get("LOOKER_PARITY_WORKERS", "4") or 4),
+                         len(plan["charts"])))
+    t_par = time.time()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(parity_fetch, plan["charts"]))
+    for cname, act, exp, msgs in results:
+        for m in msgs:
+            print(m)
+        actuals[cname] = act
         if exp is not None:
             expected[cname] = exp
+    print(f"   fetched expected+actual for {len(plan['charts'])} chart(s) "
+          f"{workers}-wide in {time.time() - t_par:.1f}s")
     json.dump(expected, open(os.path.join(wd, "parity-expected.json"), "w"), indent=2)
     json.dump(actuals, open(os.path.join(wd, "parity-actuals.json"), "w"), indent=2)
     rc, _ = run(["ruby", os.path.join(HERE, "phase6-parity-looker.rb"),
