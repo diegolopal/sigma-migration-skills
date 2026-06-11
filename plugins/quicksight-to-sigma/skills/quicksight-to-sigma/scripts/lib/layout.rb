@@ -85,11 +85,21 @@ module SigmaLayout
   # (directly, or via put-layout.rb's <layout>.elements.json sidecar).
   # `title` of nil/empty skips the header band (e.g. when the caller bands an
   # existing title text element explicitly).
-  def banded_page(page_id, items, title: nil, id_prefix: "band-#{page_id}")
+  # `header_el`: an EXISTING text element id to wrap as the header band's text
+  # (e.g. the source dashboard's own title textbox — phase-e layout-quality
+  # fix: a short title text left inside band 1 reads as a dead zone). It must
+  # NOT also appear in `items`; the caller should recolor its body for the
+  # dark band (see header_text_el's white span).
+  def banded_page(page_id, items, title: nil, id_prefix: "band-#{page_id}", header_el: nil)
     extra = []
     children = []
     offset = 0
-    if title && !title.to_s.empty?
+    if header_el
+      hdr_id = "#{id_prefix}-hdr"
+      extra << container_el(hdr_id, HEADER_STYLE.dup)
+      children << header_band_xml(hdr_id, header_el)
+      offset = HEADER_ROWS
+    elsif title && !title.to_s.empty?
       hdr_id = "#{id_prefix}-hdr"
       txt_id = "#{id_prefix}-hdrtext"
       extra << container_el(hdr_id, HEADER_STYLE.dup)

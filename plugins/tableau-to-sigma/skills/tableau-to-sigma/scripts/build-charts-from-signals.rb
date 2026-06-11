@@ -1393,7 +1393,10 @@ if title_text
   extras << {
     'id'   => 'title-text',
     'kind' => 'text',
-    'body' => "## #{title_text}"
+    # White span: build-dashboard-layout.rb wraps this element in the DARK
+    # header band (HEADER_STYLE) — a plain body renders dark-on-dark
+    # (phase-e layout-quality screenshot-checklist catch).
+    'body' => %(# <span style="color: #FFFFFF">#{title_text}</span>)
   }
 end
 

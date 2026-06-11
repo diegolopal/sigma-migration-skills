@@ -226,26 +226,20 @@ def ensure_banded!(spec)
     items = scan_top(m[2]).select { |t| t[:tag] == 'LayoutElement' }
                           .map { |t| [t[:eid], t[:c0], t[:c1], t[:r0], t[:r1]] }
     next if items.empty?
-    # an existing full-width-ish top text element becomes the header text;
-    # otherwise SigmaLayout adds a header from the page name.
+    # an existing short top text element (the dashboard's own title) becomes
+    # the header band's text (recolored white for the dark band); otherwise
+    # SigmaLayout adds a header from the page name.
     top_row = items.map { |i| i[3] }.min
-    own_hdr = items.find { |i| i[3] == top_row && kind_of[i[0]] == 'text' && (i[2] - i[1]) >= 12 }
-    extra = []
-    children = []
-    offset = 0
-    hdr_id = "band-#{pg['id']}-hdr"
-    if own_hdr
+    own_hdr = items.find { |i| i[3] == top_row && kind_of[i[0]] == 'text' && (i[4] - i[3]) <= 5 }
+    if own_hdr && items.length > 1
       items -= [own_hdr]
-      extra << SigmaLayout.container_el(hdr_id, SigmaLayout::HEADER_STYLE.dup)
-      children << SigmaLayout.header_band_xml(hdr_id, own_hdr[0])
-      offset = SigmaLayout::HEADER_ROWS
-      offset += (1 - items.map { |i| i[3] }.min) unless items.empty?
-      SigmaLayout.cluster_bands(items).each_with_index do |band, i|
-        cid = "band-#{pg['id']}-#{i + 1}"
-        extra << SigmaLayout.container_el(cid)
-        children << SigmaLayout.band_container_xml(cid, band, row_offset: offset)
+      hdr_el = (pg['elements'] || []).find { |e| e['id'] == own_hdr[0] }
+      if hdr_el && hdr_el['body'].is_a?(String) && !hdr_el['body'].include?('color:')
+        plain = hdr_el['body'].gsub(/^#+\s*/, '').strip
+        hdr_el['body'] = %(# <span style="color: #FFFFFF">#{plain}</span>)
       end
-      xml = SigmaLayout.page_xml(pg['id'], *children)
+      xml, extra = SigmaLayout.banded_page(pg['id'], items, header_el: own_hdr[0],
+                                           id_prefix: "band-#{pg['id']}")
     else
       xml, extra = SigmaLayout.banded_page(pg['id'], items, title: pg['name'],
                                            id_prefix: "band-#{pg['id']}")

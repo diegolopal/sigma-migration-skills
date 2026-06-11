@@ -873,6 +873,13 @@ if mechanical
     id = "m-#{nm.downcase.gsub(/[^a-z0-9]+/, '-').gsub(/^-|-$/, '')}"
     master_columns.reject! { |c| c['name'].casecmp?(nm) }
     master_columns << { 'id' => id, 'name' => nm, 'formula' => fx }
+    # Register the override in the header->column regex map too (same pattern
+    # shape as derive_master's entries) so chart dim headers AND shared-filter
+    # captions resolve to it — without this, an --master-col like 'Order Date'
+    # still left the shared Order-Date filter unmapped (no auto-control, charts
+    # silently unfiltered vs the source view).
+    mmap["(?i)^(?:(?:sum|avg|average|min|max|median|distinct count|count) of )?#{Regexp.escape(nm)}$"] =
+      { 'id' => id, 'name' => nm }
     line "master-col override: '#{nm}' = #{fx[0, 80]}"
   end
   mmap_path = File.join(WORK, 'master-map.json')
