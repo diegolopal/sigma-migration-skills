@@ -152,10 +152,16 @@ def main():
     creds_suspect = any(f["credsSuspect"] for f in fail_meta)
 
     # ---- 2. cheap executeQueries snapshot (rows + max dates per table) ------
+    # Fast discovery: the per-table probes are independent — run them on a
+    # small pool (4-wide) instead of serially; a 6-table model snapshots in
+    # one round-trip's wall time instead of six.
     snapshot = {}
     snapshot_err = None
     if a.tmsl and os.path.exists(a.tmsl):
-        for table, dates in tmsl_tables(a.tmsl):
+        from concurrent.futures import ThreadPoolExecutor
+
+        def probe(item):
+            table, dates = item
             cols = [f'"rows", COUNTROWS(\'{table}\')']
             cols += [f'"max:{d}", MAX(\'{table}\'[{d}])' for d in dates]
             dax = "EVALUATE ROW(" + ", ".join(cols) + ")"
@@ -164,15 +170,22 @@ def main():
                     "queries": [{"query": dax}],
                     "serializerSettings": {"includeNulls": True}})
                 if q.status_code != 200:
-                    snapshot_err = f"{table}: executeQueries {q.status_code} {q.text[:160]}"
-                    continue
+                    return table, None, f"{table}: executeQueries {q.status_code} {q.text[:160]}"
                 row = q.json()["results"][0]["tables"][0]["rows"][0]
                 ent = {"rows": row.get("[rows]"), "maxDates": {}}
                 for d in dates:
                     ent["maxDates"][d] = row.get(f"[max:{d}]")
-                snapshot[table] = ent
+                return table, ent, None
             except Exception as e:  # network/parse — snapshot is best-effort
-                snapshot_err = f"{table}: {e}"
+                return table, None, f"{table}: {e}"
+
+        items = tmsl_tables(a.tmsl)
+        with ThreadPoolExecutor(max_workers=min(4, max(1, len(items)))) as ex:
+            for table, ent, err in ex.map(probe, items):
+                if ent is not None:
+                    snapshot[table] = ent
+                if err:
+                    snapshot_err = err
 
     fresh = {
         "workspace": a.workspace, "dataset": a.dataset,

@@ -132,7 +132,35 @@ WORK = opts[:out] || File.expand_path("~/powerbi-migration/#{name_slug}")
 FileUtils.mkdir_p(WORK)
 WB_NAME = opts[:name] || "#{name_slug.gsub(/[_]+/, ' ').strip} (from Power BI)"
 
+# ---- phase timings (always written to <WORK>/timings.json) ------------------
+# Fast-discovery evidence trail: every terminal exit (success, decisions gate,
+# parity fail, workbook fallback) prints a PHASE TIMINGS line and persists the
+# per-phase wall clock, so old-vs-new discovery comparisons are always possible.
+$phase_times = []
+$phase_open = nil
+def phase_mark(name)
+  now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  $phase_times << [$phase_open[0], (now - $phase_open[1]).round(1)] if $phase_open
+  $phase_open = name ? [name, now] : nil
+end
+at_exit do
+  phase_mark(nil)
+  unless $phase_times.empty?
+    total = $phase_times.sum { |_, s| s }.round(1)
+    begin
+      File.write(File.join(WORK, 'timings.json'), JSON.pretty_generate(
+        { 'phases' => $phase_times.map { |n, s| { 'phase' => n, 'seconds' => s } },
+          'totalSeconds' => total }))
+    rescue StandardError
+      nil # timings are evidence, never a failure
+    end
+    puts
+    puts 'PHASE TIMINGS  ' + $phase_times.map { |n, s| "#{n}=#{s}s" }.join('  ') + "  total=#{total}s"
+  end
+end
+
 def hdr(n, total, title)
+  phase_mark("#{n}-#{title.downcase.gsub(/[^a-z0-9]+/, '-')}")
   puts
   puts "── Phase #{n}/#{total} · #{title} ──"
 end
@@ -241,29 +269,30 @@ puts "   model '#{name_slug}': #{tables.size} table(s), #{tables.sum { |t| (t['c
      "#{all_measures.size} measure(s), mode=#{mode_summ}"
 puts "   report: #{signals['pages'].size} page(s), #{all_visuals.size} visual(s) (#{vsumm})"
 
-# --- Phase 1.5 — SOURCE-FRESHNESS PREFLIGHT (bead fmte) ---------------------
+# --- Phase 1.5 — SOURCE-FRESHNESS PREFLIGHT (bead fmte) — NON-BLOCKING ------
 # An import-mode PBI model is a frozen snapshot; Sigma reads the LIVE warehouse.
-# Pull the dataset's refresh history (incl. FAILED refreshes — expired warehouse
-# creds are the classic cause) + a cheap executeQueries row-count/max-date
-# snapshot NOW, so Phase 6 can lead with "source is N days stale; Sigma will
-# show more data: X vs Y" instead of explaining drift after the numbers looked
-# wrong. Best-effort: a preflight failure warns and continues.
+# The preflight (refresh history + per-table executeQueries snapshot) is only
+# CONSUMED at Phase 6 parity, so it runs as a BACKGROUND LANE concurrent with
+# Phase 2 Convert / Phase 3-5 build instead of blocking the pipeline for its
+# 3-8s of Power BI round-trips. Joined (with the log replayed) at Phase 6.
+# Best-effort: a preflight failure warns and continues. If the run stops at a
+# gate (decisions exit 10 / converter gate), the detached probe still finishes
+# and writes freshness.json for the resume run, which reuses it.
 fresh_path = File.join(WORK, 'freshness.json')
-if opts[:ws] && opts[:dataset] && !opts[:skip_fresh] && modes.include?('import')
-  puts
-  f_out, f_st = Open3.capture2e(PY, File.join(HERE, 'pbi-freshness.py'),
-                                '--workspace', opts[:ws], '--dataset', opts[:dataset],
-                                '--tmsl', opts[:tmsl], '--out', fresh_path)
-  if f_st.success?
-    f_out.each_line { |l| puts "   #{l.rstrip}" }
-  else
-    puts "   ⚠ freshness preflight failed (continuing without it): #{f_out.lines.last.to_s.strip}"
-  end
+fresh_log  = File.join(WORK, 'freshness.log')
+fresh_waiter = nil
+if File.exist?(fresh_path) && !opts[:skip_fresh]
+  puts "   freshness.json already present — reusing (delete #{fresh_path} to re-probe)"
+elsif opts[:ws] && opts[:dataset] && !opts[:skip_fresh] && modes.include?('import')
+  fresh_pid = Process.spawn(PY, File.join(HERE, 'pbi-freshness.py'),
+                            '--workspace', opts[:ws], '--dataset', opts[:dataset],
+                            '--tmsl', opts[:tmsl], '--out', fresh_path,
+                            out: fresh_log, err: fresh_log)
+  fresh_waiter = Process.detach(fresh_pid)
+  puts "   freshness preflight launched NON-BLOCKING (pid #{fresh_pid}) — runs alongside Convert/Build, consumed at Phase 6"
 elsif opts[:ws] && opts[:dataset] && !opts[:skip_fresh]
   puts "   (freshness preflight skipped — model is #{mode_summ}, not import-mode: Sigma and PBI both read live)"
 end
-freshness = File.exist?(fresh_path) ? (JSON.parse(File.read(fresh_path)) rescue {}) : {}
-stale_days = freshness['staleDays']
 
 # ---------------------------------------------------------------------------
 # Phase 2 — Convert (run convertPowerBIToSigma via a node shim)
@@ -934,6 +963,17 @@ puts "   layout applied to workbook #{wb_id}"
 hdr(6, TOTAL, 'Parity')
 require 'sigma_rest'
 require 'date'
+
+# ---- join the NON-BLOCKING Phase-1.5 freshness lane (launched pre-Convert) --
+if fresh_waiter
+  fresh_waiter.join(180) # the probe ran concurrently; normally already done
+  if File.exist?(fresh_log)
+    File.read(fresh_log).each_line { |l| puts "   #{l.rstrip}" }
+  end
+  puts '   ⚠ freshness preflight produced no freshness.json (continuing without it)' unless File.exist?(fresh_path)
+end
+freshness = File.exist?(fresh_path) ? (JSON.parse(File.read(fresh_path)) rescue {}) : {}
+stale_days = freshness['staleDays']
 
 # bead fmte — the SOURCE-FRESHNESS banner LEADS the parity output (read this
 # before any side-by-side): a stale import snapshot / failed refresh explains

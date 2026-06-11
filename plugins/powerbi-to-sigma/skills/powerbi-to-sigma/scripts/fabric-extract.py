@@ -1,144 +1,125 @@
-import truststore; truststore.inject_into_ssl()  # use macOS system trust (corp root CA)
-import argparse, sys, json, base64, time, os, atexit, requests
-import msal
+#!/usr/bin/env python3
+"""fabric-extract.py — extract a semantic model's TMSL (and, optionally, its
+report's definition CONCURRENTLY) from Fabric.
 
-# bead 7o01(c): model + output dir are ARGUMENTS, not hardcoded values.
-#   python3 fabric-extract.py [--model-name <substring>] [--out-dir DIR]
-# --model-name: case-insensitive substring of the semantic model display name
-#               (default: pick the first model found, with a note).
-# --out-dir:    where the definition parts land (default /tmp/pbix).
-# Token cache path is overridable via PBI_TOKEN_CACHE.
-ap = argparse.ArgumentParser(description="Extract a semantic model's TMSL definition from Fabric")
+FAST DISCOVERY (customer scale: 30-50 workspaces, 20-40 report estates):
+  * --workspace <id|name> skips the full-estate enumeration (a workspace ID is
+    2 cheap GETs; at 30-50 workspaces the old serial walk was 15-30s).
+  * without --workspace, enumeration fans out 8-wide (~2-3s for 30-50 ws) and
+    is cached per session at /tmp/pbiauth/estate-map.json — invalidated
+    automatically whenever a requested name isn't found in the cache.
+  * --report <id|name> fetches the report definition IN PARALLEL with the model
+    TMSL (independent artifacts; previously two serial scripts). LRO polling is
+    0.5s-first + backoff instead of sleeping the full Retry-After. Concurrency
+    is capped at 4 per principal (Fabric throttling).
+  * timings.json (per-task wall clock) is ALWAYS written to --out-dir.
+
+Usage:
+    python3 fabric-extract.py [--model-name <substring>] [--out-dir DIR]
+        [--workspace <id|name>] [--report <id|name>] [--report-out-dir DIR]
+        [--report-bundle PATH] [--pool N] [--no-cache]
+
+  --model-name: case-insensitive substring of the semantic model display name
+                (default: first model found, with a note).
+  --out-dir:    where the model definition parts land (default /tmp/pbix).
+  --report:     also fetch this report's definition (PBIR, falling back to the
+                classic format) — concurrently with the model.
+  --report-out-dir: exploded report parts (default <out-dir>/report).
+  --report-bundle:  ALSO write the flat {part-path: text} bundle JSON that
+                migrate-powerbi.rb accepts as --pbir.
+  --no-cache:   skip the estate-map session cache.
+Token cache path is overridable via PBI_TOKEN_CACHE.
+"""
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pbi_fabric as fab  # noqa: E402  (injects truststore)
+
+ap = argparse.ArgumentParser(description="Extract a semantic model's TMSL (+ report definition) from Fabric")
 ap.add_argument("--model-name", default=None,
                 help="case-insensitive substring of the target semantic model name (default: first found)")
-ap.add_argument("--out-dir", default="/tmp/pbix", help="output directory for definition parts (default /tmp/pbix)")
+ap.add_argument("--out-dir", default="/tmp/pbix", help="output directory for model definition parts (default /tmp/pbix)")
+ap.add_argument("--workspace", default=None,
+                help="workspace id or name — skips full-estate enumeration when given")
+ap.add_argument("--report", default=None,
+                help="report id or name — fetched CONCURRENTLY with the model")
+ap.add_argument("--report-out-dir", default=None,
+                help="exploded report definition parts (default <out-dir>/report)")
+ap.add_argument("--report-bundle", default=None,
+                help="also write the flat {part: text} bundle JSON (migrate-powerbi.rb --pbir)")
+ap.add_argument("--pool", type=int, default=2,
+                help="concurrent definition fetches (capped at 4 — Fabric per-principal throttling)")
+ap.add_argument("--no-cache", action="store_true", help="bypass the estate-map session cache")
 ARGS = ap.parse_args()
 
-CACHE = os.environ.get("PBI_TOKEN_CACHE", "/tmp/pbiauth/cache.bin")
-os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-_cache = msal.SerializableTokenCache()
-if os.path.exists(CACHE):
-    _cache.deserialize(open(CACHE).read())
-atexit.register(lambda: open(CACHE, "w").write(_cache.serialize()) if _cache.has_state_changed else None)
-
-# Well-known public client (Power BI Desktop) — no app registration needed.
-CLIENT_CANDIDATES = [
-    ("ea0616ba-638b-4df5-95b9-636659ae5121", "PowerBI Desktop"),
-    ("04b07795-8ddb-461a-bbee-02f9e1bf7b46", "Azure CLI"),
-]
-AUTHORITY = "https://login.microsoftonline.com/organizations"
-# Try Fabric resource first, then Power BI resource.
-SCOPE_SETS = [
-    ["https://api.fabric.microsoft.com/.default"],
-    ["https://analysis.windows.net/powerbi/api/.default"],
-]
-
-def jwt_aud(tok):
-    try:
-        p = tok.split(".")[1]; p += "=" * (-len(p) % 4)
-        return json.loads(base64.urlsafe_b64decode(p)).get("aud")
-    except Exception:
-        return "?"
-
-def get_token():
-    for cid, cname in CLIENT_CANDIDATES:
-        app = msal.PublicClientApplication(cid, authority=AUTHORITY, token_cache=_cache)
-        for scopes in SCOPE_SETS:
-            for acct in app.get_accounts():
-                s = app.acquire_token_silent(scopes, account=acct)
-                if s and "access_token" in s:
-                    print(f"[AUTH cached] client={cname} aud={jwt_aud(s['access_token'])}", flush=True)
-                    return s["access_token"]
-            flow = app.initiate_device_flow(scopes=scopes)
-            if "user_code" not in flow:
-                print(f"[skip {cname} {scopes}] {flow.get('error_description','no device flow')}", flush=True)
-                continue
-            print("=" * 60, flush=True)
-            print(f"CLIENT={cname}  SCOPE={scopes[0]}", flush=True)
-            print(f">>> Go to: {flow['verification_uri']}", flush=True)
-            print(f">>> Enter code: {flow['user_code']}", flush=True)
-            print("=" * 60, flush=True)
-            res = app.acquire_token_by_device_flow(flow)  # blocks until done/expired
-            if "access_token" in res:
-                print(f"[AUTH OK] client={cname} aud={jwt_aud(res['access_token'])}", flush=True)
-                return res["access_token"]
-            else:
-                print(f"[AUTH FAIL {cname}] {res.get('error')}: {res.get('error_description','')[:200]}", flush=True)
-    return None
-
-def fab(tok, path):
-    return requests.get(f"https://api.fabric.microsoft.com/v1{path}",
-                        headers={"Authorization": f"Bearer {tok}"})
 
 def main():
-    tok = get_token()
+    tm = fab.Timings()
+    tok = tm.timed("auth", lambda: fab.get_token())
     if not tok:
-        print("NO_TOKEN — device code blocked or no client worked.", flush=True); sys.exit(2)
+        print("NO_TOKEN — device code blocked or no client worked.", flush=True)
+        sys.exit(2)
 
-    r = fab(tok, "/workspaces")
-    print(f"[/workspaces] {r.status_code}", flush=True)
-    if r.status_code != 200:
-        print(r.text[:500], flush=True); sys.exit(3)
-    wss = r.json().get("value", [])
-    for w in wss:
-        print(f"  WS {w['id']}  {w.get('displayName')}", flush=True)
+    # ---- resolve targets (estate cache -> live; --workspace = no enumeration)
+    try:
+        hit = fab.resolve_targets(
+            tok, model_name=ARGS.model_name, workspace=ARGS.workspace,
+            report=ARGS.report, use_cache=not ARGS.no_cache, timings=tm,
+            log=lambda s: print(s, flush=True))
+    except LookupError as e:
+        print(f"NO MATCH: {e}", flush=True)
+        tm.write(os.path.join(ARGS.out_dir, "timings.json"), status="no-match")
+        sys.exit(4)
+    ws, model, report = hit["workspace"], hit["model"], hit["report"]
+    if not model and not report:
+        print("NO_SEMANTIC_MODEL found in any accessible workspace.", flush=True)
+        sys.exit(4)
+    if model and not ARGS.model_name:
+        print("[note] no --model-name given — defaulting to the first model found", flush=True)
+    if model:
+        print(f"[TARGET] ws='{ws.get('name')}' model='{model.get('name')}' id={model['id']}", flush=True)
+    if report:
+        rws = hit.get("report_workspace") or ws
+        print(f"[TARGET] ws='{rws.get('name')}' report='{report.get('name')}' id={report['id']}", flush=True)
 
-    # collect semantic models across all workspaces
-    found = []
-    for w in wss:
-        rm = fab(tok, f"/workspaces/{w['id']}/semanticModels")
-        if rm.status_code == 200:
-            for m in rm.json().get("value", []):
-                print(f"  MODEL ws='{w.get('displayName')}' id={m['id']} name='{m.get('displayName')}'", flush=True)
-                found.append((w, m))
+    # ---- fire the independent getDefinition LROs CONCURRENTLY ----------------
+    jobs = []
+    if model:
+        jobs.append({"name": "model-tmsl", "ws": ws["id"], "kind": "semanticModels",
+                     "id": model["id"], "fmt": "TMSL"})
+    if report:
+        rws = hit.get("report_workspace") or ws
+        jobs.append({"name": "report-def", "ws": rws["id"], "kind": "reports",
+                     "id": report["id"], "report_fallback": True})
+    results = fab.fetch_definitions(tok, jobs, pool=ARGS.pool, timings=tm)
 
-    # pick the model matching --model-name (case-insensitive substring), else first
-    target = None
-    if ARGS.model_name:
-        needle = ARGS.model_name.lower()
-        target = next((x for x in found if needle in (x[1].get("displayName", "").lower())), None)
-        if not target:
-            print(f"NO MODEL matching --model-name '{ARGS.model_name}' "
-                  f"(saw: {', '.join(m.get('displayName','?') for _, m in found)})", flush=True)
-            sys.exit(4)
-    elif found:
-        target = found[0]
-        print(f"[note] no --model-name given — defaulting to the first model found", flush=True)
-    if not target:
-        print("NO_SEMANTIC_MODEL found in any accessible workspace.", flush=True); sys.exit(4)
-    w, m = target
-    print(f"[TARGET] ws='{w.get('displayName')}' model='{m.get('displayName')}' id={m['id']}", flush=True)
+    if "model-tmsl" in results:
+        body = results["model-tmsl"]
+        parts = body.get("definition", {}).get("parts", [])
+        print(f"[definition] {len(parts)} parts: " + ", ".join(p["path"] for p in parts), flush=True)
+        fab.write_parts(body, ARGS.out_dir, flatten=True)  # legacy flat layout
+        print(f"WROTE model definition parts to {ARGS.out_dir}/.", flush=True)
 
-    # getDefinition (TMSL) — may be async (202 LRO)
-    url = f"https://api.fabric.microsoft.com/v1/workspaces/{w['id']}/semanticModels/{m['id']}/getDefinition?format=TMSL"
-    pr = requests.post(url, headers={"Authorization": f"Bearer {tok}"})
-    print(f"[getDefinition] {pr.status_code}", flush=True)
-    body = None
-    if pr.status_code == 200:
-        body = pr.json()
-    elif pr.status_code == 202:
-        op = pr.headers.get("Location")
-        for _ in range(30):
-            time.sleep(int(pr.headers.get("Retry-After", "3")))
-            sr = requests.get(op, headers={"Authorization": f"Bearer {tok}"})
-            st = sr.json().get("status")
-            print(f"  LRO status={st}", flush=True)
-            if st == "Succeeded":
-                rr = requests.get(op + "/result", headers={"Authorization": f"Bearer {tok}"})
-                body = rr.json(); break
-            if st in ("Failed", "Undetermined"):
-                print(sr.text[:500], flush=True); sys.exit(5)
-    else:
-        print(pr.text[:800], flush=True); sys.exit(6)
+    if "report-def" in results:
+        rdef = results["report-def"]
+        rdir = ARGS.report_out_dir or os.path.join(ARGS.out_dir, "report")
+        written = fab.write_parts(rdef, rdir, flatten=False)
+        print(f"WROTE report definition ({len(written)} parts) to {rdir}/.", flush=True)
+        if ARGS.report_bundle:
+            bundle = fab.parts_bundle(rdef)
+            os.makedirs(os.path.dirname(os.path.abspath(ARGS.report_bundle)), exist_ok=True)
+            json.dump(bundle, open(ARGS.report_bundle, "w"))
+            print(f"WROTE report bundle (migrate-powerbi.rb --pbir) to {ARGS.report_bundle}", flush=True)
 
-    parts = body.get("definition", {}).get("parts", [])
-    print(f"[definition] {len(parts)} parts: " + ", ".join(p['path'] for p in parts), flush=True)
-    os.makedirs(ARGS.out_dir, exist_ok=True)
-    for p in parts:
-        data = base64.b64decode(p["payload"]).decode("utf-8", "replace")
-        out = os.path.join(ARGS.out_dir, p["path"].replace("/", "__"))
-        open(out, "w").write(data)
-    # the TMSL model file is usually 'model.bim' or 'definition/database.tmsl'
-    print(f"WROTE definition parts to {ARGS.out_dir}/. DONE.", flush=True)
+    t = tm.write(os.path.join(ARGS.out_dir, "timings.json"),
+                 status="ok", workspace=ws.get("name"),
+                 model=model and model.get("name"), report=report and report.get("name"))
+    line = "  ".join(f"{x['task']}={x['seconds']}s" for x in t["tasks"])
+    print(f"TIMINGS total={t['totalSeconds']}s  {line}", flush=True)
+    print("DONE.", flush=True)
+
 
 main()
