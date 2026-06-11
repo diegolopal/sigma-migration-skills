@@ -138,6 +138,12 @@ spec.fetch('pages', []).each do |page|
     errors << "#{name}: invalid kind \"pie\" — must be \"pie-chart\"" if kind == 'pie'
     errors << "#{name}: invalid kind \"donut\" — must be \"donut-chart\"" if kind == 'donut'
     errors << "#{name}: kpi-chart missing value" if kind == 'kpi-chart' && !el['value']
+    # Breaking-change-2026-06-11: kpi-chart value binding moved id -> columnId
+    # (matching the 2026-05-21 chart axis change).
+    # OLD (now rejected): value: {id: ...}   NEW (required): value: {columnId: ...}
+    if kind == 'kpi-chart' && (v = el['value']).is_a?(Hash) && v['id'] && !v['columnId']
+      errors << "#{name}: kpi-chart value uses old shape {id: ...} — must be {columnId: ...} (breaking change 2026-06-11)"
+    end
 
     if %w[pie-chart donut-chart].include?(kind)
       errors << "#{name}: #{kind} missing color" unless el['color']

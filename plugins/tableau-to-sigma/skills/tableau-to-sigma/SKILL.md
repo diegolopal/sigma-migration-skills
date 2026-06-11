@@ -18,6 +18,8 @@ that mirrors the Tableau dashboard layout as closely as possible.
 - `refs/column-gotchas.md` — column naming rules and special-character landmines
 - `refs/data-model-spec.md` — data model JSON schema, element format, relationship format
 - `refs/workbook-layout.md` — Ruby layout generation (mandatory), multi-series chart patterns
+- `refs/story-points.md` — Tableau stories → one Sigma page per story point (`build-story-pages.rb`)
+- `refs/blending.md` — data-blend detection + routing decision tree (same-warehouse repoint / VDS materialize / flag)
 
 **For canonical workbook spec shape** (element kinds, source kinds, controls, formulas, formatting), defer to the companion **`sigma-workbooks`** skill (install it if you haven't — it's the canonical Sigma workbook spec reference). This skill restates only the Tableau-conversion-specific patterns; everything else (KPI fields, color channel, pivot-table shape, manual sources, container styling, YAML default, etc.) lives there. Read its `reference/specification/` whenever you need the current spec surface.
 
@@ -95,14 +97,14 @@ which calc translation, which layout) — not orchestration.
 | `scripts/setup-tableau.rb` | One-time Tableau PAT setup (only needed for PAT mode — see `refs/tableau-rest.md`) |
 | `scripts/get-tableau-token.sh` | One-shot signin → exports `TABLEAU_AUTH_TOKEN` + `TABLEAU_SITE_ID` |
 | `scripts/tableau-discover.rb` | PAT-mode Phase 1 discovery in one CLI: workbook + views + VDS metadata + GraphQL + .twb content. ONE unified fetch pool (default 5, `--pool N`, longest-job-first) with 429/timeout backoff + 401 re-mint; always writes per-task `timings.json`. Measured 61.8s → 13.7–18.9s on the 7-view reference workbook |
-| `scripts/scan-workbook-gaps.rb` | **Phase 0a (mandatory):** scan a `.twb` and emit `gaps-report.md` + `gaps.json` categorising every feature into ✅ auto / ⚠️ hint / 🛠 manual / ❌ unhandled. Run BEFORE any other phase. |
+| `scripts/scan-workbook-gaps.rb` | **Phase 0a (mandatory):** scan a `.twb` and emit `gaps-report.md` + `gaps.json` categorising every feature into ✅ auto / ⚠️ hint / 🛠 manual / ❌ unhandled. Run BEFORE any other phase. Also detects multi-datasource **data blends** (secondary `datasource-dependencies` + linking fields) and writes `blend-plan.json` with a per-blend route — same-warehouse-repoint / materialize-via-vds / flag-unreachable (decision tree: `refs/blending.md`). |
 | `scripts/gap-scout.md` | **Phase 0a-scout:** subagent prompt + protocol for resolving ❌ Unhandled gaps. Main agent spawns one scout per gap via the Agent tool. |
 | `scripts/validate-sigma-formula.rb` | Scout primitive: POST a tiny test workbook with a candidate formula, read back column types, return JSON `{ status: ok|error }`. Auto-expands the DM element's columns onto the test master so candidate refs to real data resolve. |
 | `scripts/scout-validate-and-persist.rb` | Scout wrapper: call validate-sigma-formula, on success append the rule to `~/.tableau-to-sigma/learned-rules.yaml` (customer's HOME, never the skill repo), on failure write `~/.tableau-to-sigma/escalations/<ts>-<slug>.yaml` AND return an opt-in `escalate-gap.py` command (confirm-before-file). |
 | `scripts/escalate-gap.py` | Shared opt-in issue filer. Dry-run by default (drafts the issue + dedupes against open issues/beads); files only with `--yes`. Routes by gap category: converter→`sigma-data-model-manager`+`sigma-data-model-mcp` (mirrored), builder/skill→`sigma-migration-skills`. |
 | `scripts/learned-rules.rb` | Loader module: reads `~/.tableau-to-sigma/learned-rules.yaml` at startup. Customer-discovered rules apply BEFORE the built-in translators in `build-charts-from-signals.rb`. |
-| `scripts/parse-twb-layout.rb` | Parse a `.twb` XML file into a per-dashboard zone list plus a sister `*-meta.json` (worksheets + shared_filters + parameters + column_aliases). Per chart zone surfaces: position (`x/y/w/h%`), `chart_kind`, `mark_class`, `geo_role`, `sort`, `filters` (with resolved column captions + member values + action-vs-value flag), `aggregations`, `channels`, `formats` (Tableau format strings → Sigma d3-format with paren-negative handling), `calculations`, `dual_axis` (synchronized-axes detection), `ref_marks` (reference lines/bands/trendlines), `filter_column_caption`. |
-| `scripts/build-charts-from-signals.rb` | Generate Sigma chart-element specs from parse-twb-layout output + view CSVs + master-column map. Auto-translates: column aliases → `Switch(…)` calc, parameter-driven CASE/IF chains → `Switch([ctl-param-x], …)` with controlId rewrite per page, table calcs (INDEX/LOOKUP/TOTAL/RANK/ZN/IIF/COUNTD) → Sigma equivalents, Tableau formats (p%.%/C1033%/`(neg)`) → Sigma d3-format. Honors `--page-per-worksheet`, `--auto-controls`. Loads customer learned-rules first. Writes `*-actions.md` companion listing Tableau action filters for post-publish cross-filter setup. |
+| `scripts/parse-twb-layout.rb` | Parse a `.twb` XML file into a per-dashboard zone list plus a sister `*-meta.json` (worksheets + shared_filters + parameters + column_aliases). Per chart zone surfaces: position (`x/y/w/h%`), `chart_kind`, `mark_class`, `geo_role`, `sort`, `filters` (with resolved column captions + member values + action-vs-value flag), `aggregations`, `channels`, `formats` (Tableau format strings → Sigma d3-format with paren-negative handling), `calculations`, `dual_axis` (synchronized-axes detection), `ref_marks` (reference lines/bands/trendlines), `filter_column_caption`. Detects Tableau **stories** (both `<story>` and storyboard-dashboard shapes): flags storyboard dashboards `is_story: true` and writes `story-plan.json` (story → ordered points with captions + captured sheets) — when present, run `build-story-pages.rb`. Bin calc columns surface `bin_size`/`bin_peg`. |
+| `scripts/build-charts-from-signals.rb` | Generate Sigma chart-element specs from parse-twb-layout output + view CSVs + master-column map. Auto-translates: column aliases → `Switch(…)` calc, parameter-driven CASE/IF chains → `Switch([ctl-param-x], …)` with controlId rewrite per page, table calcs (INDEX/LOOKUP/TOTAL/RANK/ZN/IIF/COUNTD) → Sigma equivalents, `DATEPART('iso-year')` → Thursday-of-ISO-week `Year(DateAdd(...))` composition, `FINDNTH` → `SplitToArray`/`ArraySlice`/`ArrayJoin` composition, Tableau bins → native `BinFixed`/`BinRange` recipe, **nested `{FIXED}` LODs → helper-element chain** (innermost LOD = helper element 1, outer consumes `[LOD Helper k/Value]`; machine-readable sidecar `<out>-lod-chains.json`), Tableau formats (p%.%/C1033%/`(neg)`) → Sigma d3-format. Honors `--page-per-worksheet`, `--auto-controls`. Loads customer learned-rules first. Writes `*-actions.md` companion listing Tableau action filters for post-publish cross-filter setup. |
 | `scripts/extract-custom-sql.rb` | Phase 1f: pull Custom SQL blocks behind a workbook via Metadata GraphQL + .twb XML fallback. Output → `/tmp/<name>/custom-sql.json`. |
 | `scripts/lib/tableau_rest.rb` | Ruby wrapper for the Tableau REST endpoints the skill uses |
 | `scripts/estimate-cost.rb` | Predict input/output token cost from workbook + datasource metadata |
@@ -120,6 +122,7 @@ which calc translation, which layout) — not orchestration.
 | `scripts/assert-phase6-ran.rb` | **Conversion hard gate (5 gates)** — exits 0 only when ALL five pass: (1) Phase 6 ran and parity-final.json shows status=PASS at the required rate, (2) no uncleaned orphan workbooks (posted-workbooks.jsonl has ≤1 entry OR cleanup-marker.json shows a successful non-dry-run cleanup), (3) the live workbook's `/columns` endpoint shows no column with `type=error` (catches circular refs / runtime errors introduced after the initial POST's column-type guard), (4) a non-empty top-level layout XML is applied (beads-sigma-bw3), (5) tile census — parity-final.json's `tile_census` shows no unexplained dashboard zones without a matching chart (catches the empty-view-CSV N-1-charts escape, bead gjhe; `--allow-missing-tiles N` for legitimately unbuildable zones). Exits 1 for missing parity sentinel, 2 for parity FAIL / extract-mode-without-flag / charts_total==0, 4 for uncleaned orphans, 5 for live type=error columns, 6 for missing layout, 7 for census failure. Subagent flows MUST call this as their final step. |
 | `scripts/cleanup-orphan-workbooks.rb` | Delete orphan workbooks left by spec-iteration retries. Reads `<workdir>/posted-workbooks.jsonl`, keeps the most-recent ID, deletes the rest via `DELETE /v2/files/{id}`. Writes `cleanup-marker.json` so the hard gate can confirm cleanup ran (and wasn't `--dry-run`). Idempotent (404 on delete is treated as success). See beads-sigma-38a. |
 | `scripts/build-dashboard-layout.rb` | **MANDATORY in Phase 5d** (dashboard-fidelity mode) — auto-build the Sigma layout XML from the parsed Tableau zone tree (`dashboard-layout.json`) + the workbook readback IDs (`wb-ids.json`). Positions each chart at the grid cell derived from its zone's x/y/w/h%. Without this step, the workbook PUTs without a top-level layout and Sigma renders elements as a single-column stack — see `assert-phase6-ran.rb` gate 4 (beads-sigma-bw3). |
+| `scripts/build-story-pages.rb` | **Story workbooks only** — when `parse-twb-layout.rb` wrote `story-plan.json`, emit one Sigma page per story point: pass 1 (`--spec`/`--out`) appends caption-named pages (annotation text atop + cloned elements with fresh ids/controlIds) to the workbook spec pre-POST; pass 2 (`--wb-ids`/`--layout-out`) emits the banded per-page layout + container sidecar post-readback. See `refs/story-points.md`. |
 | `scripts/export-chart-png.rb` | Phase 6d (visual): export PNG screenshots of every chart in the converted Sigma workbook via `/v2/workbooks/{wb}/export` → `/v2/query/{q}/download`. Catches visual regressions CSV value parity can miss (silently-dropped log scale, missing data labels, wrong chart kind, palette drift). Output: per-element PNGs + `_manifest.json`. Pair with the Tableau MCP `get-view-image` to side-by-side compare source vs target. |
 | `scripts/find-or-pick-dm.rb` | Phase 1.5: scan existing DMs in the org and recommend reuse when one already covers the workbook's columns. Score = 0.7·column-overlap + 0.2·table-overlap + 0.1·metric-overlap. Parallel-fetches DM specs (~2s for 50 DMs). Output: `dm-match.json` with ranked candidates + recommendation. Non-destructive. Reuse skips Phase 2 + 3 entirely. `--auto-pick` flag (with tie-window safety) skips the user-confirm step when there's a clear winner. |
 | `scripts/inspect-dm-shape.rb` | Phase 1.5b (MANDATORY when reusing): inspect the reused DM's element graph and emit a denormalization plan classifying every column as `fact` (direct ref) or `dim` (needs Lookup). Output: `dm-denorm-plan.json` with the exact Lookup formula per dim column. Eliminates the 2–3 min spec-rework loop when the reused DM has separate dim elements (a non-pre-denormalized DM shape). |
@@ -250,6 +253,21 @@ Categories emitted:
 
 Share the markdown report with the customer up front to set expectations.
 Save the JSON for the subagent.
+
+> **Data blending:** when the scanner writes `blend-plan.json`, route each
+> blend BEFORE Phase 2 using its `route` field — (a) `same-warehouse-repoint`
+> → one DM, both sources as elements + relationship on the linking fields
+> (deep-walk `connectionId` incl. `joins[].left/right` when repointing);
+> (b) `materialize-via-vds` → run the **tableau-vds-to-cdw** skill to land the
+> secondary in the primary's warehouse first; (c) `flag-unreachable` → keep
+> manual, report the linking fields. Full decision tree: `refs/blending.md`.
+
+> **Story points:** when `parse-twb-layout.rb` writes `story-plan.json`
+> (Phase 1d), plan one Sigma page per story point and run
+> `scripts/build-story-pages.rb` in Phase 5 (spec pass) and Phase 5d (layout
+> pass). Storyboard dashboards are flagged `is_story: true` in
+> `dashboard-layout.json` — do NOT build a regular page from the flipboard
+> chrome. See `refs/story-points.md`.
 
 ### Phase 0a-scout — spawn the gap-scout subagent for unhandled features
 
@@ -921,6 +939,7 @@ Key points:
   - `WINDOW_SUM(SUM([X]))` → `SUM(X) OVER (<partition / order>)`
   - `RANK(SUM([X]))` → `RANK() OVER (PARTITION BY <p> ORDER BY <X> DESC)`
   - `{FIXED [Dim] : SUM([X])}` → `SUM(X) OVER (PARTITION BY Dim)` or a pre-aggregated subquery joined back
+  - **Nested LODs** (`{FIXED A : AVG({FIXED A, B : SUM([X])})}`) → a helper-element CHAIN, not one formula: innermost LOD = helper element 1 (grouped by its dims, aggregate as `Value`), each outer level consumes `[LOD Helper k/Value]` via a relationship on the shared dims. `build-charts-from-signals.rb` decomposes these automatically into `<out>-lod-chains.json` (innermost first) — build one grouped element (or Custom SQL `GROUP BY` subquery) per level. Live-verified pattern, 2026-06-11.
   - `LOOKUP(SUM([X]), -1)` → `LAG(X) OVER (ORDER BY <time>)`
 
 When a workbook mixes plain calcs with window calcs, you can have BOTH kinds of DM elements in the same data model: one `warehouse-table` element for everything plain, plus one or more `sql` elements for the window/LOD calcs, related by key. Charts source from whichever element has the columns they need.
@@ -1094,7 +1113,7 @@ Spec skeleton (two pages, master on `Data`, all charts on `Orders Overview`):
           "kind": "kpi-chart",
           "source": { "kind": "table", "elementId": "master" },
           "columns": [{ "id": "k-sales", "formula": "Sum([Master/Sales])", "name": "Total Sales" }],
-          "value": { "id": "k-sales" }
+          "value": { "columnId": "k-sales" }
         }
       ]
     }
@@ -1150,7 +1169,7 @@ Rules:
     { "id": "k-sales", "formula": "Sum([Master/Sales])", "name": "Total Sales",
       "format": {"kind": "number", "formatString": "$,.0f"} }
   ],
-  "value": { "id": "k-sales" }
+  "value": { "columnId": "k-sales" }
 }
 ```
 

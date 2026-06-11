@@ -444,6 +444,37 @@ def translate_tableau_tc(formula)
     hints << 'LAST() → no direct Sigma equivalent — use a Count() - RowNumber() pattern or Custom SQL'
   end
 
+  # DATEPART('iso-year', x) — Sigma DatePart has NO iso-year / iso-week
+  # precision (its "weekday" is 1-7 Sunday-start). Verified equivalent
+  # (live-checked vs Snowflake YEAROFWEEKISO, 2026-06-11): the ISO year of x is
+  # the calendar Year() of the THURSDAY of x's ISO week:
+  #   Year(DateAdd("day", 3 - Mod(DatePart("weekday", x) + 5, 7), x))
+  # (DatePart("weekday")+5 mod 7 maps Mon→0..Sun→6; 3-that shifts to Thursday.)
+  while (m = s.match(/\bDATEPART\s*\(\s*['"]iso-year['"]\s*,\s*((?:[^()]|\([^()]*\))+?)\s*\)/i))
+    arg = m[1]
+    s = s.sub(m[0], %(Year(DateAdd("day", 3 - Mod(DatePart("weekday", #{arg}) + 5, 7), #{arg}))))
+    hints << %(DATEPART('iso-year')→Year(DateAdd("day", 3 - Mod(DatePart("weekday", x) + 5, 7), x)) — Thursday-of-ISO-week; Sigma DatePart has no iso-year precision)
+    changed = true
+  end
+  if s =~ /\bDATEPART\s*\(\s*['"]iso-week(?:number)?['"]/i
+    hints << "DATEPART('iso-week') has no verified Sigma formula equivalent — use a Custom SQL DM element (Snowflake WEEKISO(x)) or derive from the iso-year Thursday shift"
+  end
+
+  # FINDNTH(s, sub, n) → 1-based index of the nth occurrence of sub in s
+  # (0 when there are fewer than n occurrences). Verified Sigma composition
+  # (live-checked vs warehouse SQL, 2026-06-11) via the array functions:
+  #   If(ArrayLength(SplitToArray(s, sub)) > n,
+  #      Len(ArrayJoin(ArraySlice(SplitToArray(s, sub), 1, n), sub)) + 1, 0)
+  # i.e. rejoin the first n split-segments and measure the prefix length.
+  while (m = s.match(/\bFINDNTH\s*\(\s*([^,()]*(?:\([^()]*\))?[^,()]*)\s*,\s*([^,()]+?)\s*,\s*([^,()]+?)\s*\)/i))
+    str_a, sub_a, n_a = m[1].strip, m[2].strip, m[3].strip
+    s = s.sub(m[0],
+              "If(ArrayLength(SplitToArray(#{str_a}, #{sub_a})) > #{n_a}, " \
+              "Len(ArrayJoin(ArraySlice(SplitToArray(#{str_a}, #{sub_a}), 1, #{n_a}), #{sub_a})) + 1, 0)")
+    hints << 'FINDNTH→SplitToArray/ArraySlice/ArrayJoin composition (1-based; 0 when fewer than n occurrences)'
+    changed = true
+  end
+
   # LOD calcs — Tableau's `{FIXED [dim] : AGG([m])}` family.
   # Translation strategy (Sigma):
   #   {FIXED [dim] : SUM([m])}    → workbook metric `Sum([m])` grouped by [dim]
@@ -483,6 +514,45 @@ def translate_tableau_tc(formula)
   hints.uniq!
   hints << 'NOTE: Sigma window functions (Rank/Lag/Lead/Cumulative*) silently error in grouping-table charts and DM-element calc cols — add to a workbook-master non-grouping context OR a Custom SQL DM element' if hints.any? { |h| h =~ /Rank|Lag|Lead|RowNumber/ }
   [s, hints.join('; ')]
+end
+
+# ---- Nested FIXED LOD decomposition (beads-sigma-t67b) ----------------------
+# Tableau allows LODs inside LODs:
+#   {FIXED [Region] : AVG({FIXED [Region], [Customer Id] : SUM([Sales])})}
+# Sigma formulas can't nest aggregates, but the verified pattern is a CHAIN of
+# helper elements: the INNERMOST LOD becomes helper element 1 (a DM/workbook
+# element grouped by its dims, with the aggregate as its Value column); each
+# OUTER level consumes the previous helper via a cross-element ref
+# `[LOD Helper k/Value]` (relationship keyed on the shared dims), and the
+# outermost expression lands on the chart/master. decompose_nested_fixed
+# returns nil for non-nested formulas (single-FIXED keeps the existing
+# hint path in translate_tableau_tc) and otherwise:
+#   { 'chain' => [{helper, dims, tableau_body, sigma_aggregate}, ...]  # innermost first
+#     'final' => "<outermost expr with [LOD Helper k/Value] refs>" }
+LOD_AGG_FN = { 'SUM' => 'Sum', 'AVG' => 'Avg', 'MIN' => 'Min', 'MAX' => 'Max',
+               'COUNT' => 'Count', 'COUNTD' => 'CountDistinct', 'MEDIAN' => 'Median' }.freeze
+
+def decompose_nested_fixed(formula)
+  return nil unless formula.to_s.scan(/\{\s*FIXED/i).length >= 2
+  s = formula.gsub(/\s+/, ' ').strip
+  chain = []
+  k = 0
+  # Innermost-first: a {FIXED ...} whose body holds no further brace. After
+  # each substitution the next-outer level becomes brace-free and matches.
+  while (m = s.match(/\{\s*FIXED\s*([^:{}]*):\s*([^{}]+?)\s*\}/i))
+    k += 1
+    dims = m[1].scan(/\[([^\]]+)\]/).flatten
+    body = m[2].strip
+    agg_m = body.match(/\A(SUM|AVG|MIN|MAX|COUNT|COUNTD|MEDIAN)\s*\((.+)\)\z/i)
+    sigma_body = agg_m ? "#{LOD_AGG_FN[agg_m[1].upcase]}(#{agg_m[2].strip})" : body
+    helper = "LOD Helper #{k}"
+    chain << { 'helper' => helper, 'dims' => dims,
+               'tableau_body' => body, 'sigma_aggregate' => sigma_body }
+    s = s.sub(m[0], "[#{helper}/Value]")
+    break if k > 8 # guard against pathological inputs
+  end
+  return nil if chain.length < 2
+  { 'chain' => chain, 'final' => s }
 end
 
 # ---- Parameter / CASE translator ------------------------------------------
@@ -793,7 +863,7 @@ def build_kpi_element(z, meta, mmap, opts, warnings)
     'name'    => cap,
     'source'  => { 'kind' => 'table', 'elementId' => opts[:master_id] },
     'columns' => [measure_col],
-    'value'   => { 'id' => measure_col_id }
+    'value'   => { 'columnId' => measure_col_id }
   }
 
   # If the Tableau worksheet had Show Mark Labels on (typical for KPIs since
@@ -807,6 +877,7 @@ end
 # Drop the chart_kind=automatic warnings to stderr so the caller can act on them.
 elements = []
 warnings = []
+lod_chains = [] # nested-FIXED helper-element chains (beads-sigma-t67b)
 
 layout.each do |dash|
   dash['zones'].each do |z|
@@ -1314,6 +1385,44 @@ layout.each do |dash|
     (z['calculations'] || []).each do |c|
       formula = c['formula'].to_s
       next if formula.empty?
+
+      # Tableau bin column (calc class='bin') → Sigma NATIVE binning
+      # (beads-sigma-t67b). Must run before the bare-column-ref skip below —
+      # a bin calc's formula IS a bare ref to the base field. Sigma has
+      # BinFixed(value, min, max, binCount) (equal-width bins over [min, max])
+      # and BinRange(value, b1, b2, ...) (explicit cutoffs); do NOT hand-roll
+      # Floor((x - peg) / width) bucket math. Tableau bins are width-based, so
+      # preserve the width by deriving binCount from the data's min/max.
+      if c['class'] == 'bin'
+        width = c['bin_size'] || '<width>'
+        peg   = c['bin_peg'] || '0'
+        warnings << "'#{cap}' Tableau bin #{c['name']} (width #{width}, origin #{peg}) on #{formula} → " \
+                    "Sigma native binning: BinFixed([Master/#{formula.gsub(/^\[|\]$/, '')}], <min>, <max>, " \
+                    "Ceiling((<max> - <min>) / #{width})) with <min>/<max> from the data " \
+                    '(align <min> to the peg); for hand-picked buckets use BinRange(col, b1, b2, ...). ' \
+                    'Do NOT emit Floor() bucket math — Sigma has native bin functions.'
+        next
+      end
+
+      # Nested FIXED LODs → helper-element chain (beads-sigma-t67b). One DM/
+      # workbook helper element per LOD level, innermost first; the outer level
+      # consumes the inner via [LOD Helper k/Value]. Machine-readable chain
+      # lands in <out>-lod-chains.json for the agent to build the elements.
+      if (lod = decompose_nested_fixed(formula))
+        lod['calc']            = c['name']
+        lod['caption']         = c['caption']
+        lod['worksheet']       = cap
+        lod['tableau_formula'] = formula
+        lod_chains << lod
+        chain_desc = lod['chain'].map do |l|
+          "#{l['helper']} = #{l['sigma_aggregate']} grouped by [#{l['dims'].join(', ')}]"
+        end.join(' → ')
+        warnings << "'#{cap}' nested FIXED LOD #{c['name']} → #{lod['chain'].length}-level " \
+                    "helper-element chain (innermost first): #{chain_desc}; " \
+                    "final = #{lod['final']} — see the -lod-chains.json sidecar"
+        next
+      end
+
       next if formula =~ /\A\s*(SUM|COUNT|AVG|MIN|MAX)\(\[[^\]]+\]\)\s*\z/
       next if formula =~ /\A\s*\[[^\]]+\]\s*\z/
 
@@ -1651,6 +1760,17 @@ else
   warn "wrote #{opts[:out]}  (#{all_elements.size} elements: #{all_extras.size} controls/text + #{elements.size} charts)"
 end
 warnings.each { |w| warn "  WARN  #{w}" }
+
+# ---- Nested-LOD chains sidecar (beads-sigma-t67b) ---------------------------
+# Machine-readable helper-element chains for every nested {FIXED} calc: the
+# agent builds one grouped element per chain level (innermost first; Value =
+# sigma_aggregate, grouped by dims), relates each level to the next on the
+# shared dims, and lands `final` on the consuming chart/master.
+unless lod_chains.empty?
+  lod_path = opts[:out].sub(/\.json$/, '-lod-chains.json')
+  File.write(lod_path, JSON.pretty_generate(lod_chains))
+  warn "wrote #{lod_path} (#{lod_chains.size} nested-LOD chain(s))"
+end
 
 # ---- Tableau dashboard actions companion file -----------------------------
 # Action filters were translated into element-level filters when possible; the

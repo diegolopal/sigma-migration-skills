@@ -801,7 +801,7 @@ KPI elements require a `value` field referencing one column ID:
 {
   "kind": "kpi-chart",
   "columns": [{"id": "k-sales", "formula": "Sum([Master/Sales])", "name": "Total Sales", "format": {"kind": "number", "formatString": "$,.0f"}}],
-  "value": {"id": "k-sales"}
+  "value": {"columnId": "k-sales"}
 }
 ```
 
@@ -1301,7 +1301,7 @@ curl -s -X PUT \
 | Setting `layout` on each page object instead of top-level | PUT returns success but UI shows no layout change | Set `spec['layout']` once at the top level; strip `layout` from all page objects |
 | Bare `<Page>` tag without `type`/`id` attributes | Layout ignored silently | Use `<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="<pageId>">` |
 | Using `measures` instead of `yAxis` on bar/line charts | `"Invalid array: ...yAxis, got undefined"` | Replace `measures` with `yAxis` |
-| KPI missing `value` field | `"Invalid object: ...value, got undefined"` | Add `"value": {"id": "<col-id>"}` to every `kpi-chart` element |
+| KPI missing `value` field | `"Invalid object: ...value, got undefined"` | Add `"value": {"columnId": "<col-id>"}` to every `kpi-chart` element |
 | Using `rows`/`columnGroups` on a pivot table | API accepts silently but pivot does not render | Use `rowsBy`/`columnsBy` (object arrays) and `values` (string array) |
 | Using IDs from POST body instead of GET response | Layout elements don't appear | Always GET spec after POST to get real IDs |
 | `<LayoutElement>` for a container | Empty container visible | Use `<GridContainer>` for elements that have children |
