@@ -228,9 +228,13 @@ def ensure_banded!(spec)
     next if items.empty?
     # an existing short top text element (the dashboard's own title) becomes
     # the header band's text (recolored white for the dark band); otherwise
-    # SigmaLayout adds a header from the page name.
+    # SigmaLayout adds a header from the page name -> workbook name chain
+    # (resolve_header_title — never a generic "Page 1" auto-name). The
+    # candidate may start up to one row below the topmost element (classic
+    # title boxes are nudged a few px down; exact-row equality was the
+    # PHASEE2 fragility).
     top_row = items.map { |i| i[3] }.min
-    own_hdr = items.find { |i| i[3] == top_row && kind_of[i[0]] == 'text' && (i[4] - i[3]) <= 5 }
+    own_hdr = items.find { |i| i[3] <= top_row + 1 && kind_of[i[0]] == 'text' && (i[4] - i[3]) <= 5 }
     if own_hdr && items.length > 1
       items -= [own_hdr]
       hdr_el = (pg['elements'] || []).find { |e| e['id'] == own_hdr[0] }
@@ -241,7 +245,8 @@ def ensure_banded!(spec)
       xml, extra = SigmaLayout.banded_page(pg['id'], items, header_el: own_hdr[0],
                                            id_prefix: "band-#{pg['id']}")
     else
-      xml, extra = SigmaLayout.banded_page(pg['id'], items, title: pg['name'],
+      hdr_title = SigmaLayout.resolve_header_title(pg['name'], spec['name']) || 'Dashboard'
+      xml, extra = SigmaLayout.banded_page(pg['id'], items, title: hdr_title,
                                            id_prefix: "band-#{pg['id']}")
     end
     new_ids = (pg['elements'] || []).map { |e| e['id'] }

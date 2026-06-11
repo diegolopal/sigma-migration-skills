@@ -59,6 +59,10 @@ OptionParser.new do |p|
   p.on('--out PATH')         { |v| opts[:out] = v }
   p.on('--layout-out PATH')  { |v| opts[:layout_out] = v }
   p.on('--name NAME')        { |v| opts[:name] = v }
+  # The SOURCE report/dashboard display name (e.g. "EMPLOYEE DASHBOARD") —
+  # header-band title fallback when a page has no promotable title textbox and
+  # its own name is a generic auto-name ("Page 1"). See resolve_header_title.
+  p.on('--source-title NAME') { |v| opts[:source_title] = v }
   p.on('--folder-id ID')     { |v| opts[:folder] = v }
 end.parse!
 %i[sig mmap out].each { |k| abort("missing --#{k.to_s.tr('_','-')}") unless opts[k] }
@@ -781,14 +785,17 @@ pages_xml = signals['pages'].map do |pg|
   next nil if items.empty?
   page_spec = content_pages.find { |p| p['id'] == page_id }
   # phase-e layout-quality fix: a short title TEXTBOX at the top of the source
-  # canvas becomes the header band's text (white-on-dark), instead of sitting
-  # inside band 1 with a dead zone under it. Same promotion the Phase E
-  # re-banding applies to pre-container clones.
+  # canvas becomes the header band's text (white-on-dark), MOVED out of band 1
+  # (never left behind as a dead zone). The candidate may start up to one grid
+  # row below the page's topmost element (classic-report title boxes are
+  # routinely nudged a few px down from y=0 — exact-row equality was the
+  # PHASEE2 fragility). Same promotion the Phase E re-banding applies to
+  # pre-container clones.
   top_row = items.map { |i| i[3] }.min
   hdr_vis = pg['visuals'].find do |v|
     next false unless v['sigma_kind'] == 'text' && v['text'].to_s.strip != ''
     it = items.find { |i| i[0] == "el-#{short(v['visual_id'])}" }
-    it && it[3] == top_row && (it[4] - it[3]) <= 5
+    it && it[3] <= top_row + 1 && (it[4] - it[3]) <= 5
   end
   if hdr_vis && page_spec
     hdr_eid = "el-#{short(hdr_vis['visual_id'])}"
@@ -798,7 +805,13 @@ pages_xml = signals['pages'].map do |pg|
     hdr_el['body'] = %(# <span style="color: #FFFFFF">#{hdr_vis['text']}</span>) if hdr_el
     xml, extra = banded_page(page_id, items, header_el: hdr_eid)
   else
-    xml, extra = banded_page(page_id, items, title: pg['page_title'])
+    # No promotable source title — header text falls back, in priority order,
+    # to: source page name (if not a generic auto-name) -> source report
+    # display name (--source-title) -> workbook name. NEVER "Page 1".
+    hdr_title = SigmaLayout.resolve_header_title(
+      pg['page_title'], opts[:source_title], opts[:name]
+    ) || 'Dashboard'
+    xml, extra = banded_page(page_id, items, title: hdr_title)
   end
   page_spec['elements'] = page_spec['elements'] + extra if page_spec
   xml
@@ -806,7 +819,8 @@ end.compact.join("\n")
 layout_xml = %(<?xml version="1.0" encoding="utf-8"?>\n#{pages_xml}\n)
 
 spec = {
-  'name' => opts[:name] || signals.dig('pages', 0, 'page_title') || 'Power BI Import',
+  'name' => opts[:name] || opts[:source_title] ||
+            signals.dig('pages', 0, 'page_title') || 'Power BI Import',
   'schemaVersion' => 1,
   'pages' => [{ 'id' => 'page-data', 'name' => 'Data', 'elements' => data_elements }] + content_pages,
   # bead 16i: embed the layout so the very first POST does not trigger Sigma's

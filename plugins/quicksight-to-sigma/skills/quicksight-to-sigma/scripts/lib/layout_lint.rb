@@ -10,7 +10,7 @@
 #
 # It exists because a workbook can pass every data gate and still ship as a
 # visual mess (raw-id chart titles, controls dumped at the page foot, dead
-# zones) — the "PHASEE PBI Employee Dashboard" regression. Three checks:
+# zones) — the "PHASEE PBI Employee Dashboard" regression. Five checks:
 #
 #   (a) raw-id display names — any element display name matching a raw-id
 #       pattern (^[0-9a-f]{12,}$ or ^el-[0-9a-f]+$). A human must never see a
@@ -22,6 +22,17 @@
 #   (c) dead zones — more than 25% of a page's grid rows empty between the
 #       page's first and last positioned element (top-level layout entries).
 #       Catches the "elements scattered with a hole next to the title" look.
+#   (d) generic header-band title — the header band's text rendering as a
+#       generic auto-name ("Page 1" / "Sheet 3" / "Dashboard 2"). The header
+#       must carry the promoted source title, the source dashboard/report
+#       display name, or the workbook name — never the Sigma page name (the
+#       PHASEE2 PBI regression: header read "Page 1" while the real title sat
+#       inside band 1).
+#   (e) band column fill — a band (top-level GridContainer) whose children
+#       cover <60% of the 24 grid columns, i.e. shipped dead space (the
+#       PHASEE2 PBI regression: band 1 = one small bar chart at columns 1-6
+#       next to a 19-column hole). Deliberate KPI bands (<=4 tiles, all
+#       kpi-chart) are exempt.
 #
 # API:
 #   violations = LayoutLint.lint(spec)   # spec = parsed workbook spec Hash
@@ -32,6 +43,10 @@
 module LayoutLint
   RAW_ID_NAME = /\A(?:[0-9a-f]{12,}|el-[0-9a-f]+)\z/i
   DEAD_ZONE_MAX = 0.25
+  GENERIC_HEADER = /\A(?:page|sheet|dashboard)\s*\d+\z/i
+  GRID_COLS = 24
+  MIN_BAND_FILL = 0.60
+  KPI_BAND_MAX_TILES = 4
 
   module_function
 
@@ -70,10 +85,48 @@ module LayoutLint
     entries
   end
 
+  # Top-level GridContainers of a page block with their direct children:
+  # [{eid:, r0:, r1:, children: [[child_eid, c0, c1, r0, r1], ...]}, ...]
+  def containers(page_xml)
+    out = []
+    s = page_xml.to_s
+    pos = 0
+    while (m = s.match(%r{<GridContainer\b([^>]*?)(/>|>)}m, pos))
+      attrs, close = m[1], m[2]
+      eid = attrs[/elementId="([^"]*)"/, 1]
+      r0 = attrs[/gridRow="\s*(\d+)/, 1].to_i
+      r1 = attrs[/gridRow="\s*\d+\s*\/\s*(\d+)/, 1].to_i
+      inner = ''
+      if close == '>'
+        endm = s.match(%r{</GridContainer>}m, m.end(0))
+        inner = endm ? s[m.end(0)...endm.begin(0)] : ''
+        pos = endm ? endm.end(0) : m.end(0)
+      else
+        pos = m.end(0)
+      end
+      children = inner.scan(%r{<LayoutElement\b[^>]*?/?>}m).map do |le|
+        [le[/elementId="([^"]*)"/, 1],
+         le[/gridColumn="\s*(\d+)/, 1].to_i, le[/gridColumn="\s*\d+\s*\/\s*(\d+)/, 1].to_i,
+         le[/gridRow="\s*(\d+)/, 1].to_i, le[/gridRow="\s*\d+\s*\/\s*(\d+)/, 1].to_i]
+      end
+      out << { eid: eid, r0: r0, r1: r1, children: children }
+    end
+    out
+  end
+
+  # A text element's body reduced to its visible text (markdown/HTML stripped).
+  def plain_text(body)
+    body.to_s.gsub(%r{<[^>]+>}, '').gsub(/^#+\s*/, '').gsub(/[*_`]/, '').strip
+  end
+
   def lint(spec)
     violations = []
     el_kind = {}
-    named_elements(spec).each { |el, _pg| el_kind[el['id']] = el['kind'] }
+    el_body = {}
+    named_elements(spec).each do |el, _pg|
+      el_kind[el['id']] = el['kind']
+      el_body[el['id']] = el['body']
+    end
 
     # (a) raw-id display names ------------------------------------------------
     named_elements(spec).each do |el, pg|
@@ -97,6 +150,43 @@ module LayoutLint
           violations << "orphan control: #{eid} sits OUTSIDE every GridContainer on page #{page_id} " \
                         '(banded page) — place it in the control band or its chart\'s container'
         end
+      end
+
+      # (d) generic header-band title ------------------------------------------
+      bands = containers(body)
+      hdr = bands.select { |b| b[:r0] <= 1 }.min_by { |b| b[:r0] }
+      if hdr
+        hdr[:children].each do |ceid, _c0, _c1, _r0, _r1|
+          next unless el_kind[ceid] == 'text'
+          txt = plain_text(el_body[ceid])
+          next unless txt.match?(GENERIC_HEADER)
+          violations << "generic header title: the header band (#{hdr[:eid]}) on page #{page_id} " \
+                        "renders #{txt.inspect} (element #{ceid}) — a Sigma auto page name must never " \
+                        'title the dashboard; use the promoted source title, the source display name, ' \
+                        'or the workbook name (SigmaLayout.resolve_header_title)'
+        end
+      end
+
+      # (e) band column fill ---------------------------------------------------
+      bands.each do |b|
+        kids = b[:children]
+        kpi_band = kids.any? && kids.length <= KPI_BAND_MAX_TILES &&
+                   kids.all? { |k| el_kind[k[0]] == 'kpi-chart' }
+        next if kpi_band
+        covered = Array.new(GRID_COLS, false)
+        kids.each do |_eid, c0, c1, _r0, _r1|
+          (c0...c1).each { |c| covered[c - 1] = true if c >= 1 && c <= GRID_COLS }
+        end
+        fill = covered.count(true).to_f / GRID_COLS
+        next if fill >= MIN_BAND_FILL
+        empty_cols = covered.each_index.reject { |i| covered[i] }.map { |i| i + 1 }
+        violations << format('band under-filled: container %s on page %s — %s cover %d of %d grid ' \
+                             'columns (%.0f%% < %.0f%% required); dead space at columns %s — ' \
+                             're-flow the band (SigmaLayout.reflow_bands) or widen the elements',
+                             b[:eid], page_id,
+                             kids.empty? ? 'no children' : "#{kids.length} element(s) (#{kids.map(&:first).join(', ')})",
+                             covered.count(true), GRID_COLS, fill * 100, MIN_BAND_FILL * 100,
+                             empty_cols.empty? ? '-' : empty_cols.slice_when { |a, x| x != a + 1 }.map { |g| g.length > 1 ? "#{g.first}-#{g.last}" : g.first.to_s }.join(', '))
       end
 
       # (c) dead-zone heuristic ------------------------------------------------

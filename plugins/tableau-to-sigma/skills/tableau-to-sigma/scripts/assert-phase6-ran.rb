@@ -23,8 +23,13 @@
 #   6. Layout lint (scripts/lib/layout_lint.rb, shared) — no raw-id element
 #      display names, no input controls outside the GridContainer bands on a
 #      banded page, no dead zones (>25% empty grid rows between a page's
-#      first and last element). Catches the "PHASEE PBI Employee Dashboard"
-#      visual-mess regression that every data gate waved through.
+#      first and last element), no generic header-band title ("Page 1" /
+#      "Sheet 3" / "Dashboard 2" must never title a dashboard), and no
+#      under-filled band (<60% of the 24 grid columns covered; deliberate
+#      KPI bands of <=4 tiles exempt). Catches the "PHASEE PBI Employee
+#      Dashboard" visual-mess regression (and its PHASEE2 sequel: "Page 1"
+#      header + a lone small chart beside a 19-column hole) that every data
+#      gate waved through.
 #
 # Usage:
 #   ruby scripts/assert-phase6-ran.rb --tableau /tmp/<name> \
@@ -422,7 +427,8 @@ else
           warn "       then re-run this gate. Escape hatch (legacy workbooks only): --skip-layout-lint."
           exit 8
         end
-        puts "[OK] gate 6/6: layout lint clean (no raw-id names, no orphan controls, no dead zones)"
+        puts '[OK] gate 6/6: layout lint clean (no raw-id names, no orphan controls, no dead zones, ' \
+             'no generic header title, no under-filled bands)'
       else
         warn "[SKIP] gate 6/6: GET /v2/workbooks/#{wb_id}/spec returned HTTP #{res.code} — cannot lint"
       end

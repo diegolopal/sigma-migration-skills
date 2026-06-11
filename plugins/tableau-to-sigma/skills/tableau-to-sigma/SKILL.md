@@ -1569,7 +1569,11 @@ If the cloned parity workbook predates container layouts (no `<GridContainer>`
 in its layout), `enhance-apply.rb` **regenerates a banded layout** for the
 clone first (builder machinery, `scripts/lib/layout.rb`), then applies items.
 The finalize runs the shared layout lint (`scripts/lib/layout_lint.rb`: no
-raw-id display names, no controls outside containers, no dead zones) and
+raw-id display names, no controls outside containers, no dead zones, no
+generic header-band title — "Page 1"/"Sheet N"/"Dashboard N" never titles a
+dashboard; the header carries the promoted source title → source display
+name → workbook name — and no band whose elements fill <60% of the grid
+columns, KPI bands of ≤4 tiles exempt) and
 **exits 4 on violations** — a lint-failing clone must be fixed and re-PUT
 before the run may be declared done.
 
@@ -1579,7 +1583,8 @@ your eyes are the last gate. Export the clone's **full-page PNG**
 pass/fail in your report:
 
 - [ ] every chart/control title is human-readable (no raw element ids)
-- [ ] the page has a header band (dark, full-width, page title)
+- [ ] the page has a header band (dark, full-width, carrying the SOURCE title
+      or display name — never a generic "Page 1")
 - [ ] selection controls sit together in a control band near the top
 - [ ] every control is adjacent to / inside the container of what it filters
       (grain/drill switchers INSIDE their chart's container)
