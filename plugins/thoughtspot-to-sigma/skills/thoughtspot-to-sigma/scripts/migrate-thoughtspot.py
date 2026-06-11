@@ -119,19 +119,27 @@ def resolve_folder():
 
 
 # ── Sigma CSV export (ACTUAL side of parity + the warehouse freshness probe) ──
-def export_csv(wb_id, element_id, timeout=240):
-    res = json.loads(migrate.sigma("POST", f"/v2/workbooks/{wb_id}/export",
-                                   {"elementId": element_id, "format": {"type": "csv"}}))
-    qid = res["queryId"]
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        try:
-            body = migrate.sigma("GET", f"/v2/query/{qid}/download")
-            if body and body.strip():
-                return body
-        except RuntimeError:
-            pass
-        time.sleep(2)
+def export_csv(wb_id, element_id, timeout=240, retries=1):
+    """One slow export usually means warehouse/org saturation, not a broken
+    element — pause once and retry before failing the whole run (never hammer:
+    a single retry, with a cool-down, then a hard error)."""
+    for attempt in range(retries + 1):
+        res = json.loads(migrate.sigma("POST", f"/v2/workbooks/{wb_id}/export",
+                                       {"elementId": element_id, "format": {"type": "csv"}}))
+        qid = res["queryId"]
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                body = migrate.sigma("GET", f"/v2/query/{qid}/download")
+                if body and body.strip():
+                    return body
+            except RuntimeError:
+                pass
+            time.sleep(2)
+        if attempt < retries:
+            print(f"   WARN: CSV export of {element_id} timed out after {timeout}s — "
+                  f"cooling down 60s, then retrying once (saturation guard)")
+            time.sleep(60)
     raise RuntimeError(f"CSV export of element {element_id} timed out")
 
 
@@ -157,14 +165,17 @@ TS_AGG = {"SUM": lambda vs: sum(vs),
           "COUNT_DISTINCT": lambda vs: len(set(vs))}
 
 
-def viz_specs_with_aggs(lb_tml_path):
-    """Parse a Liveboard TML → {viz name: {spec, aggs}}. The per-measure agg comes
-    from the TML's own table_columns[].headline_aggregation (default SUM) — the
-    SOURCE definition, not the built Sigma formula, so a builder bug diverges."""
-    lb = yaml.safe_load(open(lb_tml_path).read())["liveboard"]
+def viz_specs_with_aggs(lb_tml_path, resolver=None):
+    """Parse a Liveboard TML → ({viz name: {spec, aggs}}, liveboard_guid). The
+    per-measure agg comes from the TML's own table_columns[].headline_aggregation
+    (default SUM) — the SOURCE definition, not the built Sigma formula, so a
+    builder bug diverges."""
+    doc = yaml.safe_load(open(lb_tml_path).read())
+    lb_guid = doc.get("guid")
+    lb = doc["liveboard"]
     out = {}
     for v in lb["visualizations"]:
-        spec = ts_common.parse_ts_viz(v)
+        spec = ts_common.parse_ts_viz(v, resolver)
         if not spec:
             continue
         aggs = {}
@@ -173,7 +184,7 @@ def viz_specs_with_aggs(lb_tml_path):
             if tc.get("headline_aggregation"):
                 aggs[base] = tc["headline_aggregation"].upper()
         out[spec["name"]] = {"spec": spec, "aggs": aggs}
-    return out
+    return out, lb_guid
 
 
 def expected_offline(spec, aggs, resolver, headers, rows):
@@ -208,9 +219,13 @@ def expected_offline(spec, aggs, resolver, headers, rows):
 
 def expected_live(spec, model_id):
     """Ground truth from ThoughtSpot itself: run the viz's search tokens through
-    searchdata against the model."""
+    searchdata against the model. Only the x dim is queried (a color/series dim
+    would change the grain — parity compares per-x totals); `top N` tokens ride
+    along so top-N tiles compare the same row set."""
     import ts_lib
-    q = " ".join(f"[{c}]" for c in spec["dims"] + spec["measures"])
+    q = " ".join(f"[{c}]" for c in spec["dims"][:1] + spec["measures"])
+    if spec.get("topn"):
+        q += f" top {spec['topn']}"
     for f in spec.get("filters", []):
         q += f" [{f['col']}] {'=' if f['mode'] == 'include' else '!='} " + \
              " ".join(f"'{v}'" for v in f["values"])
@@ -221,9 +236,46 @@ def expected_live(spec, model_id):
         return [[None, numify(drows[0][0])]] if drows else None
     didx = names.index(spec["dims"][0]) if spec["dims"][0] in names else 0
     meas = spec["measures"][0]
-    vidx = next((names.index(n) for n in (f"Total {meas}", meas) if n in names),
+    vidx = next((names.index(n) for n in (f"Total {meas}", f"Average {meas}", meas) if n in names),
                 len(names) - 1)
     return [[r[didx], numify(r[vidx])] for r in drows]
+
+
+def expected_from_lbdata(lb_guid, spec, _cache={}):
+    """Ground truth for tiles whose dim/measure is an ANSWER-level formula —
+    searchdata can't express those, but metadata/liveboard/data returns the
+    tile's own rows as ThoughtSpot renders them."""
+    import ts_lib
+    if lb_guid not in _cache:
+        _cache[lb_guid] = ts_lib._req("metadata/liveboard/data", {
+            "metadata_identifier": lb_guid, "data_format": "COMPACT", "record_size": 1000})
+    tiles = (_cache[lb_guid] or {}).get("contents", [])
+    t = next((t for t in tiles if (t.get("visualization_name") or "") == spec["name"]), None)
+    if not t:
+        return None
+    names = [c["name"] if isinstance(c, dict) else c for c in (t.get("column_names") or [])]
+    rows = t.get("data_rows") or []
+    if not spec["dims"]:
+        return [[None, numify(rows[0][0])]] if rows else None
+    def col_idx(cands):
+        return next((names.index(c) for c in cands if c in names), None)
+    didx = col_idx([spec["dims"][0]])
+    meas = spec["measures"][0]
+    vidx = col_idx([f"Total {meas}", f"Average {meas}", meas])
+    if didx is None or vidx is None:
+        return None
+    groups, order = {}, []
+    for r in rows:
+        d = r[didx]
+        d = None if (d is None or str(d).strip() == "") else d
+        val = numify(r[vidx])
+        if d in groups and isinstance(groups[d], float) and isinstance(val, float):
+            groups[d] += val
+        else:
+            if d not in groups:
+                order.append(d)
+            groups[d] = val
+    return [[d, groups[d]] for d in order]
 
 
 def scan_modified(obj):
@@ -460,12 +512,38 @@ def main():
         if rc != 0:
             sys.exit(f"FATAL: parity pass 1 failed for {wb}")
         plan = json.load(open(os.path.join(pdir, "parity-plan.json")))
-        vmap = viz_specs_with_aggs(r["lb_tml"]) if r.get("lb_tml") else {}
+        vmap, lb_guid = viz_specs_with_aggs(r["lb_tml"], resolver) if r.get("lb_tml") else ({}, None)
         expected, actuals = {}, {}
         for c in plan["charts"]:
             cname = c["chart"]
             # ACTUAL — the built Sigma chart, via CSV export
             headers, rows = parse_csv(export_csv(wb, c["sigma_element_id"]))
+            if c.get("kind") == "pivot-table" and rows and "Total" in rows[0]:
+                # Pivot CSV is a matrix: line 1 = measure/col-dim banner (lands in
+                # `headers`), rows[0] = the real header (row dim, col-dim values,
+                # 'Total'), then one row per row-dim value and a trailing grand-
+                # total row. Parity compares row-dim totals — the 'Total' column.
+                hdr2 = rows[0]
+                tidx = hdr2.index("Total")
+                actuals[cname] = [
+                    [(r[0] if str(r[0]).strip() != "" else None), numify(r[tidx])]
+                    for r in rows[1:] if str(r[0]).strip() != "Total"]
+                v = vmap.get(cname)
+                if not v:
+                    print(f"   WARN: no source viz named {cname!r} in the Liveboard TML — chart will DIVERGE")
+                    continue
+                exp = None
+                if model_id and not offline:
+                    try:
+                        exp = expected_live(v["spec"], model_id)
+                    except Exception as ex:
+                        print(f"   WARN: TS expected fetch failed for {cname!r} ({ex}); falling back to warehouse re-aggregation")
+                if exp is None:
+                    mh, mr = masters[wb]
+                    exp = expected_offline(v["spec"], v["aggs"], resolver, mh, mr)
+                if exp is not None:
+                    expected[cname] = exp
+                continue
             idx = {h: i for i, h in enumerate(headers)}
             want = c["sigma_columns"]
             if len(want) == 1:                      # KPI
@@ -473,18 +551,49 @@ def main():
                 actuals[cname] = [[None, numify(rows[0][vi])]] if rows else []
             else:
                 di, vi = idx.get(want[0], 0), idx.get(want[1], 1 if len(headers) > 1 else 0)
-                actuals[cname] = [[row[di], numify(row[vi])] for row in rows]
+                # Normalize the null bucket ('' from Sigma CSV vs None from
+                # searchdata) and group-sum duplicate dims (a chart with a
+                # color/series dim exports one CSV row per (x, series) pair —
+                # parity compares per-x totals on both sides).
+                pairs = [[row[di] if str(row[di]).strip() != "" else None, numify(row[vi])]
+                         for row in rows]
+                if c.get("kind") == "table":
+                    # Grouped-table CSV exports drop to UNDERLYING-row grain when
+                    # the element carries a non-grouped passthrough column (e.g. a
+                    # filter column) — each of a group's n rows repeats the
+                    # group-level calculation, so group-summing squares counts
+                    # (n rows x value n = n^2). The calculation is already at
+                    # group level: dedupe exact (dim, value) repeats first.
+                    seen, deduped = set(), []
+                    for d, val in pairs:
+                        if (d, val) not in seen:
+                            seen.add((d, val))
+                            deduped.append([d, val])
+                    pairs = deduped
+                grouped, order = {}, []
+                for d, val in pairs:
+                    if d in grouped and isinstance(grouped[d], float) and isinstance(val, float):
+                        grouped[d] += val
+                    else:
+                        if d not in grouped:
+                            order.append(d)
+                        grouped[d] = val
+                actuals[cname] = [[d, round(grouped[d], 6) if isinstance(grouped[d], float) else grouped[d]]
+                                  for d in order]
             # EXPECTED — searchdata ground truth (live) or source-TML re-aggregation (offline)
             v = vmap.get(cname)
             if not v:
                 print(f"   WARN: no source viz named {cname!r} in the Liveboard TML — chart will DIVERGE")
                 continue
             exp = None
+            sp = v["spec"]
+            afn = set(sp.get("af_names") or [])
+            use_lb = bool(afn & set(sp.get("dims", [])[:1])) or bool(afn & set(sp.get("measures", [])[:1]))
             if model_id and not offline:
                 try:
-                    exp = expected_live(v["spec"], model_id)
+                    exp = expected_from_lbdata(lb_guid, sp) if (use_lb and lb_guid) else expected_live(sp, model_id)
                 except Exception as ex:
-                    print(f"   WARN: searchdata failed for {cname!r} ({ex}); falling back to warehouse re-aggregation")
+                    print(f"   WARN: TS expected fetch failed for {cname!r} ({ex}); falling back to warehouse re-aggregation")
             if exp is None:
                 mh, mr = masters[wb]
                 exp = expected_offline(v["spec"], v["aggs"], resolver, mh, mr)

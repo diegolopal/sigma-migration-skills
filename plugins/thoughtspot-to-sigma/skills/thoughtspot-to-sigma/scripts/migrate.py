@@ -118,6 +118,19 @@ def find_denorm(dm):
         denorm = max(els, key=lambda e: len(e.get("columns", [])))
     return denorm["id"], denorm["name"]
 
+def find_table_elements(dm):
+    """Map the DM's raw warehouse-table elements: {TABLE_NAME: {id, name}}.
+    Used to source dimension-grain measures at their owning table's grain
+    (chasm-trap guard) instead of the fanned-out denorm view."""
+    dmspec = yaml.safe_load(sigma("GET", f"/v2/dataModels/{dm}/spec"))
+    out = {}
+    for el in dmspec["pages"][0]["elements"]:
+        src = el.get("source") or {}
+        if src.get("kind") == "warehouse-table" and src.get("path"):
+            out[src["path"][-1]] = {"id": el["id"], "name": el.get("name") or src["path"][-1]}
+    return out
+
+
 def build_dm(conv, name, folder):
     """POST the converted Sigma data model. Returns (dmId, denormElemId, denormName)."""
     spec = conv["model"]; spec["name"] = name
@@ -157,7 +170,7 @@ def lb_tiles(lb, viz_specs, elements):
 def migrate_liveboard(lb_doc, dm, denorm_id, denorm_name, resolver, prefix, fallback_name, folder, wd):
     lb = yaml.safe_load(lb_doc)["liveboard"]
     display = lb.get("name") or fallback_name          # never name a workbook after a UUID
-    viz_specs = [(v.get("id"), ps) for v in lb["visualizations"] if (ps := ts_common.parse_ts_viz(v))]
+    viz_specs = [(v.get("id"), ps) for v in lb["visualizations"] if (ps := ts_common.parse_ts_viz(v, resolver))]
     specs = [ps for _, ps in viz_specs]
     master = ts_common.master_element(specs, resolver, dm, denorm_id, denorm_name)
     elements = [ts_common.sigma_element(s, resolver) for s in specs]
@@ -222,7 +235,7 @@ def migrate_answer(ans_id, dm, denorm_id, denorm_name, resolver, prefix, folder,
         raise RuntimeError("export failed: " + err)
     ans = yaml.safe_load(edoc)["answer"]
     display = ans.get("name") or ("Answer " + ans_id[:8])
-    spec_v = ts_common.parse_ts_viz({"answer": ans})
+    spec_v = ts_common.parse_ts_viz({"answer": ans}, resolver)
     master = ts_common.master_element([spec_v], resolver, dm, denorm_id, denorm_name)
     spec = {"name": f"{prefix}{display} (from ThoughtSpot)", "folderId": folder, "schemaVersion": 1,
             "pages": [{"id": "p-data", "name": "Data", "elements": [master]},
@@ -285,6 +298,15 @@ def main():
     else:
         conv = convert_model(model_tml, wd, a.converted)
         dm, denorm_id, denorm_name = build_dm(conv, f"{prefix}{model_name} (from ThoughtSpot)", folder)
+
+    # chasm-trap guard inputs: the DM's raw table elements, for dimension-grain
+    # measures that must NOT be aggregated over the fanned-out denorm view
+    resolver["__dm_id__"] = dm
+    try:
+        resolver["__dim_elements__"] = find_table_elements(dm)
+    except Exception as ex:
+        print(f"  WARN: could not map DM table elements ({ex}) — dim-grain measures will use the denorm view")
+        resolver["__dim_elements__"] = {}
 
     # pick Liveboards: offline TML files, or join the export lane
     targets = []                                       # (lb_doc, fallback_name)
