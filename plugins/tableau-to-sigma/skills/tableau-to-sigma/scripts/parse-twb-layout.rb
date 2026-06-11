@@ -333,7 +333,11 @@ xml.elements.each('//worksheet') do |ws|
     deriv = ci.attributes['derivation']
     next if col.nil? || deriv.nil?
     next unless ci.attributes['type'] == 'quantitative'
-    next if %w[None User].include?(deriv)
+    # 'None' = raw (non-aggregated) usage — not a measure. 'User' IS a measure:
+    # a user-aggregated calc field (ratio KPIs like Gross Margin Pct). Excluding
+    # it made every calc-measure KPI read as 0-measure and fall through to the
+    # flat-table flow (bead 3w4d — "CSV has only 1 column" KPI drops).
+    next if deriv == 'None'
     measures << { 'column' => col.to_s, 'derivation' => deriv.to_s }
   end
   # Conservative: only flag dual_axis when Tableau explicitly synchronized two
@@ -456,14 +460,20 @@ xml.elements.each('//worksheet') do |ws|
     (rows_shelf['measure_count'] + cols_shelf['measure_count'] + measures.size) >= 2
   is_crosstab = is_text_mark && (both_have_dims || measure_names_crosstab)
 
-  # KPI signal: Text/Square mark with ZERO dims on both shelves AND ≥1 measure
-  # (on shelves or on the worksheet's Marks card). Tableau "scorecard" /
-  # "big number" tiles match this shape — they're not detail lists, not
-  # crosstabs, just a single aggregated value rendered as text. Maps to
-  # Sigma kpi-chart. beads-sigma-bw3.
+  # KPI signal: Text/Square/AUTOMATIC mark with ZERO dims on both shelves AND
+  # ≥1 measure (on shelves or on the worksheet's Marks card). Tableau
+  # "scorecard" / "big number" tiles match this shape — they're not detail
+  # lists, not crosstabs, just a single aggregated value rendered as text.
+  # Maps to Sigma kpi-chart. beads-sigma-bw3.
+  # Automatic mark included (bead 3w4d): Tableau's default mark for a
+  # zero-dim single-measure sheet renders as a big-number text table — the
+  # FATSCALE rehearsal lost 14/40 tiles because these fell through to the
+  # CSV-driven flow (1-column CSV → zone dropped).
+  kpi_capable_mark = is_text_mark || mark_class.to_s.downcase == 'automatic' ||
+                     mark_class.to_s.empty?
   total_dim_count = rows_shelf['dim_count'] + cols_shelf['dim_count']
   total_measure_count = rows_shelf['measure_count'] + cols_shelf['measure_count'] + measures.size
-  is_kpi = is_text_mark && !is_crosstab &&
+  is_kpi = kpi_capable_mark && !is_crosstab &&
            total_dim_count == 0 && total_measure_count >= 1
 
   worksheets[name] = {
@@ -592,7 +602,9 @@ def chart_kind_for(meta)
   when 'square'     then (meta[:is_crosstab] ? 'pivot-table' : (meta[:is_kpi] ? 'kpi' : 'table'))
   when 'text'       then (meta[:is_crosstab] ? 'pivot-table' : (meta[:is_kpi] ? 'kpi' : 'table'))
   when 'shape'      then 'scatter'
-  when 'automatic'  then 'automatic'              # Tableau's default-pick — verify against PNG
+  # Automatic is Tableau's default-pick — but a zero-dim single-measure sheet
+  # under Automatic renders as a big-number text table, i.e. a KPI (bead 3w4d).
+  when 'automatic'  then (meta[:is_kpi] ? 'kpi' : 'automatic')
   when ''           then 'other'
   else 'other'
   end

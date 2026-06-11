@@ -76,16 +76,25 @@ data_page  = wb_ids['pages'].find { |p| p['name'] == 'Data' }
 abort('no "Data" page in wb-ids') unless data_page
 master_el  = data_page['elements'].first
 
-overview   = wb_ids['pages'].find { |p| p['name'] != 'Data' && !p['name'].nil? } || wb_ids['pages'][1]
-abort('no overview page (non-Data) in wb-ids') unless overview
+# Multi-dashboard workbooks (bead ptrt): ONE Sigma page per Tableau dashboard,
+# each with its own container-banded layout. Pair each dashboard to the page
+# with the same name; when the workbook has a single non-Data page (legacy
+# single-dashboard flow), pair the first dashboard to it.
+content_pages = wb_ids['pages'].reject { |p| p['name'] == 'Data' || p['name'].nil? }
+content_pages = [wb_ids['pages'][1]].compact if content_pages.empty?
+abort('no overview page (non-Data) in wb-ids') if content_pages.empty?
 
-els_by_name = overview['elements'].each_with_object({}) { |e, h| h[e['name']] = e if e['name'] }
-title_el = overview['elements'].find { |e| e['kind'] == 'text' }
-ctl_els  = overview['elements'].select { |e| e['kind'] == 'control' }
-
-# Chart zones from the Tableau dashboard (first dashboard)
-dashboard = dash_layout.first
-chart_zones = dashboard['zones'].select { |z| z['kind'] == 'chart' && z['caption'] }
+page_for_dash = {}
+dash_layout.each do |d|
+  pg = content_pages.find { |p| p['name'] == d['dashboard'] }
+  pg ||= content_pages.first if dash_layout.length == 1
+  if pg.nil?
+    warn "WARN: no Sigma page matched dashboard #{d['dashboard'].inspect} — dashboard skipped from layout"
+    next
+  end
+  page_for_dash[d['dashboard']] = pg
+end
+abort('no dashboard↔page pairs resolved') if page_for_dash.empty?
 
 def chart_pos(z, opts)
   y0 = z['y_pct'] || 0
@@ -108,101 +117,121 @@ def chart_pos(z, opts)
   [col_start, col_end, row_start, row_end]
 end
 
-# Auto-fit the chart band to the ACTUAL zone extents. The default chart_y0=29.7
-# assumes a title/filter band at the top; a dashboard whose charts start near
-# y=0 would otherwise map to negative grid rows. Fit chart_y0/chart_y1 to the
-# min/max zone y so the mapping always lands inside the page.
-zone_y0s = chart_zones.map { |z| (z['y_pct'] || 0).to_f }
-zone_y1s = chart_zones.map { |z| (z['y_pct'] || 0).to_f + (z['h_pct'] || 0).to_f }
-unless zone_y0s.empty?
-  fit_y0 = zone_y0s.min
-  fit_y1 = [zone_y1s.max, fit_y0 + 1].max
-  # Only override when the zones fall (partly) above the assumed band, to avoid
-  # disturbing the tuned default for dashboards that DO have a top band.
-  if fit_y0 < opts[:chart_y0]
-    opts[:chart_y0] = fit_y0
-    opts[:chart_y1] = fit_y1
+# Build one container-banded page for a single dashboard. Returns
+# [page_xml_string, extra_spec_elements, n_charts, n_bands, n_controls].
+def build_page_for_dashboard(dashboard, page, opts)
+  chart_zones = dashboard['zones'].select { |z| z['kind'] == 'chart' && z['caption'] }
+  els_by_name = page['elements'].each_with_object({}) { |e, h| h[e['name']] = e if e['name'] }
+  title_el = page['elements'].find { |e| e['kind'] == 'text' }
+  ctl_els  = page['elements'].select { |e| e['kind'] == 'control' }
+
+  # Per-dashboard copy of the band tuning — auto-fit must not leak between
+  # dashboards (bead ptrt: the old script used dash_layout.first only).
+  o = opts.dup
+
+  # Auto-fit the chart band to the ACTUAL zone extents. The default
+  # chart_y0=29.7 assumes a title/filter band at the top; a dashboard whose
+  # charts start near y=0 would otherwise map to negative grid rows.
+  zone_y0s = chart_zones.map { |z| (z['y_pct'] || 0).to_f }
+  zone_y1s = chart_zones.map { |z| (z['y_pct'] || 0).to_f + (z['h_pct'] || 0).to_f }
+  unless zone_y0s.empty?
+    fit_y0 = zone_y0s.min
+    fit_y1 = [zone_y1s.max, fit_y0 + 1].max
+    if fit_y0 < o[:chart_y0]
+      o[:chart_y0] = fit_y0
+      o[:chart_y1] = fit_y1
+    end
   end
+
+  chart_layouts = chart_zones.map do |z|
+    lookup_name = o[:renames][z['caption']] || z['caption']
+    el = els_by_name[lookup_name]
+    if el.nil?
+      warn "WARN: no Sigma element matched zone caption #{z['caption'].inspect} on page #{page['name'].inspect}" \
+           "#{lookup_name == z['caption'] ? " — if the tile was renamed, pass --rename #{z['caption'].inspect}'=<Sigma name>'" : " (renamed to #{lookup_name.inspect})"} — tile DROPPED from layout"
+    end
+    next nil unless el
+    c1, c2, r1, r2 = chart_pos(z, o)
+    { el_id: el['id'], c1: c1, c2: c2, r1: r1, r2: r2 }
+  end.compact
+
+  # Close horizontal gaps within each row (Tableau dashboards often have
+  # separate legend/filter zones between chart tiles that Sigma doesn't render).
+  rows = chart_layouts.group_by { |c| [c[:r1], c[:r2]] }
+  rows.each_value do |row_charts|
+    row_charts.sort_by! { |c| c[:c1] }
+    row_charts.each_with_index do |c, i|
+      next_c1 = i + 1 < row_charts.length ? row_charts[i + 1][:c1] : (o[:page_cols] + 1)
+      c[:c2] = next_c1
+    end
+  end
+
+  children = []
+  extra_els = []
+  ov_prefix = "band-#{page['id']}"
+
+  # Header band: reuse the page's existing title text if present, else add one
+  # (sidecar) named after the page (= the Tableau dashboard name).
+  hdr_id = "#{ov_prefix}-hdr"
+  extra_els << container_el(hdr_id, HEADER_STYLE.dup)
+  if title_el
+    children << header_band_xml(hdr_id, title_el['id'])
+  else
+    txt_id = "#{ov_prefix}-hdrtext"
+    extra_els << header_text_el(txt_id, page['name'])
+    children << header_band_xml(hdr_id, txt_id)
+  end
+
+  # Control band: dashboard-global controls side-by-side under the header.
+  n = ctl_els.length
+  ctl_rows = 0
+  if n > 0
+    ctl_rows = 3
+    col_width = (o[:page_cols].to_f / n).round
+    inner = ctl_els.each_with_index.map do |c, i|
+      col_start = 1 + i * col_width
+      col_end   = i == n - 1 ? o[:page_cols] + 1 : col_start + col_width
+      le(c['id'], col_start, col_end, 1, 1 + ctl_rows)
+    end.join("\n")
+    ctl_id = "#{ov_prefix}-ctl"
+    extra_els << container_el(ctl_id)
+    children << gc(ctl_id, 1, o[:page_cols] + 1, 1 + HEADER_ROWS, 1 + HEADER_ROWS + ctl_rows, inner)
+  end
+
+  # Chart bands: cluster the zone-derived positions into row bands and shift
+  # the whole chart area under the header + control bands.
+  chart_items = chart_layouts.map { |c| [c[:el_id], c[:c1], c[:c2], c[:r1], c[:r2]] }
+  bands = cluster_bands(chart_items)
+  content_start = 1 + HEADER_ROWS + ctl_rows
+  band_offset = bands.empty? ? 0 : content_start - bands.first.map { |i| i[3] }.min
+  bands.each_with_index do |band, i|
+    cid = "#{ov_prefix}-#{i + 1}"
+    extra_els << container_el(cid)
+    children << band_container_xml(cid, band, row_offset: band_offset)
+  end
+
+  [page_xml(page['id'], *children), extra_els, chart_layouts.length, bands.length, ctl_els.length]
 end
 
-# Compute initial positions
-chart_layouts = chart_zones.map do |z|
-  lookup_name = opts[:renames][z['caption']] || z['caption']
-  el = els_by_name[lookup_name]
-  if el.nil?
-    warn "WARN: no Sigma element matched zone caption #{z['caption'].inspect}" \
-         "#{lookup_name == z['caption'] ? " — if the tile was renamed, pass --rename #{z['caption'].inspect}'=<Sigma name>'" : " (renamed to #{lookup_name.inspect})"} — tile DROPPED from layout"
-  end
-  next nil unless el
-  c1, c2, r1, r2 = chart_pos(z, opts)
-  { el_id: el['id'], c1: c1, c2: c2, r1: r1, r2: r2 }
-end.compact
-
-# Close horizontal gaps within each row (Tableau dashboards often have separate
-# legend/filter zones between chart tiles that Sigma doesn't render — without
-# this, the dashboard has visible empty columns between adjacent charts).
-rows = chart_layouts.group_by { |c| [c[:r1], c[:r2]] }
-rows.each_value do |row_charts|
-  row_charts.sort_by! { |c| c[:c1] }
-  row_charts.each_with_index do |c, i|
-    next_c1 = i + 1 < row_charts.length ? row_charts[i + 1][:c1] : (opts[:page_cols] + 1)
-    c[:c2] = next_c1
-  end
-end
-
-# Render — container-banded page (layout-playbook.md): header band + control
-# band + one full-width GridContainer per chart row, children container-relative.
 data_page_xml = page_xml('page-data',
                          le(master_el['id'], 1, opts[:page_cols] + 1, 1, 21))
 
-children = []
-extra_els = []
-ov_prefix = "band-#{overview['id']}"
-
-# Header band: reuse the spec's existing title text if present, else add one
-# (sidecar) named after the overview page.
-hdr_id = "#{ov_prefix}-hdr"
-extra_els << container_el(hdr_id, HEADER_STYLE.dup)
-if title_el
-  children << header_band_xml(hdr_id, title_el['id'])
-else
-  txt_id = "#{ov_prefix}-hdrtext"
-  extra_els << header_text_el(txt_id, overview['name'])
-  children << header_band_xml(hdr_id, txt_id)
+page_xmls = [data_page_xml]
+sidecar = {}
+totals = { charts: 0, bands: 0, controls: 0 }
+dash_layout.each do |d|
+  page = page_for_dash[d['dashboard']]
+  next unless page
+  pxml, extra_els, n_charts, n_bands, n_ctls = build_page_for_dashboard(d, page, opts)
+  page_xmls << pxml
+  sidecar[page['id']] = extra_els
+  totals[:charts] += n_charts
+  totals[:bands] += n_bands
+  totals[:controls] += n_ctls
 end
 
-# Control band: dashboard-global controls side-by-side in one container
-# directly under the header.
-n = ctl_els.length
-ctl_rows = 0
-if n > 0
-  ctl_rows = 3
-  col_width = (opts[:page_cols].to_f / n).round
-  inner = ctl_els.each_with_index.map do |c, i|
-    col_start = 1 + i * col_width
-    col_end   = i == n - 1 ? opts[:page_cols] + 1 : col_start + col_width
-    le(c['id'], col_start, col_end, 1, 1 + ctl_rows)
-  end.join("\n")
-  ctl_id = "#{ov_prefix}-ctl"
-  extra_els << container_el(ctl_id)
-  children << gc(ctl_id, 1, opts[:page_cols] + 1, 1 + HEADER_ROWS, 1 + HEADER_ROWS + ctl_rows, inner)
-end
-
-# Chart bands: cluster the zone-derived positions into row bands (preserving
-# the Tableau geometry within each band) and shift the whole chart area so the
-# first band starts right under the header + control bands.
-chart_items = chart_layouts.map { |c| [c[:el_id], c[:c1], c[:c2], c[:r1], c[:r2]] }
-bands = cluster_bands(chart_items)
-content_start = 1 + HEADER_ROWS + ctl_rows
-band_offset = bands.empty? ? 0 : content_start - bands.first.map { |i| i[3] }.min
-bands.each_with_index do |band, i|
-  cid = "#{ov_prefix}-#{i + 1}"
-  extra_els << container_el(cid)
-  children << band_container_xml(cid, band, row_offset: band_offset)
-end
-
-File.write(opts[:out], assemble(data_page_xml, page_xml(overview['id'], *children)) + "\n")
-File.write("#{opts[:out]}.elements.json", JSON.pretty_generate({ overview['id'] => extra_els }))
-puts "wrote #{opts[:out]} (#{chart_layouts.length} charts in #{bands.length} band container(s), " \
-     "#{ctl_els.length} controls, header band, gap-closing applied, row-scale #{opts[:row_scale]}× → #{opts[:page_rows]} rows)"
-puts "wrote #{opts[:out]}.elements.json (#{extra_els.length} container/header spec element(s) — put-layout.rb injects these)"
+File.write(opts[:out], assemble(*page_xmls) + "\n")
+File.write("#{opts[:out]}.elements.json", JSON.pretty_generate(sidecar))
+puts "wrote #{opts[:out]} (#{page_for_dash.size} dashboard page(s): #{totals[:charts]} charts in #{totals[:bands]} band container(s), " \
+     "#{totals[:controls]} controls, header bands, gap-closing applied, row-scale #{opts[:row_scale]}× → #{opts[:page_rows]} rows)"
+puts "wrote #{opts[:out]}.elements.json (#{sidecar.values.sum(&:length)} container/header spec element(s) — put-layout.rb injects these)"
