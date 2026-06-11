@@ -64,6 +64,7 @@ OptionParser.new do |p|
   p.on('--controls PATH', 'JSON file: array of control specs to emit alongside the chart elements') { |v| opts[:controls] = v }
   p.on('--title STR',     'Dashboard title text element to emit (e.g., "Orders Dashboard")')         { |v| opts[:title] = v }
   p.on('--page-per-worksheet', 'Emit one Sigma page per Tableau worksheet (ignore dashboard layout)') { opts[:pages_mode] = :worksheet }
+  p.on('--page-per-dashboard', 'Emit ONE Sigma page per Tableau DASHBOARD (multi-dashboard workbooks - bead ptrt)') { opts[:pages_mode] = :dashboard }
   p.on('--auto-controls', 'Auto-emit Sigma controls from shared-view filters in --meta')              { opts[:auto_controls] = true }
   p.on('--out PATH')                { |v| opts[:out] = v }
 end.parse!
@@ -205,6 +206,95 @@ def translate_user_agg_formula(formula, mmap, columns_by_guid = {})
   out
 end
 
+# Row-level (non-aggregated) Tableau worksheet calc → Sigma formula over master
+# columns (bead 3w4d: KPIs like "Avg. Days Since Order" aggregate a row-level
+# DATEDIFF calc). Resolves GUID refs to captions, renames the common Tableau
+# date/logic functions, rewrites bare refs to [Master/...]. Returns nil when
+# the result still contains constructs we can't vouch for.
+def translate_row_level_calc(formula, mmap, columns_by_guid = {})
+  s = formula.to_s.gsub(/\s+/, ' ').strip
+  return nil if s.empty?
+  s = s.gsub(/\[([0-9a-f\-]{36})\]/i) do
+    info = columns_by_guid[Regexp.last_match(1)]
+    info && info['caption'] ? "[#{info['caption'].strip}]" : Regexp.last_match(0)
+  end
+  return nil if s =~ /\[[0-9a-f\-]{36}\]/i # unresolved GUID ref
+  s = s.gsub(/\bDATEDIFF\s*\(\s*'([^']+)'\s*,/i) { "DateDiff(\"#{Regexp.last_match(1)}\", " }
+  s = s.gsub(/\bDATEADD\s*\(\s*'([^']+)'\s*,/i)  { "DateAdd(\"#{Regexp.last_match(1)}\", " }
+  s = s.gsub(/\bDATETRUNC\s*\(\s*'([^']+)'\s*,/i) { "DateTrunc(\"#{Regexp.last_match(1)}\", " }
+  s = s.gsub(/\bDATEPART\s*\(\s*'([^']+)'\s*,/i) { "DatePart(\"#{Regexp.last_match(1)}\", " }
+  s = s.gsub(/\bTODAY\s*\(\s*\)/i, 'Today()')
+  s = s.gsub(/\bNOW\s*\(\s*\)/i, 'Now()')
+  s = s.gsub(/\bIIF\s*\(/i, 'If(')
+  s = s.gsub(/\bIFNULL\s*\(/i, 'Coalesce(')
+  s = s.gsub(/\bABS\s*\(/i, 'Abs(')
+  s = s.gsub(/'([^']*)'/) { %("#{Regexp.last_match(1)}") } # remaining single-quoted strings
+  out = s.gsub(/\[([^\/\]]+)\]/) do
+    cap = Regexp.last_match(1).strip
+    m = map_column(cap, mmap)
+    "[Master/#{m ? m['name'] : cap}]"
+  end
+  residue = out.dup
+  residue.gsub!(/"(?:\\.|[^"\\])*"/, '1')
+  residue.gsub!(/\[Master\/[^\]]+\]/, '1')
+  residue.gsub!(/\b(DateDiff|DateAdd|DateTrunc|DatePart|Today|Now|If|Coalesce|Abs)\b/, '')
+  return nil unless residue =~ %r{\A[\s()+\-*/.,\d!=<>]*\z}
+  out
+end
+
+# Worksheet-local DIMENSION calc -> Sigma formula over master columns
+# (bead z1d0: "Channel Group" CASE / "High Value Flag" IF-chain dims used to
+# fall back to an unresolvable raw header). Handles:
+#   CASE [col] WHEN "a" THEN "b" ... [ELSE e] END -> Switch([Master/col], ...)
+#   IF c THEN r [ELSEIF c2 THEN r2]* [ELSE e] END -> nested If(...)
+# Returns nil when the construct isn't recognized.
+def translate_dim_calc(formula, mmap, columns_by_guid = {})
+  s = formula.to_s.gsub(/\s+/, ' ').strip
+  return nil if s.empty?
+  s = s.gsub(/\[([0-9a-f\-]{36})\]/i) do
+    info = columns_by_guid[Regexp.last_match(1)]
+    info && info['caption'] ? "[#{info['caption'].strip}]" : Regexp.last_match(0)
+  end
+  return nil if s =~ /\[[0-9a-f\-]{36}\]/i
+  master_ref = lambda do |str|
+    str.gsub(/\[([^\/\]]+)\]/) do
+      cap = Regexp.last_match(1).strip
+      m = map_column(cap, mmap)
+      "[Master/#{m ? m['name'] : cap}]"
+    end
+  end
+  if (m = s.match(/\ACASE\s+(\[[^\]]+\])\s+(WHEN\b.*?)\s*\bEND\z/i))
+    subject = master_ref.call(m[1])
+    body = m[2]
+    pairs = body.scan(/WHEN\s+(.+?)\s+THEN\s+(.+?)(?=\s+WHEN\b|\s+ELSE\b|\z)/i)
+    else_m = body.match(/\bELSE\b\s+(.+)\z/i)
+    return nil if pairs.empty?
+    parts = [subject]
+    pairs.each { |a, b| parts << a.strip << b.strip }
+    parts << else_m[1].strip if else_m
+    return "Switch(#{parts.join(', ')})"
+  end
+  if (m = s.match(/\AIF\s+(.+)\s+END\z/i))
+    body = m[1]
+    segs = body.split(/\s+ELSEIF\s+/i)
+    else_expr = nil
+    if (em = segs.last.match(/(.*)\s+ELSE\s+(.+)\z/i))
+      segs[-1] = em[1]
+      else_expr = em[2].strip
+    end
+    conds = []
+    segs.each do |seg|
+      cm = seg.match(/\A(.+?)\s+THEN\s+(.+)\z/i)
+      return nil unless cm
+      conds << [cm[1].strip, cm[2].strip]
+    end
+    expr = else_expr || 'Null'
+    conds.reverse_each { |c, r| expr = "If(#{c}, #{r}, #{expr})" }
+    return master_ref.call(expr.gsub(/\bAND\b/, 'and').gsub(/\bOR\b/, 'or').gsub(/\bNOT\b/, 'not'))
+  end
+  nil
+end
+
 # Translate the Tableau column reference inside aggregations dict to a clean key
 # we can look up. Tableau uses internal IDs like "[33b6c718-9b55-3dc0-9698-…]"
 # OR friendly names like "[NET_REVENUE]". We strip the brackets for matching.
@@ -247,14 +337,18 @@ end
 # Pick the best aggregation for a header. CSV headers often hint at the
 # aggregation ("Sum of X" / "Distinct count of X" / etc.).
 def infer_csv_agg(header)
-  case header.to_s
-  when /^sum of /i        then 'Sum'
-  when /^avg of /i        then 'Avg'
-  when /^min of /i        then 'Min'
-  when /^max of /i        then 'Max'
-  when /^median of /i     then 'Median'
-  when /\bdistinct count\b/i then 'CountD'
-  when /\bcount\b/i       then 'Count'
+  case header.to_s.strip
+  # Tableau CSV headers use BOTH the long form ("Avg of X") and the dotted
+  # short form ("Avg. Days To Ship") — the short form previously fell through
+  # to the Sum default and mis-aggregated every "Avg. X" measure (bead z1d0).
+  when /^sum(\.\s*| of )/i           then 'Sum'
+  when /^(avg|average)(\.\s*| of )/i then 'Avg'
+  when /^min(\.\s*| of )/i           then 'Min'
+  when /^max(\.\s*| of )/i           then 'Max'
+  when /^med(ian)?(\.\s*| of )/i     then 'Median'
+  when /\bdistinct count\b/i         then 'CountD'
+  when /^(ctd|cntd)(\.\s*| of )/i    then 'CountD'
+  when /\bcount\b/i                  then 'Count'
   else nil
   end
 end
@@ -755,20 +849,48 @@ def build_kpi_element(z, meta, mmap, opts, warnings)
     return nil
   end
 
-  master, _cap = resolve_shelf_field(measure_field, meta, mmap)
+  master, field_cap = resolve_shelf_field(measure_field, meta, mmap)
   deriv = measure_field['derivation'].to_s.downcase
-  agg_template = SHELF_AGG_FOR_PREFIX[deriv] || 'Sum'
-  formula =
-    if agg_template.include?('%s')
-      agg_template.sub('%s', "[Master/#{master['name']}]")
-    else
-      "#{agg_template}([Master/#{master['name']}])"
+  norm = ->(x) { x.to_s.gsub(/^\[|\]$/, '').strip.downcase }
+
+  # Formula resolution priority (bead 3w4d — calc-measure KPIs used to drop):
+  #   1. master-map entry with a verbatim aggregate `formula` (DM metrics like
+  #      Return Rate / Gross Margin Pct / Revenue Per Order)
+  #   2. User-aggregated worksheet calc → decompose (SUM(a)/COUNTD(b) etc.)
+  #   3. row-level worksheet calc (DATEDIFF(...)) → translate, wrap in the
+  #      shelf aggregation (Avg/Sum/...)
+  #   4. plain master column wrapped in the shelf aggregation
+  formula = master['formula']
+  ws_calc = (z['calculations'] || []).find { |c| norm.call(c['name']) == norm.call(field_cap) }
+  if formula.nil? && ws_calc && %w[usr user].include?(deriv)
+    formula = translate_user_agg_formula(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
+    warnings << "'#{cap}' KPI measure '#{field_cap}' is a Tableau User-aggregated calc — decomposed: #{formula[0..120]}" if formula
+  end
+  if formula.nil? && ws_calc
+    body = translate_row_level_calc(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
+    if body
+      agg = SHELF_AGG_FOR_PREFIX[deriv] || 'Sum'
+      formula = agg.include?('%s') ? agg.sub('%s', "(#{body})") : "#{agg}((#{body}))"
+      warnings << "'#{cap}' KPI measure '#{field_cap}' is a row-level Tableau calc — translated + #{agg =~ /%s/ ? 'CountIf' : agg}-aggregated: #{formula[0..120]}"
     end
+  end
+  if formula.nil?
+    agg_template = SHELF_AGG_FOR_PREFIX[deriv] || 'Sum'
+    formula =
+      if agg_template.include?('%s')
+        agg_template.sub('%s', "[Master/#{master['name'].to_s.strip}]")
+      else
+        "#{agg_template}([Master/#{master['name'].to_s.strip}])"
+      end
+    if ws_calc
+      warnings << "'#{cap}' KPI measure '#{field_cap}' is a Tableau calc that could not be auto-decomposed — emitted #{formula} which will only resolve if the master carries that column"
+    end
+  end
 
   measure_col_id = "k-#{el_id}"
   measure_col = {
     'id'      => measure_col_id,
-    'name'    => master['name'],
+    'name'    => master['name'].to_s.strip,
     'formula' => formula
   }
 
@@ -793,7 +915,10 @@ def build_kpi_element(z, meta, mmap, opts, warnings)
     'name'    => cap,
     'source'  => { 'kind' => 'table', 'elementId' => opts[:master_id] },
     'columns' => [measure_col],
-    'value'   => { 'id' => measure_col_id }
+    # value.columnId, NOT value.id — the live API 400s with
+    # "value.columnId: Invalid string: undefined" (bead 3w4d; same fix as
+    # qlik-to-sigma scout-validate + refs/sigma-build-gotchas.md).
+    'value'   => { 'columnId' => measure_col_id }
   }
 
   # If the Tableau worksheet had Show Mark Labels on (typical for KPIs since
@@ -806,6 +931,7 @@ end
 # A workbook may have multiple dashboards; iterate all and concatenate elements.
 # Drop the chart_kind=automatic warnings to stderr so the caller can act on them.
 elements = []
+data_elements = [] # hidden helper elements (scatter grouped sources — bead z1d0)
 warnings = []
 
 layout.each do |dash|
@@ -822,6 +948,8 @@ layout.each do |dash|
     if z['chart_kind'] == 'pivot-table'
       pivot_el = build_pivot_element(z, meta, mmap, opts, warnings)
       if pivot_el
+        pivot_el['_worksheet'] = cap
+        pivot_el['_dashboard'] = dash['dashboard']
         elements << pivot_el
         warnings << "'#{cap}' auto-emitted as Sigma pivot-table from Tableau crosstab (rows/cols shelves) — verify dim placement"
         next
@@ -836,8 +964,10 @@ layout.each do |dash|
     if z['chart_kind'] == 'kpi'
       kpi_el = build_kpi_element(z, meta, mmap, opts, warnings)
       if kpi_el
+        kpi_el['_worksheet'] = cap
+        kpi_el['_dashboard'] = dash['dashboard']
         elements << kpi_el
-        warnings << "'#{cap}' auto-emitted as Sigma kpi-chart from Tableau scorecard (Text mark + single measure) — verify value formula"
+        warnings << "'#{cap}' auto-emitted as Sigma kpi-chart from Tableau scorecard (single aggregated measure, no dims) — verify value formula"
         next
       end
       # else: fall through with the warning already logged
@@ -872,17 +1002,84 @@ layout.each do |dash|
       next
     end
 
-    dim_hdr  = headers[0]
-    meas_hdr = headers[1]
+    dim_hdr  = headers[0].to_s.strip
+    meas_hdr = headers[1].to_s.strip
+
+    # Multi-channel detection (bead z1d0): a 3-column CSV whose SECOND column
+    # is another dimension (non-numeric data) is a stacked/colored chart
+    # (color dim + x dim + measure) — NEVER aggregate the string dim. Tableau
+    # exports the COLOR (inner) dim first, the axis dim second.
+    color_hdr = nil
+    dim_csv_idx = 0
+    color_csv_idx = nil
+    if headers.length >= 3 && %w[bar line area automatic other].include?(z['chart_kind'].to_s)
+      second_vals = rows.first(20).map { |r| r[1] }.compact
+      second_is_dim = second_vals.any? &&
+                      second_vals.none? { |v| begin Float(v.to_s.gsub(',', '')); true; rescue StandardError; false; end }
+      if second_is_dim
+        h0 = headers[0].to_s.strip
+        h1 = headers[1].to_s.strip
+        # Which of the two dims is the color channel? Resolve the Tableau color
+        # encoding column to a caption and match; fall back to "first = color".
+        color_cap = nil
+        if (cc = z.dig('channels', 'color', 'column'))
+          g = guid_from_text(cc.to_s)
+          info = g ? (meta['columns_by_guid'] || {})[g] : nil
+          color_cap = (info && info['caption']) ||
+                      cc.to_s.sub(/^\[[^\]]+\]\./, '').gsub(/^\[|\]$/, '').sub(/^[a-z]+:/i, '').sub(/:[a-z]+$/i, '')
+        end
+        if color_cap && h1.casecmp?(color_cap.to_s.strip)
+          color_hdr = h1
+          dim_hdr = h0
+          color_csv_idx = 1
+          dim_csv_idx = 0
+        else
+          color_hdr = h0
+          dim_hdr = h1
+          color_csv_idx = 0
+          dim_csv_idx = 1
+        end
+        meas_hdr = headers[2].to_s.strip
+        warnings << "'#{cap}' 3-channel chart: x=#{dim_hdr.inspect} color=#{color_hdr.inspect} measure=#{meas_hdr.inspect} (color channel #{color_cap ? "resolved from Tableau encoding '#{color_cap}'" : 'defaulted to first CSV dim'})"
+      end
+    end
+
     dim  = map_column(dim_hdr,  mmap)
     meas = map_column(meas_hdr, mmap)
+    find_ws_calc = lambda do |hdr|
+      (z['calculations'] || []).find { |c| c['name'].to_s.gsub(/^\[|\]$/, '').strip.casecmp?(hdr.to_s.strip) }
+    end
     if dim.nil?
-      warnings << "no master column matched dim header '#{dim_hdr}' for '#{cap}' — falling back to raw header"
-      dim  = { 'id' => "m-#{dim_hdr.downcase.gsub(/\W+/,'-')}", 'name' => dim_hdr }
+      wc = find_ws_calc.call(dim_hdr)
+      tf = wc && (translate_dim_calc(wc['formula'], mmap, meta['columns_by_guid'] || {}) ||
+                  translate_row_level_calc(wc['formula'], mmap, meta['columns_by_guid'] || {}))
+      if tf
+        dim = { 'id' => "m-#{dim_hdr.downcase.gsub(/\W+/, '-')}", 'name' => dim_hdr, 'formula' => tf }
+        warnings << "'#{cap}' dim '#{dim_hdr}' is a worksheet-local Tableau calc — translated inline: #{tf[0..140]}"
+      else
+        warnings << "no master column matched dim header '#{dim_hdr}' for '#{cap}' — falling back to raw header"
+        dim = { 'id' => "m-#{dim_hdr.downcase.gsub(/\W+/, '-')}", 'name' => dim_hdr }
+      end
     end
     if meas.nil?
       warnings << "no master column matched measure header '#{meas_hdr}' for '#{cap}'"
       meas = { 'id' => "m-#{meas_hdr.downcase.gsub(/\W+/,'-')}", 'name' => meas_hdr }
+    end
+    color_dim = nil
+    if color_hdr
+      color_dim = map_column(color_hdr, mmap)
+      if color_dim.nil?
+        wcc = (z['calculations'] || []).find { |c| c['name'].to_s.gsub(/^\[|\]$/, '').strip.casecmp?(color_hdr.to_s.strip) }
+        tfc = wcc && (translate_dim_calc(wcc['formula'], mmap, meta['columns_by_guid'] || {}) ||
+                      translate_row_level_calc(wcc['formula'], mmap, meta['columns_by_guid'] || {}))
+        if tfc
+          color_dim = { 'id' => "m-#{color_hdr.downcase.gsub(/\W+/, '-')}", 'name' => color_hdr, 'formula' => tfc }
+          warnings << "'#{cap}' color dim '#{color_hdr}' is a worksheet-local Tableau calc — translated inline: #{tfc[0..140]}"
+        else
+          warnings << "no master column matched color header '#{color_hdr}' for '#{cap}' — falling back to raw header"
+          color_dim = { 'id' => "m-#{color_hdr.downcase.gsub(/\W+/,'-')}", 'name' => color_hdr }
+        end
+      end
     end
 
     # Decide the Sigma aggregator. Priority:
@@ -922,7 +1119,10 @@ layout.each do |dash|
       if user_agg_formula
         warnings << "'#{cap}' measure '#{meas['name']}' is a Tableau User-aggregated calc — emitted its decomposed Sigma formula directly: #{user_agg_formula[0..140]}"
       else
-        warnings << "'#{cap}' measure '#{meas['name']}' has Tableau aggregation=User but its calc formula could not be auto-decomposed — falling back to Sum([Master/#{meas['name']}]), which is UNRESOLVABLE unless the master carries that column; translate the ratio by hand (add a `formula` to its master-columns.json entry)"
+        # Fall back to the CSV-header aggregation hint ("Avg. X" → Avg), not a
+        # raw column ref (which Sigma's yAxis silently Sum()s — bead z1d0).
+        sigma_agg = SIGMA_AGG[infer_csv_agg(meas_hdr) || 'Sum'] || 'Sum'
+        warnings << "'#{cap}' measure '#{meas['name']}' has Tableau aggregation=User but its calc formula could not be auto-decomposed — falling back to #{sigma_agg}([Master/#{meas['name']}]), which is only correct if a master column (or --master-col placeholder) carries that value"
       end
     end
 
@@ -936,6 +1136,12 @@ layout.each do |dash|
         dim_trunc = DATE_TRUNC[deriv]
         break
       end
+    end
+    # Header-derived fallback: Tableau CSV date headers carry the grain
+    # ("Month of Order Date" / "Week of Order Date") even when the
+    # column-instance derivation didn't resolve (bead ovud).
+    if dim_trunc.nil? && (hm = dim_hdr.match(/^(second|minute|hour|day|week|month|quarter|year) of /i))
+      dim_trunc = hm[1].downcase
     end
 
     el_id = "el-#{cap.downcase.gsub(/\W+/, '-')[0..40]}".sub(/-$/, '')
@@ -951,6 +1157,13 @@ layout.each do |dash|
                     aliases_for_dim.each { |a| parts << a['key'].inspect; parts << a['value'].inspect }
                     parts << "[Master/#{dim['name']}]"  # default: pass through raw value
                     "Switch(#{parts.join(', ')})"
+                  elsif dim_trunc == 'week'
+                    # Tableau weeks start SUNDAY (default date-options); Sigma's
+                    # DateTrunc("week") follows the warehouse week start (Monday
+                    # on Snowflake). Sigma Weekday() returns 1=Sunday, so the
+                    # Sunday-start bucket is convention-free arithmetic (s6fo:
+                    # weekly-grain parity compares the underlying date value).
+                    %(DateAdd("day", 1 - Weekday([Master/#{dim['name']}]), DateTrunc("day", [Master/#{dim['name']}])))
                   elsif dim_trunc
                     %(DateTrunc("#{dim_trunc}", [Master/#{dim['name']}]))
                   else
@@ -968,7 +1181,15 @@ layout.each do |dash|
                       end
 
     dim_col_obj = { 'id' => "x-#{el_id}", 'name' => dim['name'], 'formula' => dim_formula }
-    dim_col_obj['format'] = { 'kind' => 'datetime', 'formatString' => '%b %Y' } if dim_trunc
+    if dim_trunc
+      dim_col_obj['format'] = { 'kind' => 'datetime',
+                                'formatString' => dim_trunc == 'week' ? '%b %d, %Y' : '%b %Y' }
+    end
+    color_col_obj = nil
+    if color_dim
+      color_col_obj = { 'id' => "c-#{el_id}", 'name' => color_dim['name'],
+                        'formula' => color_dim['formula'] || "[Master/#{color_dim['name']}]" }
+    end
     meas_col_obj = { 'id' => "y-#{el_id}", 'name' => meas['name'], 'formula' => measure_formula }
     # Format priority:
     #   1. explicit `format` on the master-map entry
@@ -1001,6 +1222,85 @@ layout.each do |dash|
     kind = SIGMA_KIND[z['chart_kind']] || 'bar-chart'
     if z['chart_kind'] == 'automatic'
       warnings << "'#{cap}' has chart_kind=automatic — defaulted to bar-chart; verify against PNG"
+    end
+
+    # Scatter fast path (bead z1d0, ported from the PBI builder's verified
+    # ry0n fix): Sigma's scatter xAxis is a GROUPING axis — binding an
+    # AGGREGATE makes it evaluate per source row and the chart plots raw rows.
+    # Pre-aggregate in a HIDDEN grouped source table on the Data page (dim +
+    # x/y aggregates grouped by the dim), then point the scatter at it with
+    # ALL-RAW column refs. The detail dim MUST stay on color:{by:category} —
+    # points sharing an x merge to a null y without it.
+    if kind == 'scatter-chart' && headers.length >= 3
+      meas2_hdr = headers[2].to_s.strip
+      meas2 = map_column(meas2_hdr, mmap) ||
+              { 'id' => "m-#{meas2_hdr.downcase.gsub(/\W+/, '-')}", 'name' => meas2_hdr }
+      # Tableau scatter: Cols shelf = X measure, Rows shelf = Y measure. The
+      # CSV column order is not axis order — resolve via the shelves; fall
+      # back to CSV order [dim, y, x] (matches Tableau's export convention).
+      shelf_cap = lambda do |shelf|
+        f = (shelf || {})['fields']&.find { |x| x['role'] == 'measure' }
+        f && resolve_shelf_field(f, meta, mmap).last.to_s.strip
+      end
+      x_cap = shelf_cap.call(z['cols_shelf'])
+      y_cap = shelf_cap.call(z['rows_shelf'])
+      m_for = lambda do |hdr_cap|
+        h = hdr_cap.to_s.sub(/^(?:sum|avg|average|min|max|median|distinct count|count) of /i, '')
+                   .sub(/^(?:avg|sum|min|max|med|cnt|ctd)\.\s*/i, '').strip
+        [[meas, meas_hdr], [meas2, meas2_hdr]].find do |(_, mh)|
+          mh.to_s.sub(/^(?:sum|avg|average|min|max|median|distinct count|count) of /i, '')
+            .sub(/^(?:avg|sum|min|max|med|cnt|ctd)\.\s*/i, '').strip.casecmp?(h)
+        end
+      end
+      x_pair = (x_cap && m_for.call(x_cap)) || [meas2, meas2_hdr]
+      y_pair = (y_cap && m_for.call(y_cap)) || ([[meas, meas_hdr], [meas2, meas2_hdr]] - [x_pair]).first
+      agg_for = lambda do |mm, hdr|
+        next mm['formula'] if mm['formula'] # verbatim aggregate from master-map
+        a = SIGMA_AGG[infer_csv_agg(hdr) || 'Sum'] || 'Sum'
+        render_agg(a, "[Master/#{mm['name']}]")
+      end
+      src_id   = "#{el_id}-src"
+      src_name = "#{cap} Source"
+      gd = "#{src_id}-d"
+      gx = "#{src_id}-x"
+      gy = "#{src_id}-y"
+      data_elements << {
+        'id' => src_id, 'kind' => 'table', 'name' => src_name,
+        'source' => { 'kind' => 'table', 'elementId' => opts[:master_id] },
+        'columns' => [
+          { 'id' => gd, 'name' => dim['name'], 'formula' => dim['formula'] || "[Master/#{dim['name']}]" },
+          { 'id' => gx, 'name' => x_pair[0]['name'], 'formula' => agg_for.call(x_pair[0], x_pair[1]) },
+          { 'id' => gy, 'name' => y_pair[0]['name'], 'formula' => agg_for.call(y_pair[0], y_pair[1]) }
+        ],
+        'groupings' => [{ 'id' => "#{src_id}-g", 'groupBy' => [gd], 'calculations' => [gx, gy] }],
+        'visibleAsSource' => false
+      }
+      money_fmt = { 'kind' => 'number', 'formatString' => '$,.0f', 'currencySymbol' => '$' }
+      num_fmt = ->(n) { n.to_s.downcase =~ /(revenue|profit|cost|sales|amount|spend)/ ? money_fmt : { 'kind' => 'number', 'formatString' => ',.0f' } }
+      element = {
+        'id' => el_id, 'kind' => 'scatter-chart', 'name' => cap,
+        'source' => { 'kind' => 'table', 'elementId' => src_id },
+        'columns' => [
+          { 'id' => "c-#{el_id}", 'name' => dim['name'], 'formula' => "[#{src_name}/#{dim['name']}]" },
+          { 'id' => "x-#{el_id}", 'name' => x_pair[0]['name'], 'formula' => "[#{src_name}/#{x_pair[0]['name']}]", 'format' => num_fmt.call(x_pair[0]['name']) },
+          { 'id' => "y-#{el_id}", 'name' => y_pair[0]['name'], 'formula' => "[#{src_name}/#{y_pair[0]['name']}]", 'format' => num_fmt.call(y_pair[0]['name']) }
+        ],
+        'xAxis' => { 'columnId' => "x-#{el_id}" },
+        'yAxis' => { 'columnIds' => ["y-#{el_id}"] },
+        'color' => { 'by' => 'category', 'column' => "c-#{el_id}" }
+      }
+      unless rows.any? { |r| r[0].nil? || r[0].to_s.strip.empty? }
+        element['columns'] << { 'id' => "nn-c-#{el_id}", 'name' => "#{dim['name']} Not Null",
+                                'formula' => "IsNotNull([#{src_name}/#{dim['name']}])" }
+        element['filters'] = [{ 'id' => "flt-#{el_id}-nn", 'columnId' => "nn-c-#{el_id}",
+                                'kind' => 'list', 'mode' => 'include',
+                                'selectionMode' => 'multiple', 'values' => [true] }]
+      end
+      element['_worksheet'] = cap
+      element['_dashboard'] = dash['dashboard']
+      elements << element
+      warnings << "'#{cap}' scatter pre-aggregated via hidden grouped source '#{src_name}' (x=#{x_pair[0]['name']}, y=#{y_pair[0]['name']}, detail=#{dim['name']}) — raw refs on axes, color=detail (PBI ry0n design)"
+      next
     end
 
     # Dual-axis / combo detection: if Tableau marked this worksheet as
@@ -1040,6 +1340,36 @@ layout.each do |dash|
       'columns' => [dim_col_obj, meas_col_obj]
     }
     element['columns'] << extra_meas_col if extra_meas_col
+    if color_col_obj && !%w[pie-chart donut-chart table pivot-table].include?(kind)
+      element['columns'] << color_col_obj
+      element['color'] = { 'by' => 'category', 'column' => color_col_obj['id'] }
+    end
+
+    # Null-dim exclusion (Tableau↔Sigma join-semantics parity): Sigma DM
+    # relationships are LEFT joins, so fact rows without a dim match surface a
+    # NULL dim bucket that the Tableau view excluded. When the Tableau CSV has
+    # NO null dim values, mirror the exclusion with a verified bool-filter
+    # (IsNotNull calc column + include:[true] list filter — the spec shape from
+    # reference_sigma_rls_cls_spec_shape). A no-null dataset makes this a
+    # harmless no-op.
+    null_excl_filters = []
+    # Charts only: a table/pivot RENDERS every column, so the helper column
+    # would show up as a visible "X Not Null" column (and crosstabs keep their
+    # null buckets in Tableau anyway).
+    null_excl_kinds = %w[bar-chart line-chart area-chart combo-chart pie-chart donut-chart scatter-chart]
+    [[dim_csv_idx, dim_col_obj], [color_csv_idx, color_col_obj]].each do |(ci, cobj)|
+      next unless null_excl_kinds.include?(kind)
+      next if ci.nil? || cobj.nil?
+      next if rows.any? { |r| r[ci].nil? || r[ci].to_s.strip.empty? } # Tableau kept nulls
+      nn_id = "nn-#{cobj['id']}"
+      element['columns'] << { 'id' => nn_id, 'name' => "#{cobj['name']} Not Null",
+                              'formula' => "IsNotNull(#{cobj['formula'] || "[Master/#{cobj['name']}]"})" }
+      null_excl_filters << { 'columnId' => nn_id, 'kind' => 'list', 'mode' => 'include',
+                             'selectionMode' => 'multiple', 'values' => [true] }
+    end
+    unless null_excl_filters.empty?
+      warnings << "'#{cap}' null-dim exclusion: #{null_excl_filters.size} IsNotNull filter(s) emitted (Tableau view shows no null dim bucket; Sigma LEFT joins would)"
+    end
 
     # Reference lines / bands / trendlines from Tableau → Sigma `refMarks`.
     # Verified shape (from a UI-built workbook readback, 2026-05-21):
@@ -1218,7 +1548,7 @@ layout.each do |dash|
     # If channels.color is set, that's a multi-series signal. Emit a TODO note
     # so the agent can fan-out the yAxis with one If() per category. We don't
     # auto-fan because we don't have a reliable categorical-values list here.
-    if z.dig('channels', 'color', 'column')
+    if z.dig('channels', 'color', 'column') && color_col_obj.nil? && kind != 'pie-chart'
       warnings << "'#{cap}' has a color channel on #{z['channels']['color']['column']} — chart is single-series; agent should fan-out yAxis with one If() per category (see refs/workbook-layout.md \"Multi-series chart patterns\")"
     end
 
@@ -1247,7 +1577,21 @@ layout.each do |dash|
     # period_type, etc.). We map the caption → master column via the same
     # regex map used for dim/measure.
     value_filters = (z['filters'] || []).reject { |f| f['is_action'] }
-    el_filters = []
+    el_filters = null_excl_filters
+    # Element filters must reference a column ON THE TARGET ELEMENT (bead 320u)
+    # — the master-namespace ids ("m-region") don't exist on the chart and the
+    # POST rejects them. Reuse the chart's own column when the filter targets
+    # the plotted dim/measure; otherwise add a hidden passthrough column.
+    el_filter_col_for = lambda do |m|
+      hit = (element['columns'] || []).find { |c| c['name'].to_s.strip.casecmp?(m['name'].to_s.strip) }
+      return hit['id'] if hit
+      fid = "f-#{el_id}-#{m['name'].to_s.downcase.gsub(/\W+/, '-')}"
+      unless (element['columns'] || []).any? { |c| c['id'] == fid }
+        element['columns'] << { 'id' => fid, 'name' => m['name'],
+                                'formula' => m['formula'] || "[Master/#{m['name']}]" }
+      end
+      fid
+    end
     value_filters.each do |f|
       fcap = f['column_caption'] || f['raw_param']
       m = fcap ? map_column(fcap, mmap) : nil
@@ -1257,10 +1601,17 @@ layout.each do |dash|
       end
       case f['kind']
       when 'list'
+        # A Tableau categorical filter with NO members = "All" (the member list
+        # is only materialized for explicit selections). An empty Sigma
+        # include-list would filter out EVERY row — skip it (bead 320u).
+        if (f['members'] || []).empty?
+          warnings << "'#{cap}' quick filter on '#{fcap}' has no explicit members (Tableau 'All') — no Sigma element filter emitted"
+          next
+        end
         el_filters << {
-          'columnId' => m['id'],
+          'columnId' => el_filter_col_for.call(m),
           'kind' => 'list', 'mode' => 'include', 'selectionMode' => 'multiple',
-          'values' => (f['members'] || []), 'includeNulls' => 'never'
+          'values' => f['members'], 'includeNulls' => 'never'
         }
       when 'relative-date'
         # Tableau first-period=0, last-period=0 + period-type=year means
@@ -1273,7 +1624,7 @@ layout.each do |dash|
         inc_null = (f['include_null'].to_s == 'true' ? 'always' : 'never')
         if f['first_period'].to_i.zero? && f['last_period'].to_i.zero?
           el_filters << {
-            'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'current',
+            'columnId' => el_filter_col_for.call(m), 'kind' => 'date-range', 'mode' => 'current',
             'unit' => period, 'includeNulls' => inc_null
           }
           warnings << "'#{cap}' relative-date 'this #{period}' → element filter mode:current unit:#{period} (rolls over automatically; verified to filter chart-data SQL, bead z135)"
@@ -1281,14 +1632,14 @@ layout.each do |dash|
           start_d, end_d = relative_period_bounds(period, f['first_period'], f['last_period'])
           if start_d
             el_filters << {
-              'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'between',
+              'columnId' => el_filter_col_for.call(m), 'kind' => 'date-range', 'mode' => 'between',
               'startDate' => start_d, 'endDate' => end_d,
               'includeNulls' => inc_null
             }
             warnings << "'#{cap}' relative-date window #{f['first_period']}..#{f['last_period']} #{period}s → element filter mode:between (#{start_d[0..9]}..#{end_d[0..9]}); FROZEN — re-run to refresh"
           else
             el_filters << {
-              'columnId' => m['id'], 'kind' => 'date-range', 'mode' => 'relative',
+              'columnId' => el_filter_col_for.call(m), 'kind' => 'date-range', 'mode' => 'relative',
               'unit' => period, 'count' => 1,
               'includeNulls' => inc_null
             }
@@ -1297,7 +1648,7 @@ layout.each do |dash|
         end
       when 'number-range'
         el_filters << {
-          'columnId' => m['id'], 'kind' => 'number-range', 'mode' => 'between',
+          'columnId' => el_filter_col_for.call(m), 'kind' => 'number-range', 'mode' => 'between',
           'min' => f['min'], 'max' => f['max'], 'includeNulls' => 'never'
         }
       end
@@ -1369,8 +1720,9 @@ layout.each do |dash|
       warnings << "'#{cap}' uses Tableau calc #{c['name']}: #{hint}. Formula: #{formula[0..120]}"
     end
 
-    # Stamp with worksheet name so the page-per-worksheet emitter can group.
+    # Stamp with worksheet + dashboard so the page emitters can group.
     element['_worksheet'] = cap
+    element['_dashboard'] = dash['dashboard']
     elements << element
   end
 end
@@ -1604,7 +1956,7 @@ if opts[:pages_mode] == :worksheet
   pages = []
   by_ws = elements.group_by { |e| e['_worksheet'] }
   by_ws.each do |ws_name, els|
-    els.each { |e| e.delete('_worksheet') }
+    els.each { |e| e.delete('_worksheet'); e.delete('_dashboard') }
     page_extras = []
     if title_text
       page_extras << {
@@ -1644,11 +1996,55 @@ if opts[:pages_mode] == :worksheet
   end
   File.write(opts[:out], JSON.pretty_generate({ 'pages' => pages }))
   warn "wrote #{opts[:out]} (page-per-worksheet: #{pages.size} pages, #{auto_controls.size} auto-controls per page)"
+elsif opts[:pages_mode] == :dashboard
+  # One Sigma page per Tableau DASHBOARD (bead ptrt) — the fat-workbook fix:
+  # 4 dashboards must become 4 laid-out pages, each with its own title text and
+  # its own copy of the dashboard-global controls (ids suffixed for global
+  # uniqueness, control refs in calc formulas rewritten per page).
+  dash_order = layout.map { |d| d['dashboard'] }
+  by_dash = elements.group_by { |e| e['_dashboard'] }
+  pages = []
+  dash_order.each do |dash_name|
+    els = by_dash[dash_name]
+    next if els.nil? || els.empty?
+    els.each { |e| e.delete('_worksheet'); e.delete('_dashboard') }
+    d_slug = dash_name.to_s.downcase.gsub(/\W+/, '-')[0..30].sub(/-$/, '')
+    page_extras = [{
+      'id'   => "title-#{d_slug}",
+      'kind' => 'text',
+      # White span: the layout builder wraps this in the DARK header band.
+      'body' => %(# <span style="color: #FFFFFF">#{dash_name}</span>)
+    }]
+    ctl_rewrites = {}
+    (param_controls + auto_controls).each do |c|
+      dup = JSON.parse(c.to_json)
+      original_cid = dup['controlId']
+      dup['id']        = "#{dup['id']}-#{d_slug[0..20]}"
+      dup['controlId'] = "#{dup['controlId']}-#{d_slug[0..20]}"
+      ctl_rewrites[original_cid] = dup['controlId']
+      page_extras << dup
+    end
+    els.each do |el|
+      (el['columns'] || []).each do |col|
+        f = col['formula'].to_s
+        ctl_rewrites.each { |from, to| f = f.gsub("[#{from}]", "[#{to}]") }
+        col['formula'] = f
+      end
+    end
+    pages << { 'name' => dash_name, 'elements' => page_extras + els }
+  end
+  File.write(opts[:out], JSON.pretty_generate({ 'pages' => pages, 'data_elements' => data_elements }))
+  warn "wrote #{opts[:out]} (page-per-dashboard: #{pages.size} page(s), #{data_elements.size} hidden data element(s), #{(param_controls + auto_controls).size} controls per page)"
 else
-  elements.each { |e| e.delete('_worksheet') }
+  elements.each { |e| e.delete('_worksheet'); e.delete('_dashboard') }
   all_elements = all_extras + elements
   File.write(opts[:out], JSON.pretty_generate(all_elements))
   warn "wrote #{opts[:out]}  (#{all_elements.size} elements: #{all_extras.size} controls/text + #{elements.size} charts)"
+  if data_elements.any?
+    side = opts[:out].sub(/\.json$/, '-data-elements.json')
+    File.write(side, JSON.pretty_generate(data_elements))
+    warn "wrote #{side} (#{data_elements.size} HIDDEN data-page element(s) — scatter grouped sources; add them to the workbook's Data page)"
+  end
 end
 warnings.each { |w| warn "  WARN  #{w}" }
 

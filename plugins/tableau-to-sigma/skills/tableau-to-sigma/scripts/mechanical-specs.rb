@@ -59,10 +59,16 @@ module MechanicalSpecs
   end
 
   # A header-matching regex for a display name that ALSO tolerates a Tableau CSV
-  # aggregation prefix ("Sum of X", "Distinct count of X", ...). build-charts
-  # passes the raw CSV header to map_column, so the prefix must be optional.
+  # aggregation prefix ("Sum of X", "Distinct count of X", ...), the dotted
+  # short-agg form ("Avg. Days To Ship" — bead z1d0/320u), and a date-part
+  # prefix ("Month of Order Date" / "Week of Order Date" — bead ovud: date-axis
+  # headers must resolve to the underlying date master column). build-charts
+  # passes the raw CSV header to map_column, so every prefix must be optional.
   def header_regex(dname)
-    "(?i)^(?:(?:sum|avg|average|min|max|median|distinct count|count) of )?#{Regexp.escape(dname)}$"
+    '(?i)^(?:(?:sum|avg|average|min|max|median|distinct count|count) of ' \
+      '|(?:avg|sum|min|max|med|cnt|ctd)\.\s*' \
+      '|(?:second|minute|hour|day|week|month|quarter|year) of ' \
+      ")?#{Regexp.escape(dname)}$"
   end
 
   # A pure-GUID display name is an internal converter artifact, never a CSV header.
@@ -175,6 +181,289 @@ module MechanicalSpecs
        MODEL_QUANTILE MODEL_PERCENTILE].select { |fn| formula.to_s =~ /\b#{fn}\s*\(/i }
   end
 
+  # ---- caption hygiene (bead 320u) ------------------------------------------
+  # Tableau captions can carry trailing/leading whitespace ("Order Date ").
+  # Sigma TRIMS display names server-side, so an untrimmed ref
+  # `[Order Fact View/Order Date ]` errors "Dependency not found" against the
+  # trimmed readback label. Trim every element/column/metric name AND every
+  # bracketed-ref segment in every formula, model-wide, before anything else
+  # consumes the names.
+  def trim_ref_segments(formula)
+    formula.to_s.gsub(/\[([^\]]+)\]/) do
+      "[#{Regexp.last_match(1).split('/', -1).map(&:strip).join('/')}]"
+    end
+  end
+
+  def trim_spec_whitespace!(model)
+    n = 0
+    all_elements(model).each do |el|
+      if el['name'].is_a?(String) && el['name'] != el['name'].strip
+        el['name'] = el['name'].strip
+        n += 1
+      end
+      ((el['columns'] || []) + (el['metrics'] || [])).each do |c|
+        if c['name'].is_a?(String) && c['name'] != c['name'].strip
+          c['name'] = c['name'].strip
+          n += 1
+        end
+        next unless c['formula']
+        t = trim_ref_segments(c['formula'])
+        if t != c['formula']
+          c['formula'] = t
+          n += 1
+        end
+      end
+      (el['relationships'] || []).each do |r|
+        if r['name'].is_a?(String) && r['name'] != r['name'].strip
+          r['name'] = r['name'].strip
+          n += 1
+        end
+      end
+    end
+    n
+  end
+
+  # ---- relationship-name dedupe (bead ovud) ----------------------------------
+  # A fact with 2+ FKs to ONE dim (ship/return/order date → DATE_DIM) gets 2+
+  # relationships ALL NAMED after the dim table. Cross-element refs resolve via
+  # the relationship NAME ([Base/REL_NAME/Field]), so duplicate names make every
+  # join after the first unreachable — the derived view's dim columns silently
+  # bind to one arbitrary join (date axes NULL-bucket). Fix: role-based unique
+  # names ("DATE_DIM (Ship Date)") derived from the source FK column, and
+  # rewrite the derived-element refs round-robin (the converter emits one
+  # column block per join instance, in relationship order).
+  def dedupe_relationship_names!(model)
+    els = all_elements(model)
+    by_id = els.each_with_object({}) { |e, h| h[e['id']] = e }
+    renamed = []
+    els.each do |el|
+      rels = el['relationships'] || []
+      next if rels.empty?
+      cols_by_id = (el['columns'] || []).each_with_object({}) { |c, h| h[c['id']] = c }
+      rels.group_by { |r| r['name'] }.each do |name, group|
+        next if name.to_s.empty? || group.size < 2
+        old_name = name
+        group.each do |r|
+          src_col = cols_by_id[r.dig('keys', 0, 'sourceColumnId')]
+          role = src_col && col_display(src_col)
+          role = role.to_s.sub(/\s+Key\z/i, '').strip
+          r['name'] = role.empty? ? "#{old_name} (#{r['id']})" : "#{old_name} (#{role})"
+        end
+        # Disambiguate any residual collisions (two FKs with the same display).
+        seen = Hash.new(0)
+        group.each do |r|
+          seen[r['name']] += 1
+          r['name'] = "#{r['name']} #{seen[r['name']]}" if seen[r['name']] > 1
+        end
+        renamed << { element: el, old: old_name, rels: group }
+      end
+    end
+    # Rewrite cross-element refs that used a now-renamed relationship name.
+    # The converter denormalizes one column block PER JOIN INSTANCE in
+    # relationship order, so the k-th duplicate of a given [BASE/OLD/Field]
+    # formula belongs to the k-th renamed relationship.
+    renamed.each do |rn|
+      base_el = rn[:element]
+      base_names = [base_el['name'],
+                    display_name((base_el.dig('source', 'path') || []).last.to_s),
+                    (base_el.dig('source', 'path') || []).last].compact.uniq.reject(&:empty?)
+      els.each do |el|
+        next if el['id'] == base_el['id']
+        seen_per_formula = Hash.new(0)
+        (el['columns'] || []).each do |c|
+          f = c['formula'].to_s
+          base = base_names.find { |b| f.start_with?("[#{b}/#{rn[:old]}/") }
+          next unless base
+          k = seen_per_formula[f]
+          seen_per_formula[f] += 1
+          rel = rn[:rels][k] || rn[:rels].last
+          c['formula'] = f.sub("[#{base}/#{rn[:old]}/", "[#{base}/#{rel['name']}/")
+        end
+      end
+    end
+    renamed.size
+  end
+
+  # ---- relationship reachability assert (bead ovud, post-fixup guard) --------
+  # Every cross-element ref middle segment ([Base/REL/Field]) must name a
+  # relationship that exists on the base element, and relationship names must be
+  # unique per element. Returns an array of violation strings (empty = clean).
+  # Run BEFORE the DM POST so an unreachable join fails loudly instead of
+  # NULL-bucketing every chart grouped through it.
+  def relationship_reachability_violations(model)
+    els = all_elements(model)
+    by_id = els.each_with_object({}) { |e, h| h[e['id']] = e }
+    out = []
+    els.each do |el|
+      names = (el['relationships'] || []).map { |r| r['name'] }
+      counts = names.each_with_object(Hash.new(0)) { |n, h| h[n] += 1 }
+      dupes = counts.select { |_, v| v > 1 }.keys
+      dupes.each { |d| out << "element '#{elem_name(el)}': #{names.count(d)} relationships share the name #{d.inspect} — joins after the first are unreachable" }
+    end
+    els.each do |el|
+      src_el = el.dig('source', 'elementId') && by_id[el.dig('source', 'elementId')]
+      next unless src_el
+      rel_names = (src_el['relationships'] || []).map { |r| r['name'] }.compact
+      base_names = [src_el['name'], display_name((src_el.dig('source', 'path') || []).last.to_s),
+                    (src_el.dig('source', 'path') || []).last].compact.uniq.reject(&:empty?)
+      (el['columns'] || []).each do |c|
+        f = c['formula'].to_s
+        m = f.match(/\A\[([^\/\]]+)\/([^\/\]]+)\/([^\]]+)\]\z/)
+        next unless m
+        next unless base_names.include?(m[1])
+        next if rel_names.include?(m[2])
+        out << "derived column #{(col_display(c) || c['id']).inspect} refs relationship #{m[2].inspect} which does not exist on '#{elem_name(src_el)}' (have: #{rel_names.join(', ')})"
+      end
+    end
+    out
+  end
+
+  # ---- computed-key join recovery (bead ovud) ---------------------------------
+  # The converter SKIPS Tableau joins whose key is a computed expression
+  # (`DATE([Order Date]) = [Date Key]`) — Sigma relationships join on columns.
+  # Two mechanical recoveries:
+  #   (a) the fact element CARRIES the wrapped column → add a calc key column
+  #       (`Date([Order Date])`) and a relationship keyed on it.
+  #   (b) the wrapped column is VDS-only (not in the converter output / real
+  #       warehouse table) but the warehouse fact has "<CAPTION>_KEY"
+  #       (ORDER_DATE → ORDER_DATE_KEY) and the model already joins another
+  #       "* Date Key" FK to a date dim → add the missing base FK column, a
+  #       role-named relationship to that same dim element, AND a derived-view
+  #       date column named after the original caption ("Order Date" =
+  #       [FACT/DATE_DIM (Order Date)/Full Date]) so date-axis headers
+  #       ("Month of Order Date") resolve. Without this every date axis
+  #       NULL-buckets (the FATSCALE rehearsal failure).
+  # real_cols: { "TABLE" => [physical names] } from Phase 2. dim_catalogs:
+  # { "TABLE" => [{'name','type'}] } for picking the dim's date payload column.
+  # Returns an array of human-readable action messages.
+  def recover_computed_key_joins!(model, twb_xml, real_cols, dim_catalogs = {})
+    msgs = []
+    els = all_elements(model)
+    fact = els.select { |e| e.dig('source', 'kind') == 'warehouse-table' }
+              .reject { |e| elem_name(e) =~ / Dim$/i }
+              .max_by { |e| (e['columns'] || []).size }
+    return msgs unless fact
+    fact_table = (fact.dig('source', 'path') || []).last.to_s
+    derived = els.find { |e| e.dig('source', 'elementId') == fact['id'] }
+
+    # guid -> caption from the .twb column metadata.
+    cap_by_guid = {}
+    twb_xml.scan(/<column[^>]*caption='([^']*)'[^>]*name='\[([0-9a-f-]{36})[^']*\]'/i) do |cap, guid|
+      cap_by_guid[guid.downcase] ||= cap.gsub('&quot;', '"').strip
+    end
+    twb_xml.scan(/<column[^>]*name='\[([0-9a-f-]{36})[^']*\]'[^>]*caption='([^']*)'/i) do |guid, cap|
+      cap_by_guid[guid.downcase] ||= cap.gsub('&quot;', '"').strip
+    end
+
+    # Computed-key join expressions: one side FUNC([guid]), other side [guid].
+    joins = twb_xml.scan(%r{<expression op='='>\s*<expression op='([A-Z_]+)\(\[([0-9a-f-]{36})\][^']*'\s*/>\s*<expression op='\[([0-9a-f-]{36})[^']*\]'\s*/>\s*</expression>}i)
+    joins += twb_xml.scan(%r{<expression op='='>\s*<expression op='\[([0-9a-f-]{36})[^']*\]'\s*/>\s*<expression op='([A-Z_]+)\(\[([0-9a-f-]{36})\][^']*'\s*/>\s*</expression>}i)
+                    .map { |a, fn, b| [fn, b, a] }
+    fn_map = { 'DATE' => 'Date', 'DATETIME' => 'Date' }
+
+    joins.each do |fn, src_guid, _tgt_guid|
+      sigma_fn = fn_map[fn.to_s.upcase]
+      next unless sigma_fn
+      caption = cap_by_guid[src_guid.downcase]
+      next if caption.nil? || caption.empty?
+      slug_cap = slug(caption)
+      fact_cols = fact['columns'] || []
+      has_caption_col = fact_cols.any? { |c| col_display(c).to_s.casecmp?(caption) }
+
+      # Pick the date-dim join to mirror: an existing fact relationship whose
+      # source FK display ends in "Date Key" (ship/return date FKs).
+      cols_by_id = fact_cols.each_with_object({}) { |c, h| h[c['id']] = c }
+      mirror = (fact['relationships'] || []).find do |r|
+        sc = cols_by_id[r.dig('keys', 0, 'sourceColumnId')]
+        sc && col_display(sc).to_s =~ /Date Key\z/i
+      end
+
+      if has_caption_col && mirror
+        # (a) calc key column + relationship.
+        key_id = "c-#{slug_cap}-join-key"
+        unless fact_cols.any? { |c| c['id'] == key_id }
+          fact['columns'] << { 'id' => key_id, 'name' => "#{caption} Join Key",
+                               'formula' => "#{sigma_fn}([#{caption}])" }
+          fact['order'] << key_id if fact['order']
+        end
+        mirror_tgt = els.find { |e| e['id'] == mirror['targetElementId'] }
+        rel_name = "#{(mirror_tgt&.dig('source', 'path') || []).last.to_s.upcase} (#{caption})"
+        fact['relationships'] << { 'id' => "rel-#{slug_cap}", 'name' => rel_name,
+                                   'targetElementId' => mirror['targetElementId'],
+                                   'keys' => [{ 'sourceColumnId' => key_id,
+                                                'targetColumnId' => mirror.dig('keys', 0, 'targetColumnId') }] }
+        msgs << "computed-key join recovered (calc key): #{fact_table} → rel '#{rel_name}' on #{sigma_fn}([#{caption}])"
+        next
+      end
+
+      # (b) VDS-only column: recover via the physical "<CAPTION>_KEY" FK.
+      phys_key = "#{caption.gsub(/\s+/, '_').upcase}_KEY"
+      real_fact = (real_cols || {})[fact_table.upcase] || []
+      next unless real_fact.map { |c| c.to_s.upcase }.include?(phys_key) && mirror
+      key_disp = display_name(phys_key) # "Order Date Key"
+      key_col = fact_cols.find { |c| col_display(c).to_s.casecmp?(key_disp) }
+      unless key_col
+        key_col = { 'id' => "c-#{slug(key_disp)}", 'name' => key_disp,
+                    'formula' => "[#{fact_table}/#{key_disp}]" }
+        fact['columns'] << key_col
+        fact['order'] << key_col['id'] if fact['order']
+      end
+      tgt_el = els.find { |e| e['id'] == mirror['targetElementId'] }
+      dim_table = (tgt_el&.dig('source', 'path') || []).last.to_s
+      rel_name = "#{dim_table.upcase} (#{caption})"
+      unless (fact['relationships'] || []).any? { |r| r['name'] == rel_name }
+        fact['relationships'] << { 'id' => "rel-#{slug_cap}", 'name' => rel_name,
+                                   'targetElementId' => mirror['targetElementId'],
+                                   'keys' => [{ 'sourceColumnId' => key_col['id'],
+                                                'targetColumnId' => mirror.dig('keys', 0, 'targetColumnId') }] }
+      end
+      # Date payload column for the derived view, named after the ORIGINAL
+      # caption so chart headers ("Month of Order Date") resolve to it.
+      payload = ((dim_catalogs[dim_table.upcase] || []).find { |c| c['type'].to_s =~ /date/i } || {})['name']
+      payload_disp = payload ? display_name(payload) : 'Full Date'
+      base_seg = (fact['name'] && !fact['name'].to_s.empty?) ? fact['name'] : fact_table
+      if derived && !(derived['columns'] || []).any? { |c| col_display(c).to_s.casecmp?(caption) }
+        dcol = { 'id' => "c-#{slug_cap}", 'name' => caption,
+                 'formula' => "[#{base_seg}/#{rel_name}/#{payload_disp}]" }
+        derived['columns'] << dcol
+        derived['order'] << dcol['id'] if derived['order']
+      end
+      msgs << "computed-key join recovered (physical FK): #{fact_table}.#{key_disp} → rel '#{rel_name}'; derived date column '#{caption}' = [#{base_seg}/#{rel_name}/#{payload_disp}]"
+    end
+    msgs
+  end
+
+  # ---- base-calc exposure (bead ovud/3w4d follow-through) ---------------------
+  # The converter keeps single-table calc columns (Ship Speed Category =
+  # If([Days To Ship] <= 2, ...)) on the BASE fact element, but the workbook
+  # master sources the DERIVED "<Fact> View" — a column not re-exposed there is
+  # unreachable and its chart dim falls back to an unresolvable raw header.
+  # Append a passthrough ref on the derived view for every base calc column
+  # that isn't already exposed. Idempotent.
+  def expose_base_calcs_on_derived!(model)
+    els = all_elements(model)
+    by_id = els.each_with_object({}) { |e, h| h[e['id']] = e }
+    added = 0
+    els.each do |el|
+      src = el.dig('source', 'elementId') && by_id[el.dig('source', 'elementId')]
+      next unless src && src.dig('source', 'kind') == 'warehouse-table'
+      src_name = src['name'] && !src['name'].to_s.empty? ? src['name'] : display_name((src.dig('source', 'path') || []).last.to_s)
+      have = (el['columns'] || []).map { |c| col_display(c).to_s.downcase }
+      (src['columns'] || []).each do |c|
+        f = c['formula'].to_s
+        next if f.empty? || f =~ /\A\[[^\]]+\]\z/ # bare base refs are already exposed
+        lbl = (c['name'] || col_display(c)).to_s.strip
+        next if lbl.empty? || have.include?(lbl.downcase)
+        nid = "c-#{slug(lbl)}-dv"
+        el['columns'] << { 'id' => nid, 'name' => lbl, 'formula' => "[#{src_name}/#{lbl}]" }
+        el['order'] << nid if el['order']
+        have << lbl.downcase
+        added += 1
+      end
+    end
+    added
+  end
+
   # DM-spec fixup (mechanical). See module doc. Returns
   #   { fixed: <n formulas rewritten>, dropped: [<dropped calc display names>] }.
   # real_columns: optional { "TABLE" => Set/Array of UPPER physical column names }
@@ -192,6 +481,15 @@ module MechanicalSpecs
     end
     real = {}
     (real_columns || {}).each { |t, cols| real[t.to_s.upcase] = cols.map { |c| c.to_s.upcase }.to_set }
+    # Caption hygiene FIRST (bead 320u): Sigma trims display names server-side,
+    # so trailing-space captions must be trimmed everywhere refs are built.
+    trim_spec_whitespace!(model)
+    # Role-based unique relationship names (bead ovud): multi-FK-to-one-dim
+    # duplicate names make joins unreachable and date axes NULL-bucket.
+    dedupe_relationship_names!(model)
+    # Re-expose base-fact calc columns on the derived view so chart dims like
+    # "Ship Speed Category" resolve through the master.
+    expose_base_calcs_on_derived!(model)
     els = all_elements(model)
     by_id = els.each_with_object({}) { |e, h| h[e['id']] = e }
     guid_idx = guid_display_index(*els)
@@ -355,8 +653,10 @@ module MechanicalSpecs
   # against the LIVE readback labels in resolve_real_labels, not guessed here.
   def expected_label(col)
     f = col['formula'].to_s
-    # A calc column (explicit name, formula is not a single bare ref) keeps its name.
-    return col['name'] if col['name'] && !col['name'].to_s.empty? && f !~ /\A\[[^\]]+\]\s*\z/
+    # An explicitly-named column keeps its name — Sigma honors the spec `name`
+    # as the display label (calc columns, fact base columns, AND recovered
+    # passthrough columns like the ovud order-date payload column).
+    return col['name'] if col['name'] && !col['name'].to_s.empty?
     tail = f[/\[([^\]]+)\]\s*\z/, 1]
     return (col['name'] && !col['name'].to_s.empty? ? col['name'] : nil) unless tail
     parts = tail.split('/')
@@ -475,20 +775,36 @@ module MechanicalSpecs
   end
 
   # Assemble the full workbook spec: a hidden master table on page-data sourcing
-  # the DM fact element, plus a dashboard page of the build-charts elements.
-  def build_wb_spec(name:, dm_id:, fact_eid:, master_columns:, chart_elements:, folder_id: nil)
+  # the DM fact element, plus dashboard page(s) of the build-charts elements.
+  #
+  # chart_elements: either a flat array (single dashboard page named after the
+  # workbook — legacy) OR an array of { 'name' =>, 'elements' => } page hashes
+  # (one Sigma page per Tableau dashboard — bead ptrt).
+  # data_elements: extra HIDDEN elements for the data page (e.g. the scatter
+  # grouped-source tables — bead z1d0).
+  def build_wb_spec(name:, dm_id:, fact_eid:, master_columns:, chart_elements:, folder_id: nil,
+                    data_elements: [])
+    master = {
+      'id' => 'master', 'kind' => 'table', 'name' => 'Master', 'visibleAsSource' => false,
+      'source' => { 'kind' => 'data-model', 'dataModelId' => dm_id, 'elementId' => fact_eid },
+      'columns' => master_columns, 'order' => master_columns.map { |c| c['id'] }
+    }
+    chart_pages =
+      if chart_elements.is_a?(Array) && chart_elements.all? { |e| e.is_a?(Hash) && e.key?('elements') && e.key?('name') }
+        chart_elements.each_with_index.map do |pg, i|
+          { 'id' => "page-dash-#{i + 1}", 'name' => pg['name'], 'elements' => pg['elements'] }
+        end
+      else
+        [{ 'id' => 'page-dash', 'name' => name, 'elements' => chart_elements }]
+      end
     spec = {
       'name' => name,
       'description' => 'Generated mechanically from Tableau via tableau-to-sigma (convert_tableau_to_sigma + build-charts-from-signals).',
       'schemaVersion' => 1,
       'pages' => [
         { 'id' => 'page-data', 'name' => 'Data',
-          'elements' => [{
-            'id' => 'master', 'kind' => 'table', 'name' => 'Master', 'visibleAsSource' => false,
-            'source' => { 'kind' => 'data-model', 'dataModelId' => dm_id, 'elementId' => fact_eid },
-            'columns' => master_columns, 'order' => master_columns.map { |c| c['id'] }
-          }] },
-        { 'id' => 'page-dash', 'name' => name, 'elements' => chart_elements }
+          'elements' => [master] + (data_elements || []) },
+        *chart_pages
       ]
     }
     spec['folderId'] = folder_id if folder_id
