@@ -59,6 +59,10 @@ OptionParser.new do |p|
   p.on('--out PATH')         { |v| opts[:out] = v }
   p.on('--layout-out PATH')  { |v| opts[:layout_out] = v }
   p.on('--name NAME')        { |v| opts[:name] = v }
+  # The SOURCE report/dashboard display name (e.g. "EMPLOYEE DASHBOARD") —
+  # header-band title fallback when a page has no promotable title textbox and
+  # its own name is a generic auto-name ("Page 1"). See resolve_header_title.
+  p.on('--source-title NAME') { |v| opts[:source_title] = v }
   p.on('--folder-id ID')     { |v| opts[:folder] = v }
 end.parse!
 %i[sig mmap out].each { |k| abort("missing --#{k.to_s.tr('_','-')}") unless opts[k] }
@@ -120,6 +124,74 @@ def qr_leaf(qr, fallback = 'Value')
   leaf = s.split('.').last.to_s
   leaf.empty? ? fallback : leaf
 end
+
+# ---------------------------------------------------------------------------
+# Derived element titles (phase-e layout-quality fix): classic report.json
+# visuals routinely carry NO objects.title, and the old fallback surfaced the
+# RAW visual id ("291ef87d16c50d7a3808") as the chart's display name. Derive a
+# human title from the visual's projections instead — a raw id must NEVER
+# surface as a display name (layout_lint.rb fails the build if one does).
+# ---------------------------------------------------------------------------
+
+# Humanized leaf for titles: strip agg wrappers + date-hierarchy "Variation"
+# tails, underscores -> spaces, ALL-CAPS warehouse names -> Title Case (short
+# acronyms like ZIP/ID stay upcased).
+def title_leaf(qr, fallback = nil)
+  s = qr.to_s.strip
+  # "T.COL.Variation.Date Hierarchy.Month" -> the base column "T.COL"
+  s = Regexp.last_match(1) if s =~ /\A(.+?)\.Variation\..+\z/i
+  leaf = qr_leaf(s, nil)
+  return fallback if leaf.nil? || leaf.empty?
+  words = leaf.gsub(/_+/, ' ').strip.split(/\s+/)
+  words.map { |w| w =~ /\A[A-Z0-9]+\z/ && w.length > 3 ? w.capitalize : w }.join(' ')
+end
+
+# True when a dimension queryRef is date-shaped (date hierarchy / date-named
+# column) — those visuals read better as "<Measure> Over Time".
+def dateish_qr?(qr)
+  qr.to_s =~ /variation|hierarchy|\b(date|month|year|quarter|week|day)\b/i
+end
+
+# "Absence Count by Department" / "Hours by Location" / "Hires Over Time" —
+# derived purely from the visual's role projections. Returns nil only when the
+# visual has no usable bindings (caller falls back to the kind label).
+def derived_title(rec, kind)
+  b = rec['bindings'] || {}
+  vals = b['Values'] || b['Y'] || []
+  dims = b['Category'] || b['Axis'] || b['X'] || b['Group'] || b['Rows'] || b['Fields'] || []
+  case kind
+  when 'kpi-chart'
+    title_leaf(vals.first || dims.first)
+  when 'table'
+    leaves = (b['Values'] || []).map { |q| title_leaf(q) }.compact.uniq
+    return nil if leaves.empty?
+    leaves.length > 3 ? "#{leaves.first(3).join(', ')} +#{leaves.length - 3}" : leaves.join(', ')
+  when 'pivot-table'
+    v = title_leaf(vals.first)
+    r = title_leaf((b['Rows'] || b['Category'] || []).first)
+    c = title_leaf((b['Columns'] || []).first)
+    return nil unless v
+    [v, r && "by #{r}", c && "and #{c}"].compact.join(' ')
+  when 'scatter-chart'
+    x = title_leaf((b['X'] || b['Values'] || []).first)
+    y = title_leaf((b['Y'] || []).first)
+    x && y ? "#{y} vs #{x}" : (y || x)
+  else # bar/line/area/combo/pie/donut
+    dim = dims.first || (b['Legend'] || []).first
+    v = title_leaf(vals.first || (b['Y2'] || []).first)
+    d = title_leaf(dim)
+    return v || d if v.nil? || d.nil?
+    dateish_qr?(dim) ? "#{v} Over Time" : "#{v} by #{d}"
+  end
+end
+
+# Last-resort label per Sigma kind — still human-readable, never an id.
+KIND_LABEL = {
+  'kpi-chart' => 'KPI', 'bar-chart' => 'Bar Chart', 'line-chart' => 'Line Chart',
+  'area-chart' => 'Area Chart', 'combo-chart' => 'Combo Chart',
+  'scatter-chart' => 'Scatter Plot', 'pie-chart' => 'Pie Chart',
+  'donut-chart' => 'Donut Chart', 'table' => 'Table', 'pivot-table' => 'Pivot Table'
+}.freeze
 
 # PBI numeric format string (from signals 'formats' or master-map field 'format')
 # -> Sigma column format hash. Best-effort; only emits when a format is known.
@@ -268,8 +340,11 @@ def build_element(rec, fields, masters, extra_data = [])
   eid  = "el-#{short(vid)}"
   vfmts = rec['formats'] || {}
   # bead 14w(e): element name comes from the PBI visual title, not the raw id.
+  # When the source visual has no explicit title (the classic-report norm),
+  # derive one from its projections — NEVER surface the raw visual id as the
+  # display name (phase-e layout-quality fix; layout_lint.rb gates this).
   title = rec['title'].to_s.strip
-  name  = title.empty? ? vid : title
+  name  = title.empty? ? (derived_title(rec, kind) || KIND_LABEL[kind] || 'Chart') : title
 
   if kind == 'text'
     body = rec['text'] ? "## #{rec['text']}" : '## '
@@ -635,6 +710,15 @@ content_pages = signals['pages'].map do |pg|
 end
 data_elements += extra_data_elements
 
+# Derived titles can collide (two untitled visuals over the same projections) —
+# suffix duplicates so every element keeps a distinct human-readable name.
+seen_names = Hash.new(0)
+content_pages.flat_map { |p| p['elements'] }.each do |el|
+  next unless el['name'].is_a?(String) && !el['name'].empty?
+  n = (seen_names[el['name']] += 1)
+  el['name'] = "#{el['name']} (#{n})" if n > 1
+end
+
 # ---- 24-col grid layout (research/powerbi-visual-layout.md §4) -------------
 # Built BEFORE the spec is assembled so the layout XML can be EMBEDDED into the
 # workbook spec's top-level `layout` (bead 16i): a bare POST/PUT /workbooks/spec
@@ -699,15 +783,44 @@ pages_xml = signals['pages'].map do |pg|
   end
   page_id = "page-#{pg['page_id']}"
   next nil if items.empty?
-  xml, extra = banded_page(page_id, items, title: pg['page_title'])
   page_spec = content_pages.find { |p| p['id'] == page_id }
+  # phase-e layout-quality fix: a short title TEXTBOX at the top of the source
+  # canvas becomes the header band's text (white-on-dark), MOVED out of band 1
+  # (never left behind as a dead zone). The candidate may start up to one grid
+  # row below the page's topmost element (classic-report title boxes are
+  # routinely nudged a few px down from y=0 — exact-row equality was the
+  # PHASEE2 fragility). Same promotion the Phase E re-banding applies to
+  # pre-container clones.
+  top_row = items.map { |i| i[3] }.min
+  hdr_vis = pg['visuals'].find do |v|
+    next false unless v['sigma_kind'] == 'text' && v['text'].to_s.strip != ''
+    it = items.find { |i| i[0] == "el-#{short(v['visual_id'])}" }
+    it && it[3] <= top_row + 1 && (it[4] - it[3]) <= 5
+  end
+  if hdr_vis && page_spec
+    hdr_eid = "el-#{short(hdr_vis['visual_id'])}"
+    items = items.reject { |i| i[0] == hdr_eid }
+    next nil if items.empty?
+    hdr_el = page_spec['elements'].find { |e| e['id'] == hdr_eid }
+    hdr_el['body'] = %(# <span style="color: #FFFFFF">#{hdr_vis['text']}</span>) if hdr_el
+    xml, extra = banded_page(page_id, items, header_el: hdr_eid)
+  else
+    # No promotable source title — header text falls back, in priority order,
+    # to: source page name (if not a generic auto-name) -> source report
+    # display name (--source-title) -> workbook name. NEVER "Page 1".
+    hdr_title = SigmaLayout.resolve_header_title(
+      pg['page_title'], opts[:source_title], opts[:name]
+    ) || 'Dashboard'
+    xml, extra = banded_page(page_id, items, title: hdr_title)
+  end
   page_spec['elements'] = page_spec['elements'] + extra if page_spec
   xml
 end.compact.join("\n")
 layout_xml = %(<?xml version="1.0" encoding="utf-8"?>\n#{pages_xml}\n)
 
 spec = {
-  'name' => opts[:name] || signals.dig('pages', 0, 'page_title') || 'Power BI Import',
+  'name' => opts[:name] || opts[:source_title] ||
+            signals.dig('pages', 0, 'page_title') || 'Power BI Import',
   'schemaVersion' => 1,
   'pages' => [{ 'id' => 'page-data', 'name' => 'Data', 'elements' => data_elements }] + content_pages,
   # bead 16i: embed the layout so the very first POST does not trigger Sigma's

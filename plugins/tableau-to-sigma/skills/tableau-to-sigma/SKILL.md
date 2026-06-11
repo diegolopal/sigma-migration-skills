@@ -1570,6 +1570,44 @@ trial-proven spec-unsupported): DM-metric promotion (metric refs don't resolve
 through a workbook table), chart-as-filter (`useAsFilter` silently dropped on
 readback), pie percent labels (`valueFormat:'percent'` silently dropped).
 
+### Phase E layout placement + HARD screenshot checklist
+
+Every applied item lands in the **container system** — never appended at the
+page foot (that was the "PHASEE PBI Employee Dashboard" regression):
+
+- selection controls → the **control band** (created under the header if the
+  clone lacks one);
+- comparison KPIs → the **KPI band**;
+- grain/drill switchers → a slim row **inside the container of the chart they
+  drive**;
+- migration/freshness notes → a **slim note band directly under the header**.
+
+If the cloned parity workbook predates container layouts (no `<GridContainer>`
+in its layout), `enhance-apply.rb` **regenerates a banded layout** for the
+clone first (builder machinery, `scripts/lib/layout.rb`), then applies items.
+The finalize runs the shared layout lint (`scripts/lib/layout_lint.rb`: no
+raw-id display names, no controls outside containers, no dead zones, no
+generic header-band title — "Page 1"/"Sheet N"/"Dashboard N" never titles a
+dashboard; the header carries the promoted source title → source display
+name → workbook name — and no band whose elements fill <60% of the grid
+columns, KPI bands of ≤4 tiles exempt) and
+**exits 4 on violations** — a lint-failing clone must be fixed and re-PUT
+before the run may be declared done.
+
+**HARD screenshot checklist (mandatory at finalize).** The lint is mechanical;
+your eyes are the last gate. Export the clone's **full-page PNG**
+(`scripts/sigma-export-png.py`) and verify EVERY item, listing each with
+pass/fail in your report:
+
+- [ ] every chart/control title is human-readable (no raw element ids)
+- [ ] the page has a header band (dark, full-width, carrying the SOURCE title
+      or display name — never a generic "Page 1")
+- [ ] selection controls sit together in a control band near the top
+- [ ] every control is adjacent to / inside the container of what it filters
+      (grain/drill switchers INSIDE their chart's container)
+- [ ] no orphan elements below the fold (nothing dumped at the page foot)
+- [ ] no dead zones; row heights look even across each band
+
 ## Troubleshooting
 
 | Error / symptom | Cause | Fix |

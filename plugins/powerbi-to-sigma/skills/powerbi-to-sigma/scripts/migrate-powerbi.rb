@@ -76,6 +76,10 @@ OptionParser.new do |o|
   o.on('--ref-dm ID')       { |v| opts[:ref_dm] = v }
   o.on('--folder ID')       { |v| opts[:folder] = v }
   o.on('--name NAME')       { |v| opts[:name]   = v }
+  # SOURCE report display name (Fabric/Power BI "EMPLOYEE DASHBOARD") — used as
+  # the header-band title fallback when a page has no promotable title textbox
+  # and its own name is a generic "Page N". Defaults to the humanized slug.
+  o.on('--source-title NAME') { |v| opts[:source_title] = v }
   o.on('--out DIR')         { |v| opts[:out]    = File.expand_path(v) }
   o.on('--answers JSON')    { |v| opts[:answers]= v }
   o.on('--yes')             {     opts[:yes]    = true }
@@ -875,6 +879,7 @@ layout = File.join(WORK, 'layout.xml')
 build = ['ruby', File.join(HERE, 'build-workbook-from-pbir.rb'),
          '--signals', signals_path, '--master-map', mmap_path,
          '--data-model', dm_id, '--name', WB_NAME,
+         '--source-title', (opts[:source_title] || name_slug.gsub(/[-_]+/, ' ').strip),
          '--out', wb_spec, '--layout-out', layout]
 # The workbook POST requires a folderId. Use --folder if given, else inherit the
 # DM's folderId (harvested from the ref-dm at Phase 3) so both land together.

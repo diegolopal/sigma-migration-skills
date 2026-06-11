@@ -19,6 +19,7 @@ OptionParser.new do |p|
   p.on('--spec P')                         { |v| opts[:spec] = v }
   p.on('--out P')                          { |v| opts[:out]  = v }
   p.on('--workdir P', 'Per-conversion working dir (default: dir of --spec). Used to track posted workbook IDs across retries.') { |v| opts[:workdir] = v }
+  p.on('--skip-layout-lint') { opts[:skip_lint] = true }
 end.parse!
 %i[type spec out].each { |k| abort("missing --#{k}") unless opts[k] }
 opts[:workdir] ||= File.dirname(File.expand_path(opts[:spec]))
@@ -164,6 +165,30 @@ if res.is_a?(Net::HTTPSuccess)
   end
 else
   warn "WARN: could not fetch /columns for type guard (got HTTP #{res.code}); skipping"
+end
+
+# Layout-quality lint (shared scripts/lib/layout_lint.rb — vendored byte-
+# identical, md5 discipline): fails loudly on raw-id element display names,
+# input controls outside the GridContainer bands of a banded page, and dead
+# zones (>25% empty grid rows between a page's first and last element). The
+# "PHASEE PBI Employee Dashboard" regression shipped a parity-green workbook
+# that was a visual mess — every data gate passed. Escape: --skip-layout-lint
+# (legacy/intentional layouts only; name the reason in your report).
+if opts[:type] == 'workbook' && !opts[:skip_lint]
+  require_relative 'lib/layout_lint'
+  violations = LayoutLint.lint(spec)
+  if violations.any?
+    warn "\n========================================"
+    warn "FAIL — layout lint: #{violations.size} violation(s):"
+    violations.each { |v| warn "  - #{v}" }
+    warn 'Fix the spec/layout and re-PUT before continuing: raw-id names -> derive human'
+    warn 'titles; loose controls -> control band or the chart container; dead zones ->'
+    warn 're-band the page. The workbook DID post — fix with PUT /v2/workbooks/<id>/spec'
+    warn '(re-POSTing creates an orphan).'
+    warn '========================================'
+    exit(3)
+  end
+  warn 'layout lint: clean (raw-id names / orphan controls / dead zones)'
 end
 
 # Phase 6 nag — column-type guard catches formula-resolution errors but does

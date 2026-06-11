@@ -27,10 +27,19 @@
 #     --accept all-low-risk | --accept id1,id2,... \
 #     [--name '<clone name>'] [--out enhance-report.json] [--probes N]
 #
+# Every applied item lands in the CONTAINER SYSTEM (see the layout-placement
+# section): controls -> control band, KPIs -> KPI band, grain/drill switchers
+# -> inside their chart's container, notes -> a slim band under the header.
+# Pre-container clones get their layout regenerated as a banded layout first.
+# The finalize runs the shared layout lint (lib/layout_lint.rb) and prints the
+# hard screenshot checklist — the agent MUST export the full-page PNG and
+# verify each item.
+#
 # Exit codes: 0 = done (clone created; accepted items applied or cleanly
-# reverted; parity-unchanged gate green); 2 = nothing accepted; 3 = the
-# parity-unchanged gate could not be restored (clone left for inspection,
-# report says so); other = error.
+# reverted; parity-unchanged gate green; layout lint clean); 2 = nothing
+# accepted; 3 = the parity-unchanged gate could not be restored (clone left
+# for inspection, report says so); 4 = layout lint violations on the clone
+# (fix + re-PUT, then re-lint); other = error.
 
 require 'json'
 require 'yaml'
@@ -127,19 +136,251 @@ def norm_rows(rows)
 end
 
 # ---------------------------------------------------------------------------
-# Layout helper: append a LayoutElement to the bottom of a page's grid block.
+# Container-aware layout placement (phase-e layout-quality fix).
+#
+# The first Phase E shipped enhancements by APPENDING <LayoutElement>s at the
+# bottom of the Page block — controls/KPIs/notes dumped below the fold, the
+# grain switcher orphaned at the foot. Every applied item now lands in the
+# container system instead:
+#   - selection controls       -> the control band (created if absent)
+#   - comparison KPIs          -> the KPI band (created if absent)
+#   - grain/drill switcher     -> INSIDE its chart's own container (slim row
+#                                 above the chart)
+#   - migration/freshness note -> a slim note band directly under the header
+# If the cloned parity workbook PREDATES container layouts (no <GridContainer>
+# in its layout), the clone's layout is REGENERATED as a banded layout first,
+# using the builder's shared container machinery (lib/layout.rb).
 # ---------------------------------------------------------------------------
-def add_layout!(spec, page_id, element_id, grid_column, height, same_row_start = nil)
-  xml = spec['layout'].to_s
-  return nil if xml.empty? || page_id.nil?
-  m = xml.match(%r{(<Page\b[^>]*\bid="#{Regexp.escape(page_id)}"[^>]*>)(.*?)(</Page>)}m)
-  return nil unless m
-  block = m[2]
-  max_end = block.scan(/gridRow="\s*\d+\s*\/\s*(\d+)\s*"/).flatten.map(&:to_i).max || 1
-  row_start = same_row_start || max_end
-  entry = %(  <LayoutElement elementId="#{element_id}" gridColumn="#{grid_column}" gridRow="#{row_start} / #{row_start + height}"/>\n)
-  spec['layout'] = xml.sub(m[0], "#{m[1]}#{block}#{entry}#{m[3]}")
-  row_start
+require 'layout' # scripts/lib/layout.rb — SigmaLayout container machinery
+
+CTRL_BAND_PREFIX = 'phasee-ctrl-band'
+KPI_BAND_PREFIX  = 'phasee-kpi-band'
+NOTE_BAND_PREFIX = 'phasee-note-band'
+# vertical order of phasee-created bands under the header (note = slimmest,
+# closest to the header; KPIs above the charts read best below the controls)
+BAND_PRIORITY = { NOTE_BAND_PREFIX => 0, CTRL_BAND_PREFIX => 1, KPI_BAND_PREFIX => 2 }.freeze
+BAND_ROWS = { NOTE_BAND_PREFIX => 2, CTRL_BAND_PREFIX => 3, KPI_BAND_PREFIX => 6 }.freeze
+
+def page_block(spec, page_id)
+  return nil if page_id.nil?
+  spec['layout'].to_s.match(%r{(<Page\b[^>]*\bid="#{Regexp.escape(page_id)}"[^>]*>)(.*?)(</Page>)}m)
+end
+
+def replace_page_inner!(spec, page_id, new_inner)
+  m = page_block(spec, page_id) or return nil
+  spec['layout'] = spec['layout'].to_s.sub(m[0]) { "#{m[1]}#{new_inner}#{m[3]}" }
+  true
+end
+
+# Direct children of a page block: [{tag:, eid:, c0:, c1:, r0:, r1:, s:, e:,
+# head_e:, inner: (containers only)}] — byte offsets into the inner string.
+def scan_top(inner)
+  out = []
+  pos = 0
+  while (m = inner.match(%r{<(GridContainer|LayoutElement)\b[^>]*?(/>|>)}m, pos))
+    tag = m[1]
+    open_e = m.end(0)
+    ent_end = open_e
+    body = nil
+    if tag == 'GridContainer' && m[2] == '>'
+      close = inner.match(%r{</GridContainer>}m, open_e)
+      ent_end = close ? close.end(0) : open_e
+      body = close ? inner[open_e...close.begin(0)] : ''
+    end
+    head = inner[m.begin(0)...open_e]
+    out << { tag: tag, eid: head[/elementId="([^"]*)"/, 1],
+             c0: head[/gridColumn="\s*(\d+)/, 1].to_i,
+             c1: head[/gridColumn="\s*\d+\s*\/\s*(\d+)/, 1].to_i,
+             r0: head[/gridRow="\s*(\d+)/, 1].to_i,
+             r1: head[/gridRow="\s*\d+\s*\/\s*(\d+)/, 1].to_i,
+             s: m.begin(0), e: ent_end, head_e: open_e, inner: body }
+    pos = ent_end
+  end
+  out
+end
+
+def set_rows(head, r0, r1)
+  head.sub(/gridRow="[^"]*"/) { %(gridRow="#{r0} / #{r1}") }
+end
+
+# Shift every top-level entry starting at/after from_row down by delta rows.
+def shift_top_rows(inner, from_row, delta)
+  res = inner.dup
+  scan_top(inner).reverse_each do |t|
+    next unless t[:r0] >= from_row
+    res[t[:s]...t[:head_e]] = set_rows(inner[t[:s]...t[:head_e]], t[:r0] + delta, t[:r1] + delta)
+  end
+  res
+end
+
+# Regenerate a banded layout for every dashboard page of a pre-container clone
+# (flat <LayoutElement> list -> header band + row-band GridContainers via the
+# builder's shared SigmaLayout machinery). No-op when containers exist.
+def ensure_banded!(spec)
+  return false if spec['layout'].to_s.include?('<GridContainer')
+  changed = false
+  (spec['pages'] || []).each do |pg|
+    next if pg['id'].to_s.downcase.include?('data')
+    m = page_block(spec, pg['id']) or next
+    kind_of = (pg['elements'] || []).to_h { |e| [e['id'], e['kind']] }
+    items = scan_top(m[2]).select { |t| t[:tag] == 'LayoutElement' }
+                          .map { |t| [t[:eid], t[:c0], t[:c1], t[:r0], t[:r1]] }
+    next if items.empty?
+    # an existing short top text element (the dashboard's own title) becomes
+    # the header band's text (recolored white for the dark band); otherwise
+    # SigmaLayout adds a header from the page name -> workbook name chain
+    # (resolve_header_title — never a generic "Page 1" auto-name). The
+    # candidate may start up to one row below the topmost element (classic
+    # title boxes are nudged a few px down; exact-row equality was the
+    # PHASEE2 fragility).
+    top_row = items.map { |i| i[3] }.min
+    own_hdr = items.find { |i| i[3] <= top_row + 1 && kind_of[i[0]] == 'text' && (i[4] - i[3]) <= 5 }
+    if own_hdr && items.length > 1
+      items -= [own_hdr]
+      hdr_el = (pg['elements'] || []).find { |e| e['id'] == own_hdr[0] }
+      if hdr_el && hdr_el['body'].is_a?(String) && !hdr_el['body'].include?('color:')
+        plain = hdr_el['body'].gsub(/^#+\s*/, '').strip
+        hdr_el['body'] = %(# <span style="color: #FFFFFF">#{plain}</span>)
+      end
+      xml, extra = SigmaLayout.banded_page(pg['id'], items, header_el: own_hdr[0],
+                                           id_prefix: "band-#{pg['id']}")
+    else
+      hdr_title = SigmaLayout.resolve_header_title(pg['name'], spec['name']) || 'Dashboard'
+      xml, extra = SigmaLayout.banded_page(pg['id'], items, title: hdr_title,
+                                           id_prefix: "band-#{pg['id']}")
+    end
+    new_ids = (pg['elements'] || []).map { |e| e['id'] }
+    pg['elements'] = (pg['elements'] || []) + extra.reject { |e| new_ids.include?(e['id']) }
+    spec['layout'] = spec['layout'].to_s.sub(m[0]) { xml }
+    changed = true
+  end
+  changed
+end
+
+# Row where a new phasee band of `prefix` should start on this page: under the
+# header band (the row-1 container), below any already-created phasee band of
+# lower priority.
+def band_anchor_row(ents, prefix)
+  hdr = ents.select { |t| t[:tag] == 'GridContainer' }
+            .find { |t| t[:r0] <= 1 }
+  row = hdr ? hdr[:r1] : (ents.map { |t| t[:r0] }.min || 1)
+  ents.each do |t|
+    pfx = BAND_PRIORITY.keys.find { |p| t[:eid].to_s.start_with?(p) }
+    row = [row, t[:r1]].max if pfx && BAND_PRIORITY[pfx] < BAND_PRIORITY[prefix]
+  end
+  row
+end
+
+# Find-or-create the phasee band container for `prefix` on the page; returns
+# the band's container element id. Creates the spec-side `kind: container`
+# placeholder and shifts everything below the insertion point down.
+def ensure_band!(spec, page, prefix)
+  m = page_block(spec, page['id']) or raise "no layout block for page #{page['id']}"
+  ents = scan_top(m[2])
+  existing = ents.find { |t| t[:eid].to_s.start_with?(prefix) }
+  return existing[:eid] if existing
+  rows = BAND_ROWS[prefix]
+  cid = "#{prefix}-#{page['id']}"[0, 60]
+  anchor = band_anchor_row(ents, prefix)
+  inner = shift_top_rows(m[2], anchor, rows)
+  band = SigmaLayout.gc(cid, 1, 25, anchor, anchor + rows, '')
+  replace_page_inner!(spec, page['id'], "#{inner}\n#{band}\n")
+  (page['elements'] ||= []) << SigmaLayout.container_el(cid) unless page['elements'].any? { |e| e['id'] == cid }
+  cid
+end
+
+# Place an element INTO a band container, flowing left-to-right then wrapping
+# to a new row (growing the band + shifting the bands below it).
+def band_add!(spec, page_id, band_cid, element_id, grid_column, height)
+  m = page_block(spec, page_id) or raise "no layout block for page #{page_id}"
+  ents = scan_top(m[2])
+  band = ents.find { |t| t[:eid] == band_cid } or raise "band #{band_cid} not found"
+  c0, c1 = grid_column.to_s.scan(/\d+/).map(&:to_i)
+  c0 = 1 if c0.nil? || c0 < 1
+  c1 = [c0 + 8, 25].min if c1.nil? || c1 <= c0
+  width = c1 - c0
+  band_rows = band[:r1] - band[:r0]
+  h = [height || band_rows, band_rows].min
+  h = band_rows if h <= 0
+  kids = scan_top(band[:inner].to_s)
+  if kids.empty?
+    row = 1
+    place_c0 = c0
+  else
+    cur = kids.map { |k| k[:r0] }.max
+    cur_kids = kids.select { |k| k[:r0] == cur }
+    max_c1 = cur_kids.map { |k| k[:c1] }.max
+    if max_c1 + width <= 25
+      row = cur
+      place_c0 = max_c1
+    else
+      row = kids.map { |k| k[:r1] }.max
+      place_c0 = c0
+    end
+  end
+  grow = [row + h - 1 - band_rows, 0].max
+  entry = SigmaLayout.le(element_id, place_c0, place_c0 + width, row, row + h)
+  new_band_inner = "#{band[:inner]}\n#{entry}"
+  new_band_head = set_rows(m[2][band[:s]...band[:head_e]], band[:r0], band[:r1] + grow)
+  new_band = "#{new_band_head}#{new_band_inner}\n</GridContainer>"
+  inner = m[2].dup
+  inner[band[:s]...band[:e]] = new_band
+  inner = shift_below!(inner, band[:eid], band[:r1], grow) if grow.positive?
+  replace_page_inner!(spec, page_id, inner)
+end
+
+# After growing a band, push every OTHER top-level entry that started at/after
+# the band's old end row down by delta.
+def shift_below!(inner, except_eid, from_row, delta)
+  res = inner.dup
+  scan_top(inner).reverse_each do |t|
+    next if t[:eid] == except_eid || t[:r0] < from_row
+    res[t[:s]...t[:head_e]] = set_rows(inner[t[:s]...t[:head_e]], t[:r0] + delta, t[:r1] + delta)
+  end
+  res
+end
+
+# Place a control INSIDE the container of the chart it drives: a slim row is
+# opened at the top of that container (children shifted down), the container
+# grows, and the bands below shift. Falls back to nil when the chart has no
+# container (caller then uses the control band).
+CHART_CTRL_ROWS = 2
+def add_into_chart_container!(spec, page_id, chart_eid, ctrl_eid, grid_column)
+  m = page_block(spec, page_id) or return nil
+  ents = scan_top(m[2])
+  host = ents.find { |t| t[:tag] == 'GridContainer' && t[:inner].to_s.include?(%(elementId="#{chart_eid}")) }
+  return nil unless host
+  c0, c1 = grid_column.to_s.scan(/\d+/).map(&:to_i)
+  c0, c1 = 17, 25 if c0.nil? || c1.nil? || c1 <= c0
+  kids_shifted = shift_top_rows(host[:inner].to_s, 1, CHART_CTRL_ROWS)
+  entry = SigmaLayout.le(ctrl_eid, c0, c1, 1, 1 + CHART_CTRL_ROWS)
+  new_head = set_rows(m[2][host[:s]...host[:head_e]], host[:r0], host[:r1] + CHART_CTRL_ROWS)
+  new_host = "#{new_head}#{entry}\n#{kids_shifted}\n</GridContainer>"
+  inner = m[2].dup
+  inner[host[:s]...host[:e]] = new_host
+  inner = shift_below!(inner, host[:eid], host[:r1], CHART_CTRL_ROWS)
+  replace_page_inner!(spec, page_id, inner)
+  true
+end
+
+# Band routing per added element kind.
+def place_added_element!(spec, page, el, hint)
+  grid_column = hint && hint['grid_column']
+  height = hint && hint['height']
+  case el['kind']
+  when 'control'
+    band = ensure_band!(spec, page, CTRL_BAND_PREFIX)
+    band_add!(spec, page['id'], band, el['id'], grid_column || '1 / 9', height || BAND_ROWS[CTRL_BAND_PREFIX])
+  when 'kpi-chart'
+    band = ensure_band!(spec, page, KPI_BAND_PREFIX)
+    band_add!(spec, page['id'], band, el['id'], grid_column || '1 / 13', height || BAND_ROWS[KPI_BAND_PREFIX])
+  when 'text'
+    band = ensure_band!(spec, page, NOTE_BAND_PREFIX)
+    band_add!(spec, page['id'], band, el['id'], grid_column || '1 / 25', height || BAND_ROWS[NOTE_BAND_PREFIX])
+  else
+    band = ensure_band!(spec, page, KPI_BAND_PREFIX)
+    band_add!(spec, page['id'], band, el['id'], grid_column || '1 / 25', height || BAND_ROWS[KPI_BAND_PREFIX])
+  end
 end
 
 def find_element(spec, element_id)
@@ -162,17 +403,13 @@ def apply_patch!(spec, cand)
     page = (spec['pages'] || []).find { |p| p['id'] == patch['page_id'] } ||
            (spec['pages'] || []).reject { |p| p['id'] == 'page-data' }.first
     raise 'target page not found' unless page
-    row_anchor = {}
+    hints = Array(patch['layout']).to_h { |l| [l['element_id'], l] }
     Array(patch['elements']).each do |el|
       raise "element id #{el['id']} already exists" if find_element(spec, el['id'])
       (page['elements'] ||= []) << el
+      place_added_element!(spec, page, el, hints[el['id']])
     end
-    Array(patch['layout']).each do |l|
-      anchor = l['same_row_as'] && row_anchor[l['same_row_as']]
-      placed = add_layout!(spec, page['id'], l['element_id'], l['grid_column'], l['height'] || 4, anchor)
-      row_anchor[l['element_id']] = placed if placed
-    end
-    "added #{Array(patch['elements']).size} element(s) to page #{page['id']}"
+    "added #{Array(patch['elements']).size} element(s) into page #{page['id']}'s bands"
   when 'set_column_formula'
     _pg, el = find_element(spec, patch['element_id'])
     raise "element #{patch['element_id']} not found" unless el
@@ -190,13 +427,19 @@ def apply_patch!(spec, cand)
     raise "element #{patch.dig('rewire', 'element_id')} not found" unless el
     col = (el['columns'] || []).find { |c| c['id'] == patch.dig('rewire', 'column_id') }
     raise 'rewire column not found' unless col
-    raise "control id #{patch.dig('control', 'id')} already exists" if find_element(spec, patch.dig('control', 'id'))
-    (pg['elements'] ||= []) << patch['control']
+    ctrl = patch['control']
+    raise "control id #{ctrl['id']} already exists" if find_element(spec, ctrl['id'])
+    (pg['elements'] ||= []) << ctrl
     col['formula'] = patch.dig('rewire', 'formula')
-    Array(patch['layout']).each do |l|
-      add_layout!(spec, pg['id'], l['element_id'], l['grid_column'], l['height'] || 3)
+    # the switcher lives WITH the chart it drives: a slim row inside that
+    # chart's container (falls back to the control band when uncontainered).
+    hint = Array(patch['layout']).find { |l| l['element_id'] == ctrl['id'] } || {}
+    placed = add_into_chart_container!(spec, pg['id'], el['id'], ctrl['id'], hint['grid_column'])
+    unless placed
+      band = ensure_band!(spec, pg, CTRL_BAND_PREFIX)
+      band_add!(spec, pg['id'], band, ctrl['id'], hint['grid_column'] || '17 / 25', hint['height'] || 3)
     end
-    "added control #{patch.dig('control', 'controlId')} + rewired #{el['id']}"
+    "added control #{ctrl['controlId']} #{placed ? "inside #{el['id']}'s container" : 'to the control band'} + rewired #{el['id']}"
   when 'set_element_prop'
     _pg, el = find_element(spec, patch['element_id'])
     raise "element #{patch['element_id']} not found" unless el
@@ -304,6 +547,17 @@ def put_spec(wb, spec)
 end
 
 current = clean(Sigma.request(:get, "/v2/workbooks/#{clone_id}/spec"))
+
+# Pre-container clone? (parity workbook built before banded layouts existed.)
+# Regenerate a banded layout FIRST so every applied item has a container
+# system to land in. Layout-only change — element data untouched, so the
+# parity probes are unaffected by construction.
+if ensure_banded!(current)
+  put_spec(clone_id, current)
+  current = clean(Sigma.request(:get, "/v2/workbooks/#{clone_id}/spec"))
+  puts '   clone layout predates containers — regenerated banded layout (header + row bands)'
+end
+
 applied = []
 reverted = []
 gate_green = true
@@ -351,8 +605,20 @@ accepted.each do |cand|
 end
 
 # ---------------------------------------------------------------------------
-# 4. Final report.
+# 4. Finalize: layout lint (hard) + re-read the live layout + final report.
 # ---------------------------------------------------------------------------
+# Layout-quality lint (shared lib/layout_lint.rb, vendored byte-identical):
+# raw-id display names / controls outside containers / dead zones. The clone
+# must lint CLEAN — a parity-green visual mess is exactly the regression this
+# phase exists to prevent.
+require 'layout_lint'
+live_spec = clean(Sigma.request(:get, "/v2/workbooks/#{clone_id}/spec"))
+lint_violations = LayoutLint.lint(live_spec)
+if lint_violations.any?
+  warn "enhance-apply FINALIZE FAIL — layout lint: #{lint_violations.size} violation(s) on the clone:"
+  lint_violations.each { |v| warn "  - #{v}" }
+end
+
 final_pair = probe_pair(clone_id, ORIG_WB, probes)
 final_ok = probe_diffs(final_pair).empty?
 gate_green &&= final_ok
@@ -375,6 +641,10 @@ report = {
     'method' => 'clone-vs-original simultaneous JSON exports (live-drift-proof), after every item',
     'green' => gate_green
   },
+  'layout_lint' => {
+    'violations' => lint_violations,
+    'green' => lint_violations.empty?
+  },
   'original_untouched' => {
     'updatedAt_before' => orig_meta_before['updatedAt'],
     'updatedAt_after' => orig_meta_after['updatedAt'],
@@ -388,5 +658,19 @@ puts
 puts "enhance-apply: #{applied.size} applied, #{skipped.size} skipped, #{reverted.size} reverted"
 puts "   clone: '#{clone_name}' (#{clone_id})"
 puts "   parity-unchanged gate: #{gate_green ? 'GREEN' : 'NOT GREEN (see report)'}; original untouched: #{orig_untouched}"
+puts "   layout lint: #{lint_violations.empty? ? 'CLEAN' : "#{lint_violations.size} violation(s) — FIX BEFORE DECLARING DONE"}"
 puts "   report -> #{OUT}"
-exit(gate_green ? 0 : 3)
+puts
+puts '──────────────── HARD SCREENSHOT CHECKLIST (Phase E finalize) ────────────────'
+puts 'The lint is mechanical; YOUR EYES are the last gate. Export the FULL-PAGE PNG'
+puts "of the clone (scripts/sigma-export-png.py --workbook #{clone_id}) and verify"
+puts 'EVERY item — list each with pass/fail in your report:'
+puts '  [ ] every chart/control title is human-readable (no raw element ids)'
+puts '  [ ] the page has a header band (dark, full-width, page title)'
+puts '  [ ] selection controls sit together in a control band near the top'
+puts '  [ ] every control is adjacent to / inside the container of what it filters'
+puts '      (grain/drill switchers INSIDE their chart\'s container)'
+puts '  [ ] no orphan elements below the fold (nothing dumped at the page foot)'
+puts '  [ ] no dead zones; row heights look even across each band'
+puts '──────────────────────────────────────────────────────────────────────────────'
+exit(lint_violations.any? ? 4 : (gate_green ? 0 : 3))

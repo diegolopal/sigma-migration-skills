@@ -11,6 +11,24 @@ module SigmaLayout
 
   HEADER_STYLE = { 'backgroundColor' => '#0F172A', 'borderRadius' => 'round' }.freeze
   HEADER_ROWS  = 3 # header band height in grid rows
+  GRID_COLS    = 24 # page/container grid width (gridTemplateColumns repeat(24))
+  MIN_BAND_FILL = 0.60 # a band must fill >=60% of the grid columns (lint parity)
+  # Generic auto-names (Sigma page names / source section names) that must
+  # NEVER become a header-band title — "Page 1" / "Sheet 3" / "Dashboard 2".
+  GENERIC_TITLE = /\A(?:page|sheet|dashboard)\s*\d+\z/i
+
+  # True when a candidate header title is a generic auto-name.
+  def generic_title?(s)
+    s.to_s.strip.match?(GENERIC_TITLE)
+  end
+
+  # First usable header-band title from a priority-ordered candidate list:
+  # skips nil/empty and generic auto-names ("Page 1" etc). Callers pass, in
+  # order: promoted source title -> source dashboard/report display name ->
+  # workbook name. Returns nil when nothing usable remains (caller decides).
+  def resolve_header_title(*candidates)
+    candidates.map { |c| c.to_s.strip }.find { |c| !c.empty? && !generic_title?(c) }
+  end
 
   def gc(eid, c0, c1, r0, r1, inner)
     "<GridContainer elementId=\"#{eid}\" type=\"grid\" " \
@@ -68,6 +86,49 @@ module SigmaLayout
     bands.map { |b| b[:items] }
   end
 
+  # Fraction of the GRID_COLS columns covered by a band's items (union).
+  def band_fill(items)
+    covered = Array.new(GRID_COLS, false)
+    items.each do |i|
+      (i[1]...i[2]).each { |c| covered[c - 1] = true if c >= 1 && c <= GRID_COLS }
+    end
+    covered.count(true).to_f / GRID_COLS
+  end
+
+  # Re-flow under-filled bands (phase-e layout-quality fix, round 2): when any
+  # band's items cover <60% of the grid columns — e.g. a small chart left
+  # alone in band 1 after its neighboring title textbox was promoted into the
+  # header band — the page's items are redistributed across the same number
+  # of bands EVENLY (sizes differ by at most 1, remainder to the bottom bands:
+  # 5 charts -> 2+3), and each band's items are tiled edge-to-edge across the
+  # full grid width at the band's original height (uniform rows — no stagger).
+  # Pages whose bands all fill >=60% keep the source-canvas geometry exactly.
+  def reflow_bands(bands)
+    return bands unless bands.any? { |b| band_fill(b) < MIN_BAND_FILL }
+    heights = bands.map { |b| b.map { |i| i[4] }.max - b.map { |i| i[3] }.min }
+    items = bands.flat_map { |b| b.sort_by { |i| [i[3], i[1]] } }
+    k = items.length
+    nb = [bands.length, k].min
+    base = k / nb
+    sizes = Array.new(nb) { |bi| base + (bi >= nb - (k % nb) ? 1 : 0) }
+    out = []
+    idx = 0
+    cursor = 1
+    sizes.each_with_index do |n, bi|
+      band_items = items[idx, n]
+      idx += n
+      h = [heights[bi] || heights.compact.max || 8, 4].max
+      band = band_items.each_with_index.map do |it, j|
+        c0 = 1 + (GRID_COLS * j / n.to_f).round
+        c1 = 1 + (GRID_COLS * (j + 1) / n.to_f).round
+        [it[0], c0, c1, cursor, cursor + h, *it[5..]]
+      end
+      out << band
+      cursor += h
+    end
+    out
+  end
+
   # One band of items -> a full-width GridContainer spanning the band's row
   # range at page level, children re-emitted with CONTAINER-RELATIVE rows.
   # row_offset shifts the container's page-level position (e.g. +3 when a
@@ -85,11 +146,29 @@ module SigmaLayout
   # (directly, or via put-layout.rb's <layout>.elements.json sidecar).
   # `title` of nil/empty skips the header band (e.g. when the caller bands an
   # existing title text element explicitly).
-  def banded_page(page_id, items, title: nil, id_prefix: "band-#{page_id}")
+  # `header_el`: an EXISTING text element id to wrap as the header band's text
+  # (e.g. the source dashboard's own title textbox — phase-e layout-quality
+  # fix: a short title text left inside band 1 reads as a dead zone). It must
+  # NOT also appear in `items`; the caller should recolor its body for the
+  # dark band (see header_text_el's white span).
+  # `title` must already be resolved through resolve_header_title (promoted
+  # source title -> source display name -> workbook name) — a generic
+  # auto-name ("Page 1") raises rather than ships a wrong header band.
+  # `reflow: true` (default) runs reflow_bands so no band ships <60% filled.
+  def banded_page(page_id, items, title: nil, id_prefix: "band-#{page_id}", header_el: nil,
+                  reflow: true)
     extra = []
     children = []
     offset = 0
-    if title && !title.to_s.empty?
+    if header_el
+      hdr_id = "#{id_prefix}-hdr"
+      extra << container_el(hdr_id, HEADER_STYLE.dup)
+      children << header_band_xml(hdr_id, header_el)
+      offset = HEADER_ROWS
+    elsif title && !title.to_s.empty?
+      raise ArgumentError, "banded_page: generic header title #{title.inspect} — " \
+                           'resolve via resolve_header_title (source display name / workbook name)' \
+        if generic_title?(title)
       hdr_id = "#{id_prefix}-hdr"
       txt_id = "#{id_prefix}-hdrtext"
       extra << container_el(hdr_id, HEADER_STYLE.dup)
@@ -97,9 +176,11 @@ module SigmaLayout
       children << header_band_xml(hdr_id, txt_id)
       offset = HEADER_ROWS
     end
-    top = items.map { |i| i[3] }.min
+    bands = cluster_bands(items)
+    bands = reflow_bands(bands) if reflow
+    top = bands.flatten(1).map { |i| i[3] }.min
     offset += (1 - top) if top # first band starts right under the header
-    cluster_bands(items).each_with_index do |band, i|
+    bands.each_with_index do |band, i|
       cid = "#{id_prefix}-#{i + 1}"
       extra << container_el(cid)
       children << band_container_xml(cid, band, row_offset: offset)
