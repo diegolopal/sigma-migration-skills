@@ -38,7 +38,7 @@ has been edited since).
 | C7 Layout | within Phase 5 (5c/5d layout passes) | Phase 5d — Layout | within Phase 4 (build-sigma-workbook.py) | Phase 6 — Layout | within Phase 3 (newspaper layout) | within Phase 3 (apply-layout.mjs) | Pipeline step 5 — Layout (LAST write) |
 | C8 Parity hard gate | Phase 6 — Verify (hard-gated by assert-phase6-ran.rb) | Phase 6 — Verify (mandatory) | Phase 5 — Parity (hard gate) | Phase 7 — Parity (hard gate) | Phase 4 — Verify parity (3-way, MANDATORY) | Phase 4 — Verify parity (hard gate) | Pipeline step 6 — Parity |
 | C9 Security/RLS | "Security: RLS/CLS" section (unnumbered) | "Security: RLS/CLS" section | "Security: RLS/CLS" section | "Security: RLS/CLS" section | Phase 1d scan + Phase 1.5 RLS decision gate (before building) | "Security: RLS/CLS" section | "Security: RLS/CLS" section |
-| C10 Enhance | post-Phase-6 polish (demo-skill Phase 5 Enhance arc) | Phase 7 — Bookmarks → per-bookmark workbooks (optional) | — | — | Phase 5 — Enhance (UI-only features) | — | — |
+| C10 Enhance | **Phase E (opt-in)** — `--enhance` on migrate-tableau.rb (shared enhance-scan/apply engine) | **Phase E (opt-in)** — `--enhance` on migrate-powerbi.rb (same shared engine) + Phase 7 Bookmarks | — | — | Phase 5 — Enhance (UI-only features) | — | — |
 
 Notes:
 
@@ -52,3 +52,13 @@ Notes:
   that cross-reference and add a row here.
 - Regression-test converter changes against `corpus/` (see corpus/README.md)
   before relying on a live tenant.
+- **Phase E (C10) is OPT-IN ONLY and shared.** tableau-to-sigma and
+  powerbi-to-sigma vendor a byte-identical engine
+  (`scripts/enhance-scan.rb` + `scripts/enhance-apply.rb` — md5 discipline,
+  same as escalate-gap.py) triggered exclusively by `--enhance` on their
+  one-command orchestrators. It never runs in batch/headless without the
+  flag; nothing applies without `--enhance-accept`; it clones the
+  parity-verified workbook ("<name> — Enhanced") and never touches the 1:1
+  artifact; every applied item is gated by a parity-unchanged spot-check
+  that auto-reverts on divergence. Other skills should adopt the same
+  vendored engine + flag convention when they grow a Phase E.

@@ -47,7 +47,15 @@
 # MCP tool yourself and resume with --converter-out <its result JSON> — the
 # default route on machines without a local build.
 #
-# Exit codes: 0 = done (parity pass); 10 = decisions needed (OPEN QUESTIONS); 3 = parity fail; other = error.
+# Phase E (OPT-IN) — Enhance: pass --enhance to run the shared enhancement
+# engine AFTER parity passes: enhance-scan.rb emits candidates; nothing applies
+# without --enhance-accept <ids|all-low-risk> (without it the run stops at exit
+# 14 with the proposals); enhance-apply.rb then clones the parity workbook
+# ("<name> — Enhanced") and applies accepted items one at a time under a
+# parity-unchanged gate. Default = OFF everywhere.
+#
+# Exit codes: 0 = done (parity pass); 10 = decisions needed (OPEN QUESTIONS); 3 = parity fail;
+# 14 = parity PASS + Phase E proposals pending acceptance (re-run with --enhance-accept); other = error.
 require 'json'
 require 'optparse'
 require 'fileutils'
@@ -85,6 +93,12 @@ OptionParser.new do |o|
   o.on('--workspace ID')       { |v| opts[:ws] = v }
   o.on('--dataset ID')         { |v| opts[:dataset] = v }
   o.on('--skip-freshness')     {     opts[:skip_fresh] = true }
+  # Phase E (opt-in) — Enhance. NEVER runs without --enhance; with --enhance
+  # but no --enhance-accept the run stops at exit 14 with the scan proposals
+  # (present them per-item to the human, e.g. AskUserQuestion), then re-run
+  # with --enhance-accept <id,id,...> or 'all-low-risk'.
+  o.on('--enhance')            {     opts[:enhance] = true }
+  o.on('--enhance-accept L')   { |v| opts[:enhance_accept] = v }
 end.parse!
 
 abort 'missing --tmsl' unless opts[:tmsl]
@@ -176,13 +190,22 @@ FileUtils.mkdir_p(pbir_dir)
 bundle = JSON.parse(File.read(opts[:pbir]))
 exploded = 0
 bundle.each do |part, payload|
-  next unless part.start_with?('definition') # skip report.json/.platform legacy keys
+  next unless part.start_with?('definition/') # the exploded-PBIR parts only
   fp = File.join(pbir_dir, part)
   FileUtils.mkdir_p(File.dirname(fp))
   File.write(fp, payload.is_a?(String) ? payload : JSON.pretty_generate(payload))
   exploded += 1
 end
-abort "FATAL: PBIR bundle has no definition/ parts — is this an exploded PBIR? keys=#{bundle.keys.first(3)}" if exploded.zero?
+# bead anlb (orchestrator parity with run.sh): a fetched definition may be the
+# CLASSIC single report.json (top-level sections[]) instead of exploded PBIR
+# parts. Branch to extract-report-classic.py — same signals.json schema out.
+classic_rj = nil
+if exploded.zero? && bundle.key?('report.json')
+  classic_rj = File.join(pbir_dir, 'report.json')
+  payload = bundle['report.json']
+  File.write(classic_rj, payload.is_a?(String) ? payload : JSON.pretty_generate(payload))
+end
+abort "FATAL: PBIR bundle has no definition/ parts and no classic report.json — keys=#{bundle.keys.first(3)}" if exploded.zero? && classic_rj.nil?
 
 signals_path = File.join(WORK, 'signals.json')
 # bead 7o01: Python resolution — --python / PBI_PY, else a bootstrapped venv
@@ -191,7 +214,12 @@ signals_path = File.join(WORK, 'signals.json')
 PY = opts[:python] || ENV['PBI_PY'] ||
      [File.join(WORK, '.venv', 'bin', 'python'), '/tmp/pbiauth/bin/python']
        .find { |p| File.exist?(p) } || 'python3'
-run!([PY, File.join(HERE, 'extract-pbir.py'), '--pbir-dir', pbir_dir, '--out', signals_path])
+if classic_rj
+  puts '   classic single report.json detected — branching to extract-report-classic.py'
+  run!([PY, File.join(HERE, 'extract-report-classic.py'), '--report-json', classic_rj, '--out', signals_path])
+else
+  run!([PY, File.join(HERE, 'extract-pbir.py'), '--pbir-dir', pbir_dir, '--out', signals_path])
+end
 signals = JSON.parse(File.read(signals_path))
 
 # TMSL model summary + import/DirectQuery mode.
@@ -812,6 +840,31 @@ if ti_elements.any?
   end
 end
 
+# bead anlb (continued) — CLASSIC-report queryRef normalization. The legacy
+# report.json binds measures as "Sum(Entity.Col)" / "Count(Entity.Col)" and
+# date hierarchies as "Entity.Col.Variation.Date Hierarchy.<Level>". Neither
+# key shape exists in the Entity.Field map derived above (which uses the
+# converter's Title-Case display names), so those bindings fell through to a
+# literal bracketed ref -> silent error-typed column. Resolve both shapes via
+# a case/underscore-insensitive lookup against the existing map.
+norm_key = ->(k) { k.to_s.downcase.gsub(/[^a-z0-9.]/, '') }
+fm_norm = {}
+field_map.each { |k, v| fm_norm[norm_key.call(k)] ||= v }
+agg_names = { 'sum' => 'Sum', 'avg' => 'Avg', 'average' => 'Avg', 'min' => 'Min', 'max' => 'Max',
+              'count' => 'Count', 'countnonnull' => 'Count', 'distinctcount' => 'CountDistinct' }
+all_visuals.flat_map { |v| (v['bindings'] || {}).values.flatten }.uniq.each do |r|
+  next if r.nil? || field_map.key?(r)
+  if (m = r.match(/\A([A-Za-z ]+)\((.+)\)\z/)) && agg_names[m[1].downcase.delete(' ')]
+    base = fm_norm[norm_key.call(m[2])]
+    next unless base && base['ref'].to_s =~ /\A\[[^\]]+\]\z/
+    field_map[r] = base.merge('ref' => "#{agg_names[m[1].downcase.delete(' ')]}(#{base['ref']})", 'agg' => nil)
+  elsif (m = r.match(/\A(.+?)\.Variation\..*\.(Year|Quarter|Month|Week|Day)\z/i))
+    base = fm_norm[norm_key.call(m[1])]
+    next unless base && base['ref'].to_s =~ /\A\[[^\]]+\]\z/
+    field_map[r] = base.merge('ref' => "DateTrunc(\"#{m[2].downcase}\", #{base['ref']})", 'agg' => nil)
+  end
+end
+
 master_map = { 'masters' => masters, 'fields' => field_map }
 mmap_path = File.join(WORK, 'master-map.json')
 File.write(mmap_path, JSON.pretty_generate(master_map))
@@ -1009,6 +1062,52 @@ else
 end
 
 # ---------------------------------------------------------------------------
+# Phase E (OPT-IN) — Enhance. Runs ONLY with --enhance AND a parity PASS:
+# enhancements clone a PARITY-VERIFIED workbook, never an unproven one.
+# Clone-first / scan-then-propose / accept-only / parity-unchanged-gated —
+# see enhance-scan.rb + enhance-apply.rb (the shared Phase-E engine).
+# ---------------------------------------------------------------------------
+enhance_line = nil
+if opts[:enhance] && !parity_ok
+  enhance_line = 'SKIPPED — parity not green (Phase E only clones a parity-verified workbook)'
+elsif opts[:enhance]
+  puts
+  puts '── Phase E (opt-in) · Enhance ──'
+  enh_path = File.join(WORK, 'enhancements.json')
+  e_out, e_st = Open3.capture2e(ENV.to_h, 'ruby', File.join(HERE, 'enhance-scan.rb'),
+                                '--workbook-id', wb_id, '--workdir', WORK,
+                                '--source', 'powerbi', '--out', enh_path)
+  e_out.each_line { |l| puts "   #{l.rstrip}" }
+  if !e_st.success?
+    enhance_line = 'scan FAILED (migration itself passed parity; see output above)'
+  elsif opts[:enhance_accept].nil?
+    cands = (JSON.parse(File.read(enh_path))['candidates'] rescue [])
+    puts
+    puts '==================== PHASE E PROPOSALS (acceptance required) ===================='
+    puts "#{cands.size} enhancement candidate(s) in #{enh_path}. NOTHING has been applied —"
+    puts 'present each candidate to the human (interactive: one AskUserQuestion checklist),'
+    puts 'then re-run this exact command adding:'
+    puts "  --enhance --enhance-accept <id,id,...>   # or: --enhance-accept all-low-risk"
+    puts '================================================================================='
+    exit 14
+  else
+    a_out, a_st = Open3.capture2e(ENV.to_h, 'ruby', File.join(HERE, 'enhance-apply.rb'),
+                                  '--workbook-id', wb_id, '--enhancements', enh_path,
+                                  '--accept', opts[:enhance_accept],
+                                  '--out', File.join(WORK, 'enhance-report.json'))
+    a_out.each_line { |l| puts "   #{l.rstrip}" }
+    rep = (JSON.parse(File.read(File.join(WORK, 'enhance-report.json'))) rescue {})
+    enhance_line = if a_st.success?
+                     "clone #{rep['clone_id']} '#{rep['clone_name']}': " \
+                     "#{(rep['applied'] || []).size} applied, #{(rep['skipped'] || []).size} skipped, " \
+                     "#{(rep['reverted'] || []).size} reverted; parity-unchanged gate GREEN"
+                   else
+                     "apply NOT GREEN (exit #{a_st.exitstatus}) — see enhance-report.json"
+                   end
+  end
+end
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 puts
@@ -1021,5 +1120,6 @@ if fresh_ok
   puts "freshness   : PBI last refresh #{fresh_ok['endTime']} (#{stale_days} days ago)" \
        "#{freshness['credsSuspect'] ? ' — REFRESH FAILING (creds)' : ''}"
 end
+puts "ENHANCE     : #{enhance_line}" if enhance_line
 puts '======================================='
 exit(parity_ok ? 0 : 3)

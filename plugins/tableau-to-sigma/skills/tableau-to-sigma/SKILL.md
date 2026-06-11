@@ -46,8 +46,11 @@ wherever agent judgment is genuinely required. Exit codes: `10` = OPEN QUESTIONS
 (re-run with `--yes`/`--answers`), `11` = ❌-unhandled gap-scan features (close via
 gap-scout or `--force`), `12` = pass 1 done, parity PENDING (collect mcp-v2 actuals,
 then `--finalize`), `4` = DM posted but the workbook layer needs the agent path,
-`3` = a gate failed, `0` = ALL gates green (only reachable via `--finalize`).
+`3` = a gate failed, `14` = migration GREEN + Phase E proposals pending
+acceptance, `0` = ALL gates green (only reachable via `--finalize`).
 DM-reuse defaults to BUILD NEW — candidates are printed; `--reuse-dm` opts in.
+Optional `--enhance [--enhance-accept <ids|all-low-risk>]` runs Phase E
+(opt-in) after all gates are green — see the Phase E section below.
 
 **Still manual by design (the orchestrator stops and tells you):**
 - **Parity actuals** — Sigma has no synchronous chart-data REST endpoint; the
@@ -118,6 +121,8 @@ which calc translation, which layout) — not orchestration.
 | `scripts/scan-customer-style.rb` | Phase 0c: sample N recent workbooks in the customer's Sigma org and aggregate style signals (color palettes, number-format strings, layout grids, chart-kind mix, dataLabel preference, element naming case, density). Lets the converter emit specs that match house conventions instead of generic defaults. |
 | `scripts/dev/phase-timer.sh` | **Dev / profiling only — do NOT source in customer conversions.** Source helper for phase timing when iterating on the skill itself; emits `▶`/`■` log lines per phase and a `phase-timings.json` summary. Only invoke when the user explicitly asks for timing data ("time it", "where did the minutes go", "profile"). Usage: `phase_start "<name>"` / `phase_end` around each phase, `phase_report` at the end. **Across multiple Bash tool-call blocks**, export `PHASE_TIMINGS_TMP=<path>` BEFORE the first source so the helper appends across blocks. |
 | `scripts/lib/layout.rb` | Layout-XML helpers (`gc`, `le`, `page_xml`, `assemble`) — `require`'d by per-workbook layout configs |
+| `scripts/enhance-scan.rb` | **Phase E (opt-in) part 1 — SCAN (read-only).** Source signals + built spec + live element exports → `enhancements.json` candidates `{id, category, evidence, proposed, risk, verdict_hint, patch}` + descoped propose-in-UI notes. Shared Phase-E engine, vendored byte-identical across plugins (md5 discipline). |
+| `scripts/enhance-apply.rb` | **Phase E (opt-in) part 2 — APPLY (accept-only, clone-first).** Clones the parity workbook as `"<name> — Enhanced"` (1:1 artifact never written), applies ONLY `--accept`-ed candidates one at a time, each gated by an untouched-element clone-vs-original spot-check (auto-revert on shift). Writes `enhance-report.json`. Shared engine, byte-identical twin of the tableau/powerbi copy. |
 
 ---
 
@@ -1485,6 +1490,68 @@ When to escalate to a visual check rather than just CSV parity:
 > **Known render-vs-spec drift on log-scale axes.** A `yAxis.format.scale: {type: "log"}` spec persists correctly via PUT/GET, and the interactive Sigma UI renders log-scaled. The Phase 6f PNG export endpoint, however, renders the y-axis linearly (verified 2026-05-24 on OCT v2's Monthly Trend export). This is a render-side limitation of the export endpoint, not a converter regression — confirm log behavior in the live workbook before downgrading parity. When the source Tableau chart had a log axis and the Sigma PNG shows linear, note YELLOW with `error_summary: "log-axis export-renders-linear"` and link the live workbook URL; do NOT re-emit the chart spec.
 
 ---
+
+## Phase E (opt-in) — Enhance
+
+**OFF by default, everywhere.** Phase E never runs in batch/headless mode
+without the explicit `--enhance` flag, and it only ever starts from a
+**parity-verified** workbook (all Phase 6 gates green). It is powered by the
+shared engine vendored byte-identically into the covered plugins
+(`scripts/enhance-scan.rb` + `scripts/enhance-apply.rb` — md5 discipline,
+same as `escalate-gap.py`).
+
+```bash
+# at --finalize, after gates are green:
+ruby scripts/migrate-tableau.rb --workbook "<name>" --finalize \
+  --actuals <workdir>/parity-actuals.json \
+  --enhance                       # scan only → exit 14 with proposals
+# present each candidate to the user (one AskUserQuestion checklist), then:
+ruby scripts/migrate-tableau.rb --workbook "<name>" --finalize \
+  --actuals <workdir>/parity-actuals.json \
+  --enhance --enhance-accept all-low-risk    # or: id1,id2,...
+```
+
+The contract (trial-validated, 2026-06-10):
+
+1. **Clone-first.** `enhance-apply.rb` GETs the parity workbook's spec and
+   POSTs it as `"<name> — Enhanced"`. The 1:1 parity artifact is **never
+   written** (the report records its `updatedAt` before/after as proof).
+2. **Scan-then-propose.** `enhance-scan.rb` reads source signals (workdir
+   artifacts: `calc-fields.json`, `dashboard-layout.json`, `migrate-state.json`,
+   view CSVs) + the built spec + live element exports, and emits
+   `enhancements.json` — each candidate `{id, category, evidence, proposed,
+   risk, verdict_hint, patch}`. **Nothing applies without acceptance**:
+   interactive runs present a per-item checklist (AskUserQuestion); headless
+   runs pass `--enhance-accept id1,id2` or `--enhance-accept all-low-risk`.
+3. **Apply + parity-unchanged gate.** Accepted items apply **one at a time**
+   to the clone; after each, 2-3 untouched elements are spot-queried on the
+   clone AND the original at the same instant (live-drift-proof) — any shift
+   auto-reverts that item and flags it in `enhance-report.json`
+   (applied/skipped/reverted + evidence).
+
+Detector catalog (trial-validated; nothing speculative):
+
+- **comparison-enrichment** — date-grouped master + revenue-like measure →
+  latest-period KPI + delta-% KPI pair. KPI value columns INLINE the full
+  `Sum(If(D = Max(D), v, Null))` expression — cross-column aggregate refs
+  silently misevaluate in kpi-charts.
+- **interactivity-recovery** — (a) list **selection controls** on
+  reasonable-cardinality dims wired to the shared master (empty default =
+  identical render); (b) **grain switcher** — segmented control + DateTrunc
+  switch, default = parity grain; (c) **drill switcher** — segmented control +
+  `If()` dimension switch where a finer dim exists (medium risk: heuristic
+  hierarchy pairing); (d) **map restoration** (PBI signals) — point-map with
+  `Switch()` centroid synthesis (medium risk: centroids must be filled into
+  the patch before apply).
+- **fidelity-polish** — null-bucket labeling (`Coalesce → "No <Dim>"`),
+  month/date axis canonicalization (`MakeDate`; medium risk on multi-year
+  sources — intentionally un-pools), stale-source freshness note (time-boxed
+  wording), title corrections from source captions.
+
+**Descoped — emitted as propose-in-UI notes, never spec changes** (all
+trial-proven spec-unsupported): DM-metric promotion (metric refs don't resolve
+through a workbook table), chart-as-filter (`useAsFilter` silently dropped on
+readback), pie percent labels (`valueFormat:'percent'` silently dropped).
 
 ## Troubleshooting
 

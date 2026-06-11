@@ -53,11 +53,20 @@
 #     --finalize --actuals <WORKDIR>/parity-actuals.json \
 #     [--allow-missing-tiles N]   # explain legitimately unbuildable zones
 #
+# Phase E (OPT-IN) — Enhance: pass --enhance (pass 1 or --finalize) to run the
+# shared enhancement engine AFTER all gates are green: enhance-scan.rb emits
+# candidates; nothing applies without --enhance-accept <ids|all-low-risk>
+# (without it the run stops at exit 14 with the proposals); enhance-apply.rb
+# then clones the parity workbook ("<name> — Enhanced") and applies accepted
+# items one at a time under a parity-unchanged gate. Default = OFF everywhere.
+#
 # Exit codes: 0 = done (ALL gates green — only possible via --finalize);
 # 10 = decisions needed (OPEN QUESTIONS printed, NO Sigma objects created);
 # 11 = gap scan found ❌-unhandled features (re-run with --force to accept);
 # 12 = pass 1 complete, parity PENDING (run the printed MCP queries, then
 #      re-run with --finalize --actuals);
+# 14 = migration GREEN + Phase E proposals pending acceptance (re-run
+#      --finalize with --enhance --enhance-accept ...);
 # 3 = parity/guard fail; 4 = workbook layer needs the agent path; other = error.
 require 'json'
 require 'csv'
@@ -98,6 +107,12 @@ OptionParser.new do |o|
   o.on('--finalize')         {     opts[:finalize] = true }
   o.on('--actuals PATH')     { |v| opts[:actuals] = File.expand_path(v) }
   o.on('--allow-missing-tiles N', Integer) { |v| opts[:allow_missing_tiles] = v }
+  # Phase E (opt-in) — Enhance. NEVER runs without --enhance; with --enhance
+  # but no --enhance-accept the run stops at exit 14 with the scan proposals
+  # (present them per-item to the human, e.g. AskUserQuestion), then re-run
+  # --finalize with --enhance-accept <id,id,...> or 'all-low-risk'.
+  o.on('--enhance')          {     opts[:enhance] = true }
+  o.on('--enhance-accept L') { |v| opts[:enhance_accept] = v }
 end.parse!
 
 abort 'missing --workbook or --workbook-id' unless opts[:wb_name] || opts[:wb_id]
@@ -220,6 +235,52 @@ if opts[:finalize]
   end
 
   all_green = p6st.success? && clst.success? && gst.success?
+
+  # ---------------------------------------------------------------------------
+  # Phase E (OPT-IN) — Enhance. Runs ONLY when --enhance was passed (here or on
+  # pass 1) AND every gate above is green: enhancements clone a PARITY-VERIFIED
+  # workbook, never an unproven one. Clone-first / scan-then-propose /
+  # accept-only / parity-unchanged-gated — see enhance-scan.rb + enhance-apply.rb.
+  # ---------------------------------------------------------------------------
+  enhance_requested = opts[:enhance] || state['enhance_requested']
+  enhance_line = nil
+  if enhance_requested && !all_green
+    enhance_line = 'SKIPPED — gates not green (Phase E only clones a parity-verified workbook)'
+  elsif enhance_requested
+    puts
+    puts '── Phase E (opt-in) · Enhance ──'
+    enh_path = File.join(WORK, 'enhancements.json')
+    _, est = sigma_run!(['ruby', File.join(HERE, 'enhance-scan.rb'),
+                         '--workbook-id', wb_id, '--workdir', WORK,
+                         '--source', 'tableau', '--out', enh_path], allow_fail: true)
+    if !est.success?
+      enhance_line = 'scan FAILED (migration itself is green; see output above)'
+    elsif opts[:enhance_accept].nil?
+      cands = (JSON.parse(File.read(enh_path))['candidates'] rescue [])
+      puts
+      puts '==================== PHASE E PROPOSALS (acceptance required) ===================='
+      puts "#{cands.size} enhancement candidate(s) in #{enh_path}. NOTHING has been applied —"
+      puts 'present each candidate to the human (interactive: one AskUserQuestion checklist),'
+      puts 'then re-run this exact --finalize command adding:'
+      puts "  --enhance --enhance-accept <id,id,...>   # or: --enhance-accept all-low-risk"
+      puts '================================================================================='
+      exit 14
+    else
+      _, ast = sigma_run!(['ruby', File.join(HERE, 'enhance-apply.rb'),
+                           '--workbook-id', wb_id, '--enhancements', enh_path,
+                           '--accept', opts[:enhance_accept],
+                           '--out', File.join(WORK, 'enhance-report.json')], allow_fail: true)
+      rep = (JSON.parse(File.read(File.join(WORK, 'enhance-report.json'))) rescue {})
+      enhance_line = if ast.success?
+                       "clone #{rep['clone_id']} '#{rep['clone_name']}': " \
+                       "#{(rep['applied'] || []).size} applied, #{(rep['skipped'] || []).size} skipped, " \
+                       "#{(rep['reverted'] || []).size} reverted; parity-unchanged gate GREEN"
+                     else
+                       "apply NOT GREEN (exit #{ast.exitstatus}) — see enhance-report.json"
+                     end
+    end
+  end
+
   pf = (JSON.parse(File.read(File.join(WORK, 'parity-final.json'))) rescue {})
   puts
   puts '================ RESULT ================'
@@ -227,6 +288,7 @@ if opts[:finalize]
   puts "workbookId  : #{wb_id}"
   puts "PARITY      : #{pf['status'] || '?'} (#{pf['charts_pass']}/#{pf['charts_total']} charts#{state['extract_mode'] ? ', extract-mode' : ''})"
   puts "GATES       : phase6=#{p6st.success? ? 'PASS' : 'FAIL'} cleanup=#{clst.success? ? 'PASS' : 'FAIL'} assert-phase6-ran=#{gst.success? ? 'PASS' : "FAIL(#{gst.exitstatus})"}"
+  puts "ENHANCE     : #{enhance_line}" if enhance_line
   puts "STATUS      : #{all_green ? 'GREEN' : 'NOT GREEN'}"
   puts '======================================='
   exit(all_green ? 0 : 3)
@@ -950,7 +1012,8 @@ end
 # Persist resume state for --finalize (pass 2) BEFORE stopping.
 state = { 'workbook_id' => wb_id, 'data_model_id' => dm_id,
           'extract_mode' => !!has_extracts, 'workbook_name' => display_wb_name,
-          'reused_dm' => !!reuse_dm_id, 'pass1_at' => Time.now.utc.iso8601 }
+          'reused_dm' => !!reuse_dm_id, 'pass1_at' => Time.now.utc.iso8601,
+          'enhance_requested' => !!opts[:enhance] }
 File.write(File.join(WORK, 'migrate-state.json'), JSON.pretty_generate(state))
 
 unless structural_ok
@@ -981,5 +1044,6 @@ finalize_cmd = "  ruby scripts/migrate-tableau.rb #{opts[:wb_id] ? "--workbook-i
 puts finalize_cmd
 puts '(--finalize runs phase6 finalize + orphan cleanup + the census-aware'
 puts ' assert-phase6-ran hard gate; exit 0 there is the ONLY green exit.)'
+puts 'PHASE E     : requested (--enhance) — runs at --finalize AFTER all gates are green' if opts[:enhance]
 puts '=================================================================='
 exit 12
