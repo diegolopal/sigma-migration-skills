@@ -40,6 +40,8 @@
 
 require 'json'
 require 'optparse'
+require_relative 'lib/layout'
+include SigmaLayout
 
 opts = { page_cols: 24, page_rows: 32, row_scale: 1.5, chart_y0: 29.7,
          chart_y1: 100.0, chart_row0: 6, renames: {} }
@@ -148,33 +150,59 @@ rows.each_value do |row_charts|
   end
 end
 
-# Render
-lines = ['<?xml version="1.0" encoding="utf-8"?>']
-lines << %(<Page type="grid" gridTemplateColumns="repeat(#{opts[:page_cols]}, 1fr)" gridTemplateRows="auto" id="page-data">)
-lines << %(  <LayoutElement elementId="#{master_el['id']}" gridColumn="1 / #{opts[:page_cols] + 1}" gridRow="1 / 21"/>)
-lines << '</Page>'
+# Render — container-banded page (layout-playbook.md): header band + control
+# band + one full-width GridContainer per chart row, children container-relative.
+data_page_xml = page_xml('page-data',
+                         le(master_el['id'], 1, opts[:page_cols] + 1, 1, 21))
 
-lines << %(<Page type="grid" gridTemplateColumns="repeat(#{opts[:page_cols]}, 1fr)" gridTemplateRows="auto" id="#{overview['id']}">)
+children = []
+extra_els = []
+ov_prefix = "band-#{overview['id']}"
+
+# Header band: reuse the spec's existing title text if present, else add one
+# (sidecar) named after the overview page.
+hdr_id = "#{ov_prefix}-hdr"
+extra_els << container_el(hdr_id, HEADER_STYLE.dup)
 if title_el
-  lines << %(  <LayoutElement elementId="#{title_el['id']}" gridColumn="1 / #{opts[:page_cols] + 1}" gridRow="1 / 3"/>)
+  children << header_band_xml(hdr_id, title_el['id'])
+else
+  txt_id = "#{ov_prefix}-hdrtext"
+  extra_els << header_text_el(txt_id, overview['name'])
+  children << header_band_xml(hdr_id, txt_id)
 end
 
-# Distribute controls evenly across the top row (cols 1, 1+W, 1+2W, ... where W = total/n)
+# Control band: dashboard-global controls side-by-side in one container
+# directly under the header.
 n = ctl_els.length
+ctl_rows = 0
 if n > 0
+  ctl_rows = 3
   col_width = (opts[:page_cols].to_f / n).round
-  ctl_els.each_with_index do |c, i|
+  inner = ctl_els.each_with_index.map do |c, i|
     col_start = 1 + i * col_width
     col_end   = i == n - 1 ? opts[:page_cols] + 1 : col_start + col_width
-    lines << %(  <LayoutElement elementId="#{c['id']}" gridColumn="#{col_start} / #{col_end}" gridRow="3 / 6"/>)
-  end
+    le(c['id'], col_start, col_end, 1, 1 + ctl_rows)
+  end.join("\n")
+  ctl_id = "#{ov_prefix}-ctl"
+  extra_els << container_el(ctl_id)
+  children << gc(ctl_id, 1, opts[:page_cols] + 1, 1 + HEADER_ROWS, 1 + HEADER_ROWS + ctl_rows, inner)
 end
 
-chart_layouts.each do |c|
-  lines << %(  <LayoutElement elementId="#{c[:el_id]}" gridColumn="#{c[:c1]} / #{c[:c2]}" gridRow="#{c[:r1]} / #{c[:r2]}"/>)
+# Chart bands: cluster the zone-derived positions into row bands (preserving
+# the Tableau geometry within each band) and shift the whole chart area so the
+# first band starts right under the header + control bands.
+chart_items = chart_layouts.map { |c| [c[:el_id], c[:c1], c[:c2], c[:r1], c[:r2]] }
+bands = cluster_bands(chart_items)
+content_start = 1 + HEADER_ROWS + ctl_rows
+band_offset = bands.empty? ? 0 : content_start - bands.first.map { |i| i[3] }.min
+bands.each_with_index do |band, i|
+  cid = "#{ov_prefix}-#{i + 1}"
+  extra_els << container_el(cid)
+  children << band_container_xml(cid, band, row_offset: band_offset)
 end
 
-lines << '</Page>'
-
-File.write(opts[:out], lines.join("\n") + "\n")
-puts "wrote #{opts[:out]} (#{chart_layouts.length} charts, #{ctl_els.length} controls, gap-closing applied, row-scale #{opts[:row_scale]}× → #{opts[:page_rows]} rows)"
+File.write(opts[:out], assemble(data_page_xml, page_xml(overview['id'], *children)) + "\n")
+File.write("#{opts[:out]}.elements.json", JSON.pretty_generate({ overview['id'] => extra_els }))
+puts "wrote #{opts[:out]} (#{chart_layouts.length} charts in #{bands.length} band container(s), " \
+     "#{ctl_els.length} controls, header band, gap-closing applied, row-scale #{opts[:row_scale]}× → #{opts[:page_rows]} rows)"
+puts "wrote #{opts[:out]}.elements.json (#{extra_els.length} container/header spec element(s) — put-layout.rb injects these)"
