@@ -75,6 +75,24 @@ def custom_value_format_to_d3(mask):
         return f"{sym}{thou}.{dec}f"
     return None
 
+def snowflake_mask_to_format(mask):
+    """Snowflake/Oracle TO_CHAR numeric mask -> Sigma format object (or None).
+    9 = optional digit, 0 = forced digit, $/£/€/¥ = currency, ',' = thousands,
+    '.' = decimal point. Date/text masks return None (loud-warning path)."""
+    m = re.sub(r"^FM", "", (mask or "").strip(), flags=re.I)
+    if not m or not re.fullmatch(r"[\s$£€¥90,.]+", m):
+        return None
+    decm = re.search(r"\.([90]+)", m)
+    dec = len(decm.group(1)) if decm else 0
+    cur = re.search(r"[$£€¥]", m)
+    sep = "," if "," in m else ""
+    if cur:
+        return {"kind": "number", "formatString": f"{cur.group(0)}{sep}.{dec}f",
+                "currencySymbol": cur.group(0)}
+    if re.search(r"[90]", m):
+        return {"kind": "number", "formatString": f"{sep}.{dec}f"}
+    return None
+
 def sigma_format_for(value_format_name, value_format):
     """Resolve a LookML measure's format -> a Sigma column `format` object (or None)."""
     fs = None
@@ -88,10 +106,12 @@ def sigma_format_for(value_format_name, value_format):
 
 # ── parse view files: classify fields as measure (agg + base col) or dimension ──
 def build_field_index(view_files):
-    measures = {}   # "view.field" -> (agg_type, base_display_or_None, sql)
+    measures = {}   # "view.field" -> (agg_type, base_display_or_None, sql, filters)
     formats = {}    # "view.field" -> Sigma format dict (or None)
     dims = set()    # "view.field"
     view_pk = {}    # "view" -> primary-key dimension name
+    yesno = set()   # "view.field" of type:yesno dims — the DM converter names
+                    # their boolean calc column "<label> (T-F)"
     for path in view_files:
         txt = open(path).read()
         txt = re.sub(r"#[^\n]*", "", txt)               # strip comments
@@ -100,13 +120,15 @@ def build_field_index(view_files):
         view = vm.group(1)
         for d in re.finditer(r"\b(dimension|dimension_group)\s*:\s*(\w+)", txt):
             dims.add(f"{view}.{d.group(2)}")
-        # primary key: dimension block containing primary_key: yes
+        # primary key / yesno: scan each dimension block
         for m in re.finditer(r"dimension:\s*(\w+)\s*\{", txt):
             name = m.group(1); start = m.end(); depth, i = 1, start
             while i < len(txt) and depth:
                 depth += {"{": 1, "}": -1}.get(txt[i], 0); i += 1
             if re.search(r"primary_key:\s*yes", txt[start:i]):
                 view_pk[view] = name
+            if re.search(r"type:\s*yesno\b", txt[start:i]):
+                yesno.add(f"{view}.{name}")
         # measure blocks: measure: name { ... }
         for m in re.finditer(r"measure:\s*(\w+)\s*\{", txt):
             name = m.group(1); start = m.end()
@@ -123,13 +145,33 @@ def build_field_index(view_files):
                 r2 = re.search(r"\$\{TABLE\}\.(\w+)", s)
                 base = disp((r2 or ref).group(1)) if (r2 or ref) else None
             key = f"{view}.{name}"
-            measures[key] = (mtype, base, (sqlm.group(1).strip() if sqlm else ""))
+            # filtered measures: filters: [dim: "yes", other: "X"] — keep the
+            # (field, value) pairs so the tile formula becomes SumIf/CountIf/…
+            mfilters = []
+            flm = re.search(r"filters:\s*\[([^\]]*)\]", block)
+            if flm:
+                mfilters = re.findall(r"([\w.]+)\s*:\s*\"([^\"]*)\"", flm.group(1))
+            measures[key] = (mtype, base, (sqlm.group(1).strip() if sqlm else ""), mfilters)
             # capture the measure's display format (named or custom mask)
             vfn = re.search(r"value_format_name:\s*(\w+)", block)
             vf = re.search(r'value_format:\s*"([^"]*)"', block)
             fmt = sigma_format_for(vfn.group(1) if vfn else None, vf.group(1) if vf else None)
             if fmt: formats[key] = fmt
-    return measures, dims, view_pk, formats
+            # TO_CHAR display-mask measure → numeric aggregate + Sigma format
+            # (display-identical to the mask; value stays numeric). Unparseable
+            # masks keep mtype=string and stay on the loud-warning path.
+            if mtype == "string" and sqlm:
+                tc = re.match(r"^TO_(?:CHAR|VARCHAR)\s*\(\s*(SUM|AVG|MIN|MAX|MEDIAN|COUNT)\s*\("
+                              r"\s*(?:\$\{TABLE\}\.)?(\w+)\s*\)\s*,\s*'([^']+)'\s*\)$",
+                              sqlm.group(1).strip(), re.I | re.S)
+                tfmt = snowflake_mask_to_format(tc.group(3)) if tc else None
+                if tc and tfmt:
+                    agg = {"sum": "sum", "avg": "average", "min": "min", "max": "max",
+                           "median": "median", "count": "count"}[tc.group(1).lower()]
+                    measures[key] = (agg, disp(tc.group(2)),
+                                     f"{tc.group(1)}(${{TABLE}}.{tc.group(2)})", mfilters)
+                    formats.setdefault(key, tfmt)
+    return measures, dims, view_pk, formats, yesno
 
 def main():
     ap = argparse.ArgumentParser()
@@ -139,14 +181,65 @@ def main():
     ap.add_argument("--element-id", default="<DENORM_ELEMENT_ID>")
     ap.add_argument("--dm-element-name", default="<DM_ELEMENT_NAME>",
                     help="display name of the data-model element the master pulls from")
+    ap.add_argument("--dm-elements", default=None,
+                    help="JSON file: [{id,name}] of ALL DM elements — enables one "
+                         "master per explore for multi-explore dashboards (each "
+                         "explore is matched to the DM element with the same "
+                         "normalized name; unmatched explores fall back to "
+                         "--element-id/--dm-element-name)")
     ap.add_argument("--master-name", default="Data")
     ap.add_argument("--folder-id", default="<FOLDER_ID>")
     ap.add_argument("--out", default="/tmp/workbook.spec.json")
     a = ap.parse_args()
 
     dash = json.load(open(a.contract))
-    measures, dims, view_pk, formats = build_field_index(sorted(glob.glob(os.path.join(a.views, "*.view.lkml"))))
+    measures, dims, view_pk, formats, yesno_dims = build_field_index(sorted(glob.glob(os.path.join(a.views, "*.view.lkml"))))
     warnings = []
+
+    # ── per-explore masters ────────────────────────────────────────────────────
+    # A Looker dashboard's tiles can hit SEVERAL explores; one master per explore,
+    # each sourced from the DM element matching that explore (normalized-name
+    # match against --dm-elements). Single-explore dashboards keep the original
+    # ids/names ("m-master" / --master-name) so existing behavior is unchanged.
+    dm_elements = []
+    if a.dm_elements and os.path.exists(a.dm_elements):
+        dm_elements = json.load(open(a.dm_elements))
+
+    def _norm(s):
+        return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+    def dm_el_for(explore):
+        for e in dm_elements:
+            if e.get("name") and _norm(e["name"]) == _norm(explore):
+                return e
+        return {"id": a.element_id, "name": a.dm_element_name}
+
+    masters = {}   # explore -> {"id","name","dm_el","needed":{display: colId}}
+    def master_of(explore):
+        ex = explore or next(iter(masters), None)
+        if ex not in masters:
+            n = len(masters)
+            masters[ex] = {
+                "id": "m-master" if n == 0 else f"m-master-{n + 1}",
+                "name": a.master_name if n == 0 else f"{a.master_name} {n + 1}",
+                "dm_el": dm_el_for(ex),
+                "needed": {},
+            }
+            if n == 1:
+                warnings.append("dashboard spans multiple explores — one master "
+                                "element per explore (matched to DM elements by name)")
+        return masters[ex]
+
+    def master_ref(display, explore):
+        """Master-column formula for a display name. Joined-view columns
+        ('Field (view)') traverse the DM relationship named after the join:
+        [<dmEl>/<view>/<Field>] — the '<Field> (<view>)' flat form only exists
+        on denormalized elements."""
+        dme_name = master_of(explore)["dm_el"]["name"]
+        m = re.match(r"^(.*) \((\w+)\)$", display or "")
+        if m:
+            return f"[{dme_name}/{m.group(2)}/{m.group(1)}]"
+        return f"[{dme_name}/{display}]"
 
     def fmt_for(f):
         """Sigma column `format` dict for a measure field (or None). Ratio
@@ -165,7 +258,7 @@ def main():
         """Measure whose sql references other measures or is a type:number arithmetic
         expression (e.g. AOV = revenue/orders) — has no single base column."""
         if not is_measure(f): return False
-        mtype, _base, sql = measures[f]
+        mtype, _base, sql = measures[f][:3]
         view = f.split(".")[0]
         refs = [r for r in re.findall(r"\$\{(\w+)\}", sql or "") if f"{view}.{r}" in measures]
         body = re.sub(r"\$\{[^}]+\}", "X", sql or "")
@@ -198,23 +291,77 @@ def main():
             return "(" + formula_for(key, explore) + ")" if key in measures else m.group(0)
         e = re.sub(r"\$\{(\w+)\}", sub, measures[f][2])
         return re.sub(r"\bNULLIF\s*\(", "NullIf(", e, flags=re.I).replace("${TABLE}.", "").strip()
+    IF_AGG = {"sum": "SumIf", "count": "CountIf", "count_distinct": "CountDistinctIf",
+              "average": "AvgIf", "max": "MaxIf", "min": "MinIf"}
+
+    def measure_filters(f):
+        return measures[f][3] if is_measure(f) and len(measures[f]) > 3 else []
+
+    def filter_condition(f, explore):
+        """LookML measure filters -> Sigma condition on master columns (or None)."""
+        view = f.split(".")[0]
+        conds = []
+        for ff, fv in measure_filters(f):
+            ffq = ff if "." in ff else f"{view}.{ff}"
+            fd = col_display(ffq, explore)
+            if not fd: return None
+            # yesno dims surface in the DM as a boolean calc named "<label> (T-F)"
+            # (no "/" — slash-bearing display names are unreferenceable in Sigma)
+            if ffq in yesno_dims:
+                m = re.match(r"^(.*?)( \(\w+\))?$", fd)
+                fd = f"{m.group(1)} (T-F){m.group(2) or ''}"
+            need(fd, explore)             # the filter dim must be a master column
+            ref = f"[{master_of(explore)['name']}/{fd}]"
+            if fv in ("yes", "true"):    conds.append(f"{ref} = True")
+            elif fv in ("no", "false"):  conds.append(f"{ref} = False")
+            else:                         conds.append(f'{ref} = "{fv}"')
+        if not conds: return None
+        return conds[0] if len(conds) == 1 else " And ".join(f"({c})" for c in conds)
+
     def formula_for(f, explore):
         if is_measure(f) and is_ratio(f):
             return ratio_formula(f, explore)
         cd = col_display(f, explore)
         if is_measure(f):
-            mtype = measures[f][0]; view = f.split(".")[0]
+            mtype = measures[f][0]; view = f.split(".")[0]; msql = measures[f][2]
+            # date/time measures (MAX/MIN over a dimension_group) → Max/Min
+            if mtype in ("date", "datetime", "time"):
+                mm = re.match(r"\s*(MAX|MIN)\s*\(", msql or "", re.I)
+                if mm and cd:
+                    return f"{'Max' if mm.group(1).upper() == 'MAX' else 'Min'}([{master_of(explore)['name']}/{cd}])"
+                warnings.append(f"⚠ measure '{f}' (type {mtype}) could not be translated — "
+                                f"placeholder text column emitted (review: {msql})")
+                return f'"⚠ {leaf(f)}: untranslated {mtype} measure"'
+            # display-mask / string measures (TO_CHAR…) have NO Sigma equivalent —
+            # NEVER emit a silently-wrong aggregate; placeholder + loud warning.
+            if mtype == "string" or re.search(r"\bTO_(CHAR|VARCHAR)\s*\(", msql or "", re.I):
+                warnings.append(f"⚠ measure '{f}' is a string/display-mask measure "
+                                f"(TO_CHAR-style) with no Sigma formula equivalent — emitted a "
+                                f"placeholder text column. Keep the numeric metric and apply a "
+                                f"Sigma column format instead. (was: {msql})")
+                return f'"⚠ {leaf(f)}: untranslated display measure"'
+            # filtered measures → SumIf/CountIf/CountDistinctIf/AvgIf/MaxIf/MinIf
+            cond = filter_condition(f, explore)
+            if cond:
+                fn = IF_AGG.get(mtype)
+                if fn:
+                    if mtype == "count":
+                        return f"CountIf({cond})"
+                    if cd:
+                        return f"{fn}([{master_of(explore)['name']}/{cd}], {cond})"
+                warnings.append(f"⚠ filtered measure '{f}' (type {mtype}) has no *If "
+                                f"translation — filter DROPPED, review the value")
             if mtype == "count":
                 # plain count on a JOINED view counts that view's entities, not fact
                 # rows → CountDistinct on its PK in the denormalized element.
                 if view != explore:
                     pkd = pk_display(view, explore)
-                    if pkd: return f"CountDistinct([{a.master_name}/{pkd}])"
+                    if pkd: return f"CountDistinct([{master_of(explore)['name']}/{pkd}])"
                 return "Count()"
-            if mtype == "count_distinct": return f"CountDistinct([{a.master_name}/{cd}])" if cd else "Count()"
+            if mtype == "count_distinct": return f"CountDistinct([{master_of(explore)['name']}/{cd}])" if cd else "Count()"
             fn = AGG.get(mtype)
-            return f"{fn}([{a.master_name}/{cd}])" if fn and cd else "Count()"
-        return f"[{a.master_name}/{cd}]"
+            return f"{fn}([{master_of(explore)['name']}/{cd}])" if fn and cd else "Count()"
+        return f"[{master_of(explore)['name']}/{cd}]"
     def _warn_count(f, el):
         if measures.get(f, (None,))[0] == "count":
             v = f.split(".")[0]
@@ -224,41 +371,39 @@ def main():
                                 f"'{v}' for CountDistinct parity.")
 
     # ── master columns: every dim col used + every measure base col + filter cols ──
-    needed = {}   # display -> col id (stable, for control binding)
-    def need(display):
-        if display and display not in needed: needed[display] = sid("col")
-        return needed.get(display)
+    def need(display, explore):
+        nd = master_of(explore)["needed"]
+        if display and display not in nd: nd[display] = sid("col")
+        return nd.get(display)
     for el in dash["elements"]:
         if el.get("tileType") == "text":      # text tiles have no query/fields
             continue
         for f in el["fields"]:
-            need(col_display(f, el["explore"]))
+            need(col_display(f, el["explore"]), el["explore"])
             # ratio measures: pull each referenced component measure's base column
             if is_measure(f) and is_ratio(f):
                 for comp in ratio_components(f):
-                    need(col_display(comp, el["explore"]))
+                    need(col_display(comp, el["explore"]), el["explore"])
             # plain count on a joined view needs that view's PK column in the master
             if is_measure(f) and measures[f][0] == "count" and f.split(".")[0] != el["explore"]:
-                need(pk_display(f.split(".")[0], el["explore"]))
+                need(pk_display(f.split(".")[0], el["explore"]), el["explore"])
         for p in (el.get("pivots") or []):       # pivot/series fields are master columns too
-            need(col_display(p, el["explore"]))
+            need(col_display(p, el["explore"]), el["explore"])
         for fld in (el.get("filters") or {}):        # tile-level hard-filter fields
-            need(col_display(fld, el["explore"]))
+            need(col_display(fld, el["explore"]), el["explore"])
     for flt in dash["filters"]:
         fld = flt.get("dimension") or flt.get("field")
-        if fld: need(col_display(fld, flt.get("explore") or fld.split(".")[0]))
+        if fld: need(col_display(fld, flt.get("explore") or fld.split(".")[0]), flt.get("explore") or fld.split(".")[0])
     # date_filter has no field; bind it to the column tiles listen it to
     for flt in dash["filters"]:
         if flt["type"] == "date_filter" and not flt.get("field"):
             for el in dash["elements"]:
                 tgt = el["listen"].get(flt["name"])
-                if tgt: flt["_resolvedField"] = tgt; flt["_resolvedExplore"] = el["explore"]; need(col_display(tgt, el["explore"])); break
+                if tgt: flt["_resolvedField"] = tgt; flt["_resolvedExplore"] = el["explore"]; need(col_display(tgt, el["explore"]), el["explore"]); break
 
-    master = {
-        "id": "m-master", "name": a.master_name, "kind": "table",
-        "source": {"dataModelId": a.dm_id, "elementId": a.element_id, "kind": "data-model"},
-        "columns": [{"id": cid, "formula": f"[{a.dm_element_name}/{d}]", "name": d} for d, cid in needed.items()],
-    }
+    # NOTE: master elements are MATERIALIZED at the end of main() (after the tile
+    # and control loops) — tile formulas (e.g. filtered measures) can register
+    # additional master columns while building.
 
     # ── tile -> Sigma element ──
     # Looker newspaper rows are ~40px; Sigma grid rows are ~20px. Mapping them 1:1
@@ -269,6 +414,22 @@ def main():
     # Looker pixel heights and axis labels render.
     ROW_SCALE = 2
     elements, layout_items = [], []
+
+    # API-created dashboards that were never arranged in the Looker UI have
+    # layout components with NULL row/column/width/height — auto-flow those
+    # into a 2-across grid instead of crashing (None + int).
+    _auto_flow_idx = [0]
+
+    def _layout_of(el):
+        L = el.get("layout") or {}
+        if None in (L.get("row"), L.get("col"), L.get("width"), L.get("height")):
+            i = _auto_flow_idx[0]; _auto_flow_idx[0] += 1
+            L = {"row": (i // 2) * 8, "col": (i % 2) * 12, "width": 12, "height": 8}
+            warnings.append(f"tile '{el.get('name')}': no layout coordinates on the "
+                            "Looker dashboard (API-created, never arranged in the UI) — "
+                            "auto-flowed to a 2-across grid")
+        return L
+
     for el in dash["elements"]:
         # Text/markdown tiles → Sigma text element (kind: "text"). No query, no
         # master columns, no source — just a Markdown `body` (title_text as a
@@ -287,7 +448,7 @@ def main():
                 parts.append(bodytxt)
             body = "\n\n".join(parts) if parts else (el.get("name") or title or "")
             elements.append({"id": eid, "kind": "text", "body": body})
-            L = el["layout"]; c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
+            L = _layout_of(el); c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
             r0 = L["row"] * ROW_SCALE + 1; r1 = r0 + L["height"] * ROW_SCALE
             layout_items.append((eid, c0, c1, r0, r1, "text"))
             continue
@@ -298,8 +459,54 @@ def main():
         ex = el["explore"]
         ms = [f for f in el["fields"] if is_measure(f)]
         ds = [f for f in el["fields"] if not is_measure(f)]
+
+        # ── measure-only grid → a row of KPI tiles ────────────────────────────
+        # A Looker table/grid with NO dimensions renders one row of totals. A
+        # Sigma table can't aggregate without a grouping (each row evaluates as
+        # its own group → row-level values, verified live), so map it to one
+        # kpi-chart per measure, splitting the tile's cell horizontally.
+        # Untranslatable display-mask measures become a loud ⚠ TEXT tile —
+        # never a silently-wrong number.
+        if kind == "table" and ms and not ds:
+            L = _layout_of(el)
+            r0 = L["row"] * ROW_SCALE + 1; r1 = r0 + L["height"] * ROW_SCALE
+            def _untranslatable(f):
+                mt, _b, msql = measures[f][:3]
+                return mt == "string" or bool(re.search(r"\bTO_(CHAR|VARCHAR)\s*\(", msql or "", re.I))
+            texts = [f for f in ms if _untranslatable(f)]
+            kpis = [f for f in ms if f not in texts]
+            n = max(len(kpis) + (1 if texts else 0), 1)
+            w = L["width"] / n
+            slot = 0
+            for f in kpis:
+                kid = sid(); cid = sid("v")
+                col = apply_fmt({"id": cid, "formula": formula_for(f, ex), "name": disp(leaf(f))}, f)
+                elements.append({"id": kid, "kind": "kpi-chart",
+                                 "name": f"{el['name']} · {disp(leaf(f))}",
+                                 "source": {"elementId": master_of(ex)["id"], "kind": "table"},
+                                 "columns": [col], "value": {"columnId": cid}})
+                c0 = int(round(L["col"] + slot * w)) + 1
+                c1 = int(round(L["col"] + (slot + 1) * w)) + 1
+                layout_items.append((kid, c0, c1, r0, r1, "kpi-chart"))
+                _warn_count(f, el); slot += 1
+            if texts:
+                tid = sid()
+                body = "\n\n".join(
+                    f"**⚠ {leaf(f)}**: display-mask measure (TO_CHAR-style) has no Sigma "
+                    "equivalent — keep the numeric metric and apply a Sigma column format."
+                    for f in texts)
+                elements.append({"id": tid, "kind": "text", "body": body})
+                c0 = int(round(L["col"] + slot * w)) + 1
+                c1 = int(round(L["col"] + (slot + 1) * w)) + 1
+                layout_items.append((tid, c0, c1, r0, r1, "text"))
+                for f in texts:
+                    warnings.append(f"⚠ tile '{el['name']}': measure '{f}' is untranslatable "
+                                    "(TO_CHAR/string display mask) — emitted a WARNING TEXT tile in its place")
+            warnings.append(f"tile '{el['name']}': measure-only grid → {len(kpis)} KPI tile(s)"
+                            + (f" + {len(texts)} warning text tile(s)" if texts else ""))
+            continue
         eid = sid()
-        base = {"id": eid, "kind": kind, "name": el["name"], "source": {"elementId": "m-master", "kind": "table"}}
+        base = {"id": eid, "kind": kind, "name": el["name"], "source": {"elementId": master_of(ex)["id"], "kind": "table"}}
         field2cid = {}   # "view.field" -> tile column id (for sorts: resolution)
 
         if kind == "kpi-chart":
@@ -412,7 +619,7 @@ def main():
             if not col:
                 # filter-only field: the tile filters by it but doesn't display it —
                 # carry it hidden so the filter works without adding a visible column.
-                col = {"id": sid("c"), "formula": f"[{a.master_name}/{d}]", "name": d, "hidden": True}
+                col = {"id": sid("c"), "formula": f"[{master_of(ex)['name']}/{d}]", "name": d, "hidden": True}
                 base["columns"].append(col)
             vals = [v.strip() for v in str(val).split(",") if v.strip()]
             base.setdefault("filters", []).append(
@@ -451,7 +658,7 @@ def main():
             label = dyn.get("label") or dyn.get("table_calculation") or "Calc"
             def _subfield(m):
                 f = m.group(1)
-                return formula_for(f, ex) if is_measure(f) else f"[{a.master_name}/{col_display(f, ex)}]"
+                return formula_for(f, ex) if is_measure(f) else f"[{master_of(ex)['name']}/{col_display(f, ex)}]"
             sig = re.sub(r"\$\{([\w.]+)\}", _subfield, expr)
             sig = re.sub(r"\brunning_total\s*\(", "CumulativeSum(", sig)
             sig = re.sub(r"\bsum\s*\(", "GrandTotal(", sig)          # pct-of-total denominator
@@ -464,7 +671,7 @@ def main():
         elements.append(base)
 
         # newspaper -> 24-col grid (rows scaled — see ROW_SCALE above)
-        L = el["layout"]; c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
+        L = _layout_of(el); c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
         r0 = L["row"] * ROW_SCALE + 1; r1 = r0 + L["height"] * ROW_SCALE
         layout_items.append((eid, c0, c1, r0, r1, kind))
 
@@ -474,15 +681,16 @@ def main():
         fld = flt.get("dimension") or flt.get("field") or flt.get("_resolvedField")
         fex = flt.get("explore") or flt.get("_resolvedExplore") or (fld.split(".")[0] if fld else "")
         cdisp = col_display(fld, fex) if fld else None
-        col_id = needed.get(cdisp)
+        fmaster = master_of(fex)
+        col_id = fmaster["needed"].get(cdisp)
         ctype = "date-range" if flt["type"] == "date_filter" else "list"
         ctrl = {"kind": "control", "id": sid("ctrl"), "controlId": flt["name"].lower().replace(" ", "-"),
                 "name": flt["title"], "controlType": ctype}
         if col_id:
-            ctrl["filters"] = [{"source": {"kind": "table", "elementId": "m-master"}, "columnId": col_id}]
+            ctrl["filters"] = [{"source": {"kind": "table", "elementId": fmaster["id"]}, "columnId": col_id}]
             if ctype == "list":
                 ctrl.update({"mode": "include", "selectionMode": "multiple", "values": [],
-                             "source": {"kind": "source", "source": {"kind": "table", "elementId": "m-master"}, "columnId": col_id}})
+                             "source": {"kind": "source", "source": {"kind": "table", "elementId": fmaster["id"]}, "columnId": col_id}})
             else:
                 ctrl["mode"] = "between"
         else:
@@ -558,13 +766,21 @@ def main():
         "name": f"{dash['title']} (from Looker)", "folderId": a.folder_id, "schemaVersion": 1,
         "layout": layout_xml,
         "pages": [
-            {"id": "page-data", "name": "Data", "elements": [master]},
+            {"id": "page-data", "name": "Data", "elements": []},  # filled below
             {"id": page_id, "name": dash["title"], "elements": controls + elements},
         ],
     }
+    master_elements = [{
+        "id": m["id"], "name": m["name"], "kind": "table",
+        "source": {"dataModelId": a.dm_id, "elementId": m["dm_el"]["id"], "kind": "data-model"},
+        "columns": [{"id": cid, "formula": master_ref(d, ex), "name": d}
+                    for d, cid in m["needed"].items()],
+    } for ex, m in masters.items()]
+    spec["pages"][0]["elements"] = master_elements
+
     open(a.out, "w").write(json.dumps(spec, indent=2))
     print(f"wrote {a.out}")
-    print(f"  master cols: {len(master['columns'])}  tiles: {len(elements)}  controls: {len(controls)}")
+    print(f"  masters: {len(master_elements)} ({', '.join(m['name'] + ':' + str(len(m['columns'])) + ' cols' for m in master_elements)})  tiles: {len(elements)}  controls: {len(controls)}")
     for e in elements:
         print(f"    {e['kind']:11} {e.get('name', '(text)')}")
     if warnings:
