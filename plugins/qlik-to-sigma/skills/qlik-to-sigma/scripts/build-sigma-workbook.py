@@ -241,10 +241,64 @@ def build_element(c, resolve, warnings):
     if kind == "bar-chart": el["dataLabel"] = {"labels": "shown"}
     return el
 
+# ---- container-banded layout (layout-playbook.md, verified 2026-06-10) -----
+# Spec side: a `kind: container` placeholder element per band (+ a header text
+# element). Layout side: <GridContainer> (NOT <LayoutElement type="grid">,
+# which silently drops children) wrapping <LayoutElement>s whose coordinates
+# are CONTAINER-RELATIVE (rows restart at 1).
+HEADER_STYLE = {"backgroundColor": "#0F172A", "borderRadius": "round"}
+HEADER_ROWS = 3
+
+def _le(eid, c0, c1, r0, r1):
+    return f'  <LayoutElement elementId="{eid}" gridColumn="{c0} / {c1}" gridRow="{r0} / {r1}"/>'
+
+def _gc(cid, c0, c1, r0, r1, inner):
+    return (f'<GridContainer elementId="{cid}" type="grid" gridColumn="{c0} / {c1}" '
+            f'gridRow="{r0} / {r1}" gridTemplateColumns="repeat(24, 1fr)" '
+            f'gridTemplateRows="auto">\n{inner}\n</GridContainer>')
+
+def _cluster_bands(items):
+    """Cluster [eid,c0,c1,r0,r1] items into horizontal bands by row overlap."""
+    bands = []
+    for it in sorted(items, key=lambda i: (i[3], i[1])):
+        if bands and it[3] < bands[-1]["r1"]:
+            bands[-1]["items"].append(it)
+            bands[-1]["r1"] = max(bands[-1]["r1"], it[4])
+        else:
+            bands.append({"r0": it[3], "r1": it[4], "items": [it]})
+    return [b["items"] for b in bands]
+
+def banded_page(page_id, items, title, id_prefix=None):
+    """Header band + one full-width GridContainer per row band, children
+    container-relative. Returns (page_xml, extra_spec_elements)."""
+    pfx = id_prefix or f"band-{page_id}"
+    extra, children = [], []
+    offset = 0
+    if title:
+        hdr, txt = f"{pfx}-hdr", f"{pfx}-hdrtext"
+        extra.append({"id": hdr, "kind": "container", "style": dict(HEADER_STYLE)})
+        extra.append({"id": txt, "kind": "text",
+                      "body": f'# <span style="color: #FFFFFF">{title}</span>'})
+        children.append(_gc(hdr, 1, 25, 1, 1 + HEADER_ROWS, _le(txt, 1, 25, 1, 1 + HEADER_ROWS)))
+        offset = HEADER_ROWS
+    if items:
+        offset += 1 - min(i[3] for i in items)  # first band starts under the header
+    for n, band in enumerate(_cluster_bands(items), 1):
+        cid = f"{pfx}-{n}"
+        extra.append({"id": cid, "kind": "container"})
+        r0 = min(i[3] for i in band); r1 = max(i[4] for i in band)
+        inner = "\n".join(_le(i[0], i[1], i[2], i[3] - r0 + 1, i[4] - r0 + 1) for i in band)
+        children.append(_gc(cid, 1, 25, r0 + offset, r1 + offset, inner))
+    body = "\n".join(children)
+    return (f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" '
+            f'gridTemplateRows="auto" id="{page_id}">\n{body}\n</Page>', extra)
+
 def grid_layout(page_id, sheet, placed):
-    """Map the Qlik sheet cell grid onto Sigma's 24-col grid (1-based lines)."""
+    """Map the Qlik sheet cell grid onto Sigma's 24-col grid, then wrap each
+    cell-grid row in a band container (relative proportions preserved).
+    Returns (page_xml, extra_spec_elements)."""
     qcols = sheet.get("columns") or 24
-    lines = [f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="{page_id}">']
+    items = []
     for cell, el in placed:
         c0 = round(cell["col"] * 24 / qcols) + 1
         c1 = round((cell["col"] + cell["colspan"]) * 24 / qcols) + 1
@@ -252,29 +306,28 @@ def grid_layout(page_id, sheet, placed):
         r1 = (cell["row"] + cell["rowspan"]) * ROW_SCALE + 1
         if el["kind"] == "kpi-chart" and (r1 - r0) < KPI_MIN_ROWS:
             r1 = r0 + KPI_MIN_ROWS
-        lines.append(f'  <LayoutElement elementId="{el["id"]}" gridColumn="{c0} / {c1}" gridRow="{r0} / {r1}"/>')
-    lines.append("</Page>")
-    return "\n".join(lines)
+        items.append([el["id"], c0, c1, r0, r1])
+    return banded_page(page_id, items, sheet.get("title"))
 
-def auto_layout(page_id, elems):
-    """Fallback when no layout.json: KPIs across the top, charts 2-wide below."""
+def auto_layout(page_id, elems, title=None):
+    """Fallback when no layout.json: header band, KPI strip band, then chart
+    rows 2-wide — each a container. Returns (page_xml, extra_spec_elements)."""
     kpis = [e for e in elems if e["kind"] == "kpi-chart"]
     charts = [e for e in elems if e["kind"] != "kpi-chart"]
-    lines = [f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="{page_id}">']
+    items, row = [], 1
     if kpis:
         w = 24 // len(kpis)
         for i, e in enumerate(kpis):
             c0 = 1 + i * w; c1 = c0 + w if i < len(kpis) - 1 else 25
-            lines.append(f'  <LayoutElement elementId="{e["id"]}" gridColumn="{c0} / {c1}" gridRow="1 / 6"/>')
-    row = 6
+            items.append([e["id"], c0, c1, 1, 6])
+        row = 6
     for i in range(0, len(charts), 2):
         pair = charts[i:i + 2]
         for j, e in enumerate(pair):
             c0 = 1 if j == 0 else 13; c1 = 13 if (j == 0 and len(pair) > 1) else 25
-            lines.append(f'  <LayoutElement elementId="{e["id"]}" gridColumn="{c0} / {c1}" gridRow="{row} / {row + 11}"/>')
+            items.append([e["id"], c0, c1, row, row + 11])
         row += 11
-    lines.append("</Page>")
-    return "\n".join(lines)
+    return banded_page(page_id, items, title or "Overview")
 
 def main():
     ap = argparse.ArgumentParser()
@@ -330,8 +383,9 @@ def main():
                                       "measures": c.get("measures") or [],
                                       "nullSuppression": c.get("dimNullSuppression") or []}})
             if not elems: continue
-            pages.append({"id": pid, "name": sheet["title"], "elements": elems})
-            layout_pages.append(grid_layout(pid, sheet, placed))
+            xml, extra = grid_layout(pid, sheet, placed)
+            pages.append({"id": pid, "name": sheet["title"], "elements": elems + extra})
+            layout_pages.append(xml)
     else:
         # no sheet layout discovered — build every dim+measure chart, auto-layout
         pid, elems = "pg-1", []
@@ -346,8 +400,9 @@ def main():
                                   "dims": [(d[0] if isinstance(d, list) else d) for d in (c.get("dimensions") or [])],
                                   "measures": c.get("measures") or [],
                                   "nullSuppression": c.get("dimNullSuppression") or []}})
-        pages.append({"id": pid, "name": "Overview", "elements": elems})
-        layout_pages.append(auto_layout(pid, [{"id": e["id"], "kind": e["kind"]} for e in elems]))
+        xml, extra = auto_layout(pid, [{"id": e["id"], "kind": e["kind"]} for e in elems])
+        pages.append({"id": pid, "name": "Overview", "elements": elems + extra})
+        layout_pages.append(xml)
 
     spec = {"name": a.name, "schemaVersion": 1, "pages": pages}
     if a.folder: spec["folderId"] = a.folder

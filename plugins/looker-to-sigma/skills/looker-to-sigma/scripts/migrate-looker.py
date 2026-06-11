@@ -234,7 +234,9 @@ class SourceEval:
     def measure_value(self, field, rows, depth=0):
         if depth > 4 or field not in self.measures:
             return None
-        mtype, base, sql = self.measures[field]
+        # build_field_index emits 4-tuples (mtype, base, sql, filters) — take the
+        # first three (the filters slot was added for filtered-measure tiles).
+        mtype, base, sql = self.measures[field][:3]
         view = field.split(".")[0]
         if mtype in ("number",) or re.search(r"\$\{(\w+)\}", sql or ""):
             # ratio / composite: substitute each ${measure} component recursively

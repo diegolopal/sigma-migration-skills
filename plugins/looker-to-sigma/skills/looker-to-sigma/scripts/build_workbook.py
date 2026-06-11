@@ -697,77 +697,109 @@ def main():
             warnings.append(f"filter '{flt['name']}': could not bind to a master column")
         controls.append(ctrl)
 
-    # ── layout finalize: top control bar, tall titled KPIs, downshifted tiles ──
-    # The raw newspaper→grid math (above) honors Looker's pixel positions, but two
-    # Looker→Sigma quirks need fixing for a tidy, readable dashboard:
-    #   1. Sigma kpi-chart HIDES its title (the element name / measure label) when
-    #      the tile is shorter than ~5 grid rows / ~150px — Looker KPIs are usually
-    #      2-3 rows tall, so every title vanishes (bare floating numbers). Fix: lay
-    #      KPIs as a full-width strip of equal, TALL tiles (height >= 6).
-    #      See memory feedback_sigma_kpi_label_height.md.
-    #   2. Dashboard controls (filters) carry no layout, so they orphan at the
-    #      bottom-left. Looker shows filters at the TOP. Fix: a control row at row 0
-    #      and shift every tile DOWN by that row's height.
+    # ── layout finalize: container bands (layout-playbook.md, 2026-06-10) ──
+    # The raw newspaper→grid math (above) honors Looker's pixel positions; the
+    # final layout groups everything into full-width band CONTAINERS instead of
+    # a flat LayoutElement list (flat layouts produce dead zones / detached
+    # controls). Spec side: one `kind: container` placeholder element per band
+    # plus a header text; layout side: <GridContainer> (NOT <LayoutElement
+    # type="grid">, which silently drops children) whose child <LayoutElement>s
+    # use CONTAINER-RELATIVE coordinates (rows restart at 1). Band order:
+    #   1. header band — dark, full-width, dashboard title (rows 1-3)
+    #   2. control band — dashboard filters side-by-side (Looker shows them top)
+    #   3. KPI band — full-width strip of equal TALL tiles (>= 6 rows so the
+    #      title renders; see memory feedback_sigma_kpi_label_height.md)
+    #   4. chart row bands — newspaper rows clustered by row overlap, original
+    #      columns/heights preserved inside each band
     GRID = 24
-    CTRL_H = 3                 # control-bar height (grid rows)
+    HDR_H = 3                  # header band height (grid rows)
+    CTRL_H = 3                 # control-band height (grid rows)
     KPI_H = 6                  # KPI tile height — >= 5 so the title renders
+    HEADER_STYLE = {"backgroundColor": "#0F172A", "borderRadius": "round"}
+    page_id = "page-dash"
 
-    # (a) Top control bar: lay controls side-by-side across row 0, evenly. Each
-    #     control needs a layout entry so it docks at the top instead of orphaning.
-    ctrl_items = []
+    def _le(eid, c0, c1, r0, r1):
+        return f'  <LayoutElement elementId="{eid}" gridColumn="{c0} / {c1}" gridRow="{r0} / {r1}"/>'
+
+    def _gc(cid, r0, r1, inner):
+        return (f'<GridContainer elementId="{cid}" type="grid" gridColumn="1 / 25" '
+                f'gridRow="{r0} / {r1}" gridTemplateColumns="repeat(24, 1fr)" '
+                f'gridTemplateRows="auto">\n{inner}\n</GridContainer>')
+
+    band_els, band_xml = [], []   # spec placeholder elements / page-level XML
+    page_row = 1
+
+    # (1) header band
+    band_els.append({"id": "band-hdr", "kind": "container", "style": dict(HEADER_STYLE)})
+    band_els.append({"id": "band-hdrtext", "kind": "text",
+                     "body": f'# <span style="color: #FFFFFF">{dash["title"]}</span>'})
+    band_xml.append(_gc("band-hdr", page_row, page_row + HDR_H,
+                        _le("band-hdrtext", 1, GRID + 1, 1, 1 + HDR_H)))
+    page_row += HDR_H
+
+    # (2) control band: dashboard-global filters side-by-side in one container
     if controls:
         n = len(controls)
         cw = max(1, GRID // n)
-        x = 1
+        x, inner = 1, []
         for i, c in enumerate(controls):
             c1 = (x + cw) if i < n - 1 else (GRID + 1)   # last fills to the edge
-            ctrl_items.append((c["id"], x, c1, 1, 1 + CTRL_H, "control"))
+            inner.append(_le(c["id"], x, c1, 1, 1 + CTRL_H))
             x = c1
-    ctrl_h = CTRL_H if controls else 0
+        band_els.append({"id": "band-ctl", "kind": "container"})
+        band_xml.append(_gc("band-ctl", page_row, page_row + CTRL_H, "\n".join(inner)))
+        page_row += CTRL_H
 
-    # (b) KPI strip: pull every KPI out of its Looker position and lay them as one
-    #     full-width row of equal, TALL tiles directly under the control bar — this
-    #     is the only reliable way to keep their titles visible.
+    # (3) KPI band: pull every KPI out of its Looker position into one strip of
+    #     equal, TALL tiles — the only reliable way to keep their titles visible.
     kpi_ids = [e for (e, *_rest, k) in layout_items if k == "kpi-chart"]
     other_items = [it for it in layout_items if it[5] != "kpi-chart"]
-    new_items = list(ctrl_items)
-    kpi_row0 = 1 + ctrl_h
     if kpi_ids:
         n = len(kpi_ids)
         kw = max(1, GRID // n)
-        x = 1
+        x, inner = 1, []
         for i, e in enumerate(kpi_ids):
             c1 = (x + kw) if i < n - 1 else (GRID + 1)   # last fills to the edge
-            new_items.append((e, x, c1, kpi_row0, kpi_row0 + KPI_H, "kpi-chart"))
+            inner.append(_le(e, x, c1, 1, 1 + KPI_H))
             x = c1
-    kpi_h = KPI_H if kpi_ids else 0
+        band_els.append({"id": "band-kpi", "kind": "container"})
+        band_xml.append(_gc("band-kpi", page_row, page_row + KPI_H, "\n".join(inner)))
+        page_row += KPI_H
 
-    # (c) Shift all remaining tiles DOWN below the control bar + KPI strip, by the
-    #     amount their original top-row sat above the first non-KPI tile (so we
-    #     close the gap the KPIs left and never overlap the bars). Preserve their
-    #     relative vertical order and columns from the newspaper math.
-    body_off = ctrl_h + kpi_h
-    top = min((r0 for (_e, _c0, _c1, r0, _r1, _k) in other_items), default=1)
-    for (e, c0, c1, r0, r1, k) in other_items:
-        h = r1 - r0
-        nr0 = (r0 - top) + 1 + body_off
-        new_items.append((e, c0, c1, nr0, nr0 + h, k))
-    layout_items = new_items
+    # (4) chart row bands: cluster the remaining newspaper tiles into horizontal
+    #     bands by row overlap; one container per band, children relative.
+    bands = []
+    for it in sorted(other_items, key=lambda i: (i[3], i[1])):
+        if bands and it[3] < bands[-1]["r1"]:
+            bands[-1]["items"].append(it)
+            bands[-1]["r1"] = max(bands[-1]["r1"], it[4])
+        else:
+            bands.append({"r0": it[3], "r1": it[4], "items": [it]})
+    TABLE_MAX_H = 12   # table tiles sized to content, not the Looker tile box —
+                       # an over-tall table band renders as a giant dead tile
+                       # (layout-playbook.md rule 4)
+    for bi, b in enumerate(bands, 1):
+        cid = f"band-row-{bi}"
+        band_els.append({"id": cid, "kind": "container"})
+        h = b["r1"] - b["r0"]
+        if all(k == "table" for (*_g, k) in b["items"]) and h > TABLE_MAX_H:
+            h = TABLE_MAX_H
+        inner = "\n".join(_le(e, c0, c1, min(r0 - b["r0"], h - 1) + 1, min(r1 - b["r0"], h) + 1)
+                          for (e, c0, c1, r0, r1, _k) in b["items"])
+        band_xml.append(_gc(cid, page_row, page_row + h, inner))
+        page_row += h
 
     # ── layout XML (single top-level field; 24-col grid) ──
-    page_id = "page-dash"
-    les = "\n".join(f'  <LayoutElement elementId="{e}" gridColumn="{c0} / {c1}" gridRow="{r0} / {r1}"/>'
-                    for (e, c0, c1, r0, r1, _k) in layout_items)
     layout_xml = ('<?xml version="1.0" encoding="utf-8"?>\n'
                   f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="{page_id}">\n'
-                  f'{les}\n</Page>')
+                  + "\n".join(band_xml) + '\n</Page>')
 
     spec = {
         "name": f"{dash['title']} (from Looker)", "folderId": a.folder_id, "schemaVersion": 1,
         "layout": layout_xml,
         "pages": [
             {"id": "page-data", "name": "Data", "elements": []},  # filled below
-            {"id": page_id, "name": dash["title"], "elements": controls + elements},
+            {"id": page_id, "name": dash["title"], "elements": controls + elements + band_els},
         ],
     }
     master_elements = [{

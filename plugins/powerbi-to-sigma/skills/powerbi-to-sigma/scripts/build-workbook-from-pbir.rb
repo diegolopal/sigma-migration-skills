@@ -48,6 +48,8 @@
 
 require 'json'
 require 'optparse'
+require_relative 'lib/layout'
+include SigmaLayout
 
 opts = {}
 OptionParser.new do |p|
@@ -652,9 +654,14 @@ col_for = ->(x, w, pw) {
   [[cs, 1].max, [ce, 25].min]
 }
 ROW_UNIT = 30.0
+# Container-banded pages (layout-playbook.md): the PBI canvas regions cluster
+# into horizontal row bands, each band a full-width <GridContainer> whose
+# children keep the canvas-derived geometry (container-relative rows). Every
+# page gets a dark header band carrying the page title; the matching
+# `kind: container` / header-text spec elements are appended to the page below.
 pages_xml = signals['pages'].map do |pg|
   pw = pg['page_w'] || 1280
-  les = pg['visuals'].flat_map do |v|
+  items = pg['visuals'].flat_map do |v|
     cs, ce = col_for.call(v['x'], v['w'], pw)
     rs = (v['y'] / ROW_UNIT).floor + 1
     re = ((v['y'] + v['h']) / ROW_UNIT).floor + 1
@@ -684,14 +691,19 @@ pages_xml = signals['pages'].map do |pg|
         sre = rs + ((r + 1) * rspan.to_f / nrow).round
         sce = scs + 1 if sce <= scs
         sre = srs + 1 if sre <= srs
-        %(  <LayoutElement elementId="#{base}-k#{i}" gridColumn="#{scs} / #{sce}" gridRow="#{srs} / #{sre}"/>)
+        ["#{base}-k#{i}", scs, sce, srs, sre]
       end
     else
-      [%(  <LayoutElement elementId="#{base}" gridColumn="#{cs} / #{ce}" gridRow="#{rs} / #{re}"/>)]
+      [[base, cs, ce, rs, re]]
     end
-  end.join("\n")
-  %(<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="page-#{pg['page_id']}">\n#{les}\n</Page>)
-end.join("\n")
+  end
+  page_id = "page-#{pg['page_id']}"
+  next nil if items.empty?
+  xml, extra = banded_page(page_id, items, title: pg['page_title'])
+  page_spec = content_pages.find { |p| p['id'] == page_id }
+  page_spec['elements'] = page_spec['elements'] + extra if page_spec
+  xml
+end.compact.join("\n")
 layout_xml = %(<?xml version="1.0" encoding="utf-8"?>\n#{pages_xml}\n)
 
 spec = {

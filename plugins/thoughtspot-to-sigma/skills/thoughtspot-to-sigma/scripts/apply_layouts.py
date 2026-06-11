@@ -33,42 +33,87 @@ def req(method, path, body=None):
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{method} {path} -> {e.code}: {e.read().decode()[:300]}")
 
-def tiles_page_xml(page_id, tiles):
-    """ThoughtSpot tile geometry → Sigma grid. tiles: [{element_id,x,y,width,height}]
-    in TS 12-col units."""
-    out = [f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="{page_id}">']
+# ---- container-banded layout (layout-playbook.md, verified 2026-06-10) -----
+# Spec side: a `kind: container` placeholder element per band + a header text
+# element. Layout side: <GridContainer> (NOT <LayoutElement type="grid">, which
+# silently drops children) wrapping <LayoutElement>s with CONTAINER-RELATIVE
+# coordinates (rows restart at 1).
+HEADER_STYLE = {"backgroundColor": "#0F172A", "borderRadius": "round"}
+HEADER_ROWS = 3
+
+def _le(eid, c0, c1, r0, r1):
+    return f'  <LayoutElement elementId="{eid}" gridColumn="{c0} / {c1}" gridRow="{r0} / {r1}"/>'
+
+def _gc(cid, r0, r1, inner):
+    return (f'<GridContainer elementId="{cid}" type="grid" gridColumn="1 / 25" '
+            f'gridRow="{r0} / {r1}" gridTemplateColumns="repeat(24, 1fr)" '
+            f'gridTemplateRows="auto">\n{inner}\n</GridContainer>')
+
+def banded_page(page_id, items, title):
+    """items: [eid, c0, c1, r0, r1] page-absolute. Header band + one container
+    per row band (children relative; relative TS proportions preserved inside).
+    Returns (page_xml, extra_spec_elements)."""
+    extra, children = [], []
+    extra.append({"id": "band-hdr", "kind": "container", "style": dict(HEADER_STYLE)})
+    extra.append({"id": "band-hdrtext", "kind": "text",
+                  "body": f'# <span style="color: #FFFFFF">{title}</span>'})
+    children.append(_gc("band-hdr", 1, 1 + HEADER_ROWS, _le("band-hdrtext", 1, 25, 1, 1 + HEADER_ROWS)))
+    offset = HEADER_ROWS + (1 - min(i[3] for i in items) if items else 0)
+    bands = []
+    for it in sorted(items, key=lambda i: (i[3], i[1])):
+        if bands and it[3] < bands[-1]["r1"]:
+            bands[-1]["items"].append(it)
+            bands[-1]["r1"] = max(bands[-1]["r1"], it[4])
+        else:
+            bands.append({"r0": it[3], "r1": it[4], "items": [it]})
+    for n, b in enumerate(bands, 1):
+        cid = f"band-{n}"
+        extra.append({"id": cid, "kind": "container"})
+        inner = "\n".join(_le(i[0], i[1], i[2], i[3] - b["r0"] + 1, i[4] - b["r0"] + 1)
+                          for i in b["items"])
+        children.append(_gc(cid, b["r0"] + offset, b["r1"] + offset, inner))
+    body = "\n".join(children)
+    return (f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" '
+            f'gridTemplateRows="auto" id="{page_id}">\n{body}\n</Page>', extra)
+
+def tiles_items(tiles, kinds=None):
+    """ThoughtSpot tile geometry → Sigma grid items (TS 12-col units → 24).
+    KPI tiles are padded to >= 5 grid rows (Sigma hides the KPI title below
+    that — layout-playbook.md)."""
+    items = []
     for t in tiles:
         c0 = t["x"] * COL_SCALE + 1
         c1 = min(t["x"] + t["width"], TS_GRID_COLS) * COL_SCALE + 1
         r0 = t["y"] * ROW_SCALE + 1
         r1 = (t["y"] + t["height"]) * ROW_SCALE + 1
-        out.append(f'  <LayoutElement elementId="{t["element_id"]}" gridColumn="{c0} / {c1}" gridRow="{r0} / {r1}"/>')
-    out.append("</Page>")
-    return "\n".join(out)
+        if (kinds or {}).get(t["element_id"]) == "kpi-chart" and r1 - r0 < 5:
+            r1 = r0 + 5
+        items.append([t["element_id"], c0, c1, r0, r1])
+    return items
 
-def page_xml(page_id, elems):
-    """Auto grid fallback (no TML geometry): KPIs across the top row (split
-    evenly, 5 rows tall); others 2-wide, 11 rows."""
+def auto_items(elems):
+    """Auto grid fallback (no TML geometry): KPI strip (5+ rows, titles render),
+    then charts 2-wide, 11 rows."""
     kpis = [e for e in elems if e["kind"] == "kpi-chart"]
     charts = [e for e in elems if e["kind"] not in ("kpi-chart",)]
-    out = [f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="{page_id}">']
+    items, row = [], 1
     if kpis:
         w = 24 // len(kpis)
         for i, e in enumerate(kpis):
             c0 = 1 + i * w; c1 = (c0 + w) if i < len(kpis) - 1 else 25
-            out.append(f'  <LayoutElement elementId="{e["id"]}" gridColumn="{c0} / {c1}" gridRow="1 / 6"/>')
-    row = 6
+            items.append([e["id"], c0, c1, 1, 6])
+        row = 6
     for i in range(0, len(charts), 2):
         pair = charts[i:i + 2]
         for j, e in enumerate(pair):
             c0 = 1 if j == 0 else 13
             c1 = 13 if (j == 0 and len(pair) > 1) else 25
-            out.append(f'  <LayoutElement elementId="{e["id"]}" gridColumn="{c0} / {c1}" gridRow="{row} / {row+11}"/>')
+            items.append([e["id"], c0, c1, row, row + 11])
         row += 11
-    out.append("</Page>")
-    return "\n".join(out)
+    return items
 
 def build_layout(spec, tiles=None):
+    """Returns (layout_xml, main_page, extra_spec_elements)."""
     pages = spec["pages"]
     data = next((p for p in pages if p.get("name") == "Data"), None)
     main = next((p for p in pages if p.get("name") != "Data"), None)
@@ -79,15 +124,23 @@ def build_layout(spec, tiles=None):
         lines.append(f'  <LayoutElement elementId="{mid}" gridColumn="1 / 25" gridRow="1 / 21"/>')
         lines.append('</Page>')
     if tiles:
-        lines.append(tiles_page_xml(main["id"], tiles))
+        items = tiles_items(tiles, kinds={e["id"]: e.get("kind") for e in main["elements"]})
     else:
-        elems = [{"id": e["id"], "kind": e["kind"]} for e in main["elements"]]
-        lines.append(page_xml(main["id"], elems))
-    return "\n".join(lines) + "\n"
+        elems = [{"id": e["id"], "kind": e["kind"]} for e in main["elements"]
+                 if e.get("kind") != "container" and not str(e.get("id", "")).startswith("band-")]
+        items = auto_items(elems)
+    title = main.get("name") or spec.get("name") or "Dashboard"
+    page, extra = banded_page(main["id"], items, title)
+    lines.append(page)
+    return "\n".join(lines) + "\n", main, extra
 
 def apply(wb, tiles=None):
     spec = json.loads(req("GET", f"/v2/workbooks/{wb}/spec"))
-    xml = build_layout(spec, tiles=tiles)
+    xml, main, extra = build_layout(spec, tiles=tiles)
+    # idempotent: drop previously-injected band elements, then add this run's
+    main["elements"] = [e for e in main["elements"]
+                        if not (str(e.get("id", "")).startswith("band-")
+                                and e.get("kind") in ("container", "text"))] + extra
     for p in spec["pages"]:
         p.pop("layout", None)
     spec["layout"] = xml

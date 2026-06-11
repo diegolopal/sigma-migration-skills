@@ -268,10 +268,15 @@ unless opts[:skip_layout]
         # gridColumn value (typically "1 / 13" — left half, vertically stacked).
         # Note: per-page detection — a workbook with one element per content
         # page is structurally fine (degenerate case, not a stack).
+        # Container-banded pages (<GridContainer> bands per layout-playbook.md)
+        # are exempt: full-width band containers (and single-chart rows inside
+        # them) legitimately share gridColumn="1 / 25" — that is deliberate
+        # banding, not the auto-stack regression.
         non_data_stack_pages = []
         # Walk one page at a time using the <Page id="..."> blocks
         layout_xml.scan(/<Page\b[^>]*id="([^"]*)"[^>]*>(.*?)<\/Page>/m).each do |page_id, page_body|
           next if page_id.to_s.downcase.include?('data')
+          next if page_body.include?('<GridContainer')
           cols_on_page = page_body.scan(/gridColumn="([^"]+)"/).map(&:first).uniq
           elems_on_page = page_body.scan(/<LayoutElement\b/).length
           if elems_on_page >= 2 && cols_on_page.length == 1

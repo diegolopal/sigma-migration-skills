@@ -9,8 +9,10 @@ For each app, builds a Sigma workbook (reusing an existing data model) with an O
 Demonstrates tenant-scale migration. Reuses DM/denorm element (set below) since the demo apps
 share data; for distinct apps, discover per-app and build per-app specs.
 
-Includes `auto_layout()` — the reusable layout heuristic (KPIs across the top row, other
-charts in a 2-wide grid below) returning the 24-col grid XML a workbook PUT expects.
+Includes `auto_layout()` — the reusable layout heuristic (header band + KPI band + chart
+rows, each a <GridContainer> band per layout-playbook.md) returning (24-col grid XML,
+container/header spec elements). The spec elements MUST be in the POSTed spec or the
+GridContainers are silently dropped.
 """
 import json, os, sys, urllib.request, subprocess, re, argparse
 
@@ -25,24 +27,35 @@ def post(p,b):
     except urllib.error.HTTPError as e: print("HTTP",e.code,e.read().decode()[:400],file=sys.stderr); return None
 N=lambda f:{"kind":"number","formatString":f}
 
-def auto_layout(page_id, elems):
-    """elems: ordered list of {id, kind}. KPIs → top row (split evenly); others → 2-wide grid below."""
+def auto_layout(page_id, elems, title="Overview"):
+    """elems: ordered list of {id, kind}. Header band + KPI band + chart rows, each a
+    full-width GridContainer (children container-relative). Returns (xml, extra_spec_elements)."""
     kpis=[e for e in elems if e["kind"]=="kpi-chart"]; charts=[e for e in elems if e["kind"]!="kpi-chart"]
-    lines=[f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="{page_id}">']
+    def le(eid,c0,c1,r0,r1): return f'  <LayoutElement elementId="{eid}" gridColumn="{c0} / {c1}" gridRow="{r0} / {r1}"/>'
+    def gc(cid,r0,r1,inner):
+        return (f'<GridContainer elementId="{cid}" type="grid" gridColumn="1 / 25" gridRow="{r0} / {r1}" '
+                f'gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto">\n{inner}\n</GridContainer>')
+    extra=[{"id":"band-hdr","kind":"container","style":{"backgroundColor":"#0F172A","borderRadius":"round"}},
+           {"id":"band-hdrtext","kind":"text","body":f'# <span style="color: #FFFFFF">{title}</span>'}]
+    bands=[gc("band-hdr",1,4,le("band-hdrtext",1,25,1,4))]
+    row=4
     if kpis:
-        w=24//len(kpis)
+        w=24//len(kpis); inner=[]
         for i,e in enumerate(kpis):
             c0=1+i*w; c1=(c0+w) if i<len(kpis)-1 else 25
-            lines.append(f'  <LayoutElement elementId="{e["id"]}" gridColumn="{c0} / {c1}" gridRow="1 / 6"/>')
-    row=6
-    for i in range(0,len(charts),2):
-        pair=charts[i:i+2]
+            inner.append(le(e["id"],c0,c1,1,6))
+        extra.append({"id":"band-kpi","kind":"container"})
+        bands.append(gc("band-kpi",row,row+5,"\n".join(inner))); row+=5
+    for n,i in enumerate(range(0,len(charts),2),1):
+        pair=charts[i:i+2]; inner=[]
         for j,e in enumerate(pair):
             c0=1 if j==0 else 13; c1=13 if (j==0 and len(pair)>1) else 25
-            lines.append(f'  <LayoutElement elementId="{e["id"]}" gridColumn="{c0} / {c1}" gridRow="{row} / {row+11}"/>')
-        row+=11
-    lines.append("</Page>")
-    return '<?xml version="1.0" encoding="utf-8"?>\n'+"\n".join(lines)
+            inner.append(le(e["id"],c0,c1,1,12))
+        cid=f"band-row-{n}"; extra.append({"id":cid,"kind":"container"})
+        bands.append(gc(cid,row,row+11,"\n".join(inner))); row+=11
+    xml=(f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="{page_id}">\n'
+         +"\n".join(bands)+'\n</Page>')
+    return '<?xml version="1.0" encoding="utf-8"?>\n'+xml, extra
 
 def build(app_name):
     O=lambda c:"[OFV/%s]"%c
@@ -58,14 +71,14 @@ def build(app_name):
            ch(1,"bar-chart","Net Revenue by Category",O("Category"),"Category","Sum(%s)"%O("Net Revenue")),
            ch(2,"line-chart","Net Revenue by Month",O("Month Number"),"Month","Sum(%s)"%O("Net Revenue")),
            ch(3,"bar-chart","Net Revenue by Region",O("Store Region"),"Region","Sum(%s)"%O("Net Revenue"))]
+    xml,extra=auto_layout("pg-ov",[{"id":e["id"],"kind":e["kind"]} for e in elems],title=app_name)
     spec={"name":f"{app_name} → Sigma","folderId":FOLDER,"schemaVersion":1,
-          "pages":[{"id":"pg-data","name":"Data","elements":[master]},{"id":"pg-ov","name":"Overview","elements":elems}]}
+          "pages":[{"id":"pg-data","name":"Data","elements":[master]},{"id":"pg-ov","name":"Overview","elements":elems+extra}]}
     res=post("/v2/workbooks/spec",spec)
     if not res: return None
     wb=re.search(r'workbookId:\s*(\S+)',res)
     wb=wb.group(1) if wb else None
     if wb:
-        xml=auto_layout("pg-ov",[{"id":e["id"],"kind":e["kind"]} for e in elems])
         lf="/tmp/_lay_%s.xml"%wb; open(lf,"w").write(xml)
         subprocess.run(["ruby",PUTLAYOUT,"--workbook",wb,"--layout",lf],capture_output=True)
     return wb

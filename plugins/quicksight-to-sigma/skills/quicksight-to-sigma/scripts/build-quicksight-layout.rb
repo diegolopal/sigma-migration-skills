@@ -174,6 +174,7 @@ end
 sheet_pages = map['sheetPages']
 sheets = defn['Sheets'] || []
 pages_xml = []
+sidecar = {}   # pageId -> container/header spec elements (put-layout.rb injects)
 total_placed = 0
 
 if sheet_pages && !sheet_pages.empty?
@@ -184,9 +185,14 @@ if sheet_pages && !sheet_pages.empty?
     eids_for_sheet = (sheet['Visuals'] || []).map { |v| _t, inner = v.first; v2e[inner['VisualId']] }.compact.to_set
     placed, src = layout_sheet(sheet, v2e, eids_for_sheet)
     total_placed += placed.size
-    children = placed.map { |eid, c0, c1, r0, r1| le(eid, c0, c1, r0, r1) }
-    pages_xml << page_xml(sp['pageId'], *children)
-    STDERR.puts "layout: page \"#{sp['name']}\" (#{sp['pageId']}) <- QS sheet[#{idx}] #{src}: #{placed.size} element(s)"
+    next if placed.empty?
+    # Container-banded page (layout-playbook.md): header band with the QS sheet
+    # name, then one full-width GridContainer per row band — the QS 36-col row
+    # geometry is preserved INSIDE each band (container-relative coordinates).
+    xml, extra = banded_page(sp['pageId'], placed, title: sp['name'] || sheet['Name'])
+    pages_xml << xml
+    sidecar[sp['pageId']] = extra
+    STDERR.puts "layout: page \"#{sp['name']}\" (#{sp['pageId']}) <- QS sheet[#{idx}] #{src}: #{placed.size} element(s), #{extra.size - 2} chart band(s) + header"
     placed.each { |eid, c0, c1, r0, r1| STDERR.puts "  #{eid}  col #{c0}-#{c1}  row #{r0}-#{r1}" }
   end
 else
@@ -194,11 +200,13 @@ else
   all_eids = v2e.values.to_set
   placed, src = layout_sheet(sheets[0] || {}, v2e, all_eids)
   total_placed += placed.size
-  children = placed.map { |eid, c0, c1, r0, r1| le(eid, c0, c1, r0, r1) }
-  pages_xml << page_xml(map['dashPageId'], *children)
-  STDERR.puts "layout: #{placed.size} elements mapped from QuickSight #{src} (legacy single-page)"
+  xml, extra = banded_page(map['dashPageId'], placed, title: (sheets[0] || {})['Name'] || 'Dashboard')
+  pages_xml << xml
+  sidecar[map['dashPageId']] = extra
+  STDERR.puts "layout: #{placed.size} elements mapped from QuickSight #{src} (legacy single-page; container bands)"
 end
 
 data_page = page_xml('page-data', le(map['masterElementId'], 1, 25, 1, 15))
 File.write(opts[:out], assemble(data_page, *pages_xml))
-STDERR.puts "layout: #{total_placed} elements across #{pages_xml.size} page(s) -> #{opts[:out]}"
+File.write("#{opts[:out]}.elements.json", JSON.pretty_generate(sidecar))
+STDERR.puts "layout: #{total_placed} elements across #{pages_xml.size} page(s) -> #{opts[:out]} (+ .elements.json sidecar)"
