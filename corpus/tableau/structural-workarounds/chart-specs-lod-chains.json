@@ -1,0 +1,28 @@
+[
+  {
+    "chain": [
+      {
+        "helper": "LOD Helper 1",
+        "dims": [
+          "Region",
+          "Customer Id"
+        ],
+        "tableau_body": "SUM([Sales])",
+        "sigma_aggregate": "Sum([Sales])"
+      },
+      {
+        "helper": "LOD Helper 2",
+        "dims": [
+          "Region"
+        ],
+        "tableau_body": "AVG([LOD Helper 1/Value])",
+        "sigma_aggregate": "Avg([LOD Helper 1/Value])"
+      }
+    ],
+    "final": "[LOD Helper 2/Value]",
+    "calc": "[Calculation_nestedlod]",
+    "caption": "Avg Customer Sales by Region",
+    "worksheet": "Sales Trend",
+    "tableau_formula": "{FIXED [Region] : AVG({FIXED [Region], [Customer Id] : SUM([Sales])})}"
+  }
+]

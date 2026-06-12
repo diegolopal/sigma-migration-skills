@@ -1,0 +1,143 @@
+<?xml version='1.0' encoding='utf-8' ?>
+<workbook source-build='2024.1.0' version='18.1' xmlns:user='http://www.tableausoftware.com/xml/user'>
+  <datasources>
+    <datasource caption='Orders (CSA.TJ)' inline='true' name='federated.primary' version='18.1'>
+      <connection class='snowflake' dbname='CSA' schema='TJ' server='ymb68310.snowflakecomputing.com' warehouse='SIGMA_WH' />
+      <column caption='Region' datatype='string' name='[REGION]' role='dimension' type='nominal' />
+      <column caption='Customer Id' datatype='string' name='[CUSTOMER_ID]' role='dimension' type='nominal' />
+      <column caption='Sales' datatype='real' name='[SALES]' role='measure' type='quantitative' />
+      <column caption='Order Date' datatype='date' name='[ORDER_DATE]' role='dimension' type='ordinal' />
+      <column caption='Avg Customer Sales by Region' datatype='real' name='[Calculation_nestedlod]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED [Region] : AVG({FIXED [Region], [Customer Id] : SUM([Sales])})}' />
+      </column>
+      <column caption='ISO Year' datatype='integer' name='[Calculation_isoyear]' role='dimension' type='ordinal'>
+        <calculation class='tableau' formula="DATEPART('iso-year', [Order Date])" />
+      </column>
+      <column caption='Second Dash Pos' datatype='integer' name='[Calculation_findnth]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula="FINDNTH([Customer Id], '-', 2)" />
+      </column>
+      <column caption='Sales (bin)' datatype='integer' name='[Sales (bin)]' role='dimension' type='ordinal'>
+        <calculation class='bin' formula='[SALES]' peg='0' size='100' />
+      </column>
+    </datasource>
+    <datasource caption='Region Targets (Sheet)' inline='true' name='federated.secondary' version='18.1'>
+      <connection class='textscan' directory='/data' filename='region_targets.csv' />
+      <column caption='Region' datatype='string' name='[REGION]' role='dimension' type='nominal' />
+      <column caption='Target' datatype='real' name='[TARGET]' role='measure' type='quantitative' />
+    </datasource>
+  </datasources>
+  <worksheets>
+    <worksheet name='Attainment by Region'>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Orders (CSA.TJ)' name='federated.primary' />
+            <datasource caption='Region Targets (Sheet)' name='federated.secondary' />
+          </datasources>
+          <datasource-dependencies datasource='federated.primary'>
+            <column caption='Region' datatype='string' name='[REGION]' role='dimension' type='nominal' />
+            <column caption='Sales' datatype='real' name='[SALES]' role='measure' type='quantitative' />
+            <column-instance column='[REGION]' derivation='None' name='[none:REGION:nk]' pivot='key' type='nominal' />
+            <column-instance column='[SALES]' derivation='Sum' name='[sum:SALES:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+          <datasource-dependencies datasource='federated.secondary'>
+            <column caption='Region' datatype='string' name='[REGION]' role='dimension' type='nominal' />
+            <column caption='Target' datatype='real' name='[TARGET]' role='measure' type='quantitative' />
+            <column-instance column='[TARGET]' derivation='Sum' name='[sum:TARGET:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+        </view>
+        <rows>[federated.primary].[none:REGION:nk]</rows>
+        <cols>[federated.primary].[sum:SALES:qk]</cols>
+        <panes>
+          <pane>
+            <mark class='Bar' />
+          </pane>
+        </panes>
+      </table>
+    </worksheet>
+    <worksheet name='Sales Trend'>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Orders (CSA.TJ)' name='federated.primary' />
+          </datasources>
+          <datasource-dependencies datasource='federated.primary'>
+            <column caption='Order Date' datatype='date' name='[ORDER_DATE]' role='dimension' type='ordinal' />
+            <column caption='Sales' datatype='real' name='[SALES]' role='measure' type='quantitative' />
+            <column caption='ISO Year' datatype='integer' name='[Calculation_isoyear]' role='dimension' type='ordinal'>
+              <calculation class='tableau' formula="DATEPART('iso-year', [Order Date])" />
+            </column>
+            <column caption='Avg Customer Sales by Region' datatype='real' name='[Calculation_nestedlod]' role='measure' type='quantitative'>
+              <calculation class='tableau' formula='{FIXED [Region] : AVG({FIXED [Region], [Customer Id] : SUM([Sales])})}' />
+            </column>
+            <column-instance column='[ORDER_DATE]' derivation='Month-Trunc' name='[mn:ORDER_DATE:ok]' pivot='key' type='ordinal' />
+            <column-instance column='[SALES]' derivation='Sum' name='[sum:SALES:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+        </view>
+        <rows>[federated.primary].[sum:SALES:qk]</rows>
+        <cols>[federated.primary].[mn:ORDER_DATE:ok]</cols>
+        <panes>
+          <pane>
+            <mark class='Line' />
+          </pane>
+        </panes>
+      </table>
+    </worksheet>
+    <worksheet name='Customer Detail'>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Orders (CSA.TJ)' name='federated.primary' />
+          </datasources>
+          <datasource-dependencies datasource='federated.primary'>
+            <column caption='Customer Id' datatype='string' name='[CUSTOMER_ID]' role='dimension' type='nominal' />
+            <column caption='Sales' datatype='real' name='[SALES]' role='measure' type='quantitative' />
+            <column caption='Second Dash Pos' datatype='integer' name='[Calculation_findnth]' role='measure' type='quantitative'>
+              <calculation class='tableau' formula="FINDNTH([Customer Id], '-', 2)" />
+            </column>
+            <column caption='Sales (bin)' datatype='integer' name='[Sales (bin)]' role='dimension' type='ordinal'>
+              <calculation class='bin' formula='[SALES]' peg='0' size='100' />
+            </column>
+            <column-instance column='[CUSTOMER_ID]' derivation='None' name='[none:CUSTOMER_ID:nk]' pivot='key' type='nominal' />
+            <column-instance column='[SALES]' derivation='Sum' name='[sum:SALES:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+        </view>
+        <rows>[federated.primary].[none:CUSTOMER_ID:nk]</rows>
+        <cols>[federated.primary].[sum:SALES:qk]</cols>
+        <panes>
+          <pane>
+            <mark class='Bar' />
+          </pane>
+        </panes>
+      </table>
+    </worksheet>
+  </worksheets>
+  <dashboards>
+    <dashboard name='Overview Dash'>
+      <size maxheight='800' maxwidth='1200' minheight='800' minwidth='1200' />
+      <zones>
+        <zone h='100000' id='1' type-v2='layout-basic' w='100000' x='0' y='0'>
+          <zone h='48000' id='2' name='Attainment by Region' w='100000' x='0' y='0' />
+          <zone h='48000' id='3' name='Sales Trend' w='50000' x='0' y='48000' />
+          <zone h='48000' id='4' name='Customer Detail' w='50000' x='50000' y='48000' />
+        </zone>
+      </zones>
+    </dashboard>
+    <dashboard name='FY26 Performance Story' type-v2='storyboard'>
+      <size maxheight='964' maxwidth='1016' minheight='964' minwidth='1016' />
+      <zones>
+        <zone h='100000' id='10' type-v2='layout-basic' w='100000' x='0' y='0'>
+          <zone h='95000' id='11' type-v2='flipboard' w='100000' x='0' y='5000'>
+            <flipboard active-id='12' nav-type='caption'>
+              <story-points>
+                <story-point caption='Where FY26 landed' captured-sheet='Overview Dash' id='12' />
+                <story-point caption='Regional attainment deep-dive' captured-sheet='Attainment by Region' id='13' />
+                <story-point caption='What changed in Q4' captured-sheet='Sales Trend' id='14' />
+              </story-points>
+            </flipboard>
+          </zone>
+        </zone>
+      </zones>
+    </dashboard>
+  </dashboards>
+</workbook>

@@ -70,7 +70,7 @@ INVENTORY = [
   { name: 'Ratio calc (SUM/SUM, SUM/COUNT)',           pat: /SUM\s*\([^)]+\)\s*\/\s*(?:SUM|COUNT)\s*\(/i,
     status: :hint, blurb: 'WARN suggests Sum(x) / NullIf(Sum(y), 0) — agent wires on master.' },
   { name: 'FIXED LOD calc',                            pat: /\{\s*FIXED\b/i,
-    status: :hint, blurb: 'WARN with suggested Sigma window aggregate or Custom SQL element.' },
+    status: :hint, blurb: 'WARN with suggested Sigma window aggregate or Custom SQL element. Nested {FIXED} LODs auto-decompose into a helper-element chain (build-charts-from-signals.rb → -lod-chains.json sidecar).' },
   { name: 'INCLUDE/EXCLUDE LOD',                       pat: /\{\s*(INCLUDE|EXCLUDE)\b/i,
     status: :hint, blurb: 'WARN with chart-grouping adjustment suggestion.' },
   { name: 'Reference lines / bands / trendlines',      pat: /<(reference-line|reference-band|reference-distribution|trendline-model)\b/,
@@ -84,7 +84,7 @@ INVENTORY = [
   { name: 'Forecast / trendline model',                pat: /<forecast\b/,
     status: :manual, blurb: 'No Sigma forecast primitive; agent emits a note + Custom SQL option (beads-sigma-yi0).' },
   { name: 'Story points (sequential narrative)',       pat: /<story\b/,
-    status: :manual, blurb: 'Each story point becomes a separate Sigma page; navigation control added by hand (beads-sigma-y6b).' },
+    status: :hint, blurb: 'Each story point becomes a separate Sigma page: parse-twb-layout.rb writes story-plan.json, then scripts/build-story-pages.rb emits caption-named pages with the annotation atop (refs/story-points.md, beads-sigma-y6b).' },
   { name: 'Drill hierarchies',                         pat: /<drill-paths>|<drill-path /,
     status: :manual, blurb: 'Hierarchies map to pivot rowsBy OR a segmented drill-level control (beads-sigma-jbw).' },
 
@@ -135,6 +135,138 @@ def detect_point_map_geo_role_gaps(content)
     count:  1,
     blurb:  'Tableau declares geo_role=latitude or =longitude but not both. Sigma point-map needs both lat and lon — the chart will silently degrade to a bar. Add the missing column to the warehouse / DM, or accept the bar substitution.'
   }]
+end
+
+# ---- Data-blend detection (beads-sigma-iq8) --------------------------------
+# A worksheet BLENDS (vs joins) when it pulls fields from 2+ real datasources:
+# the worksheet's <view> lists multiple <datasource> refs and carries a
+# <datasource-dependencies datasource='<secondary>'> block naming the fields it
+# pulls from the secondary. Linking fields are approximated as the captions
+# that appear in BOTH the primary's and the secondary's dependency blocks
+# (Tableau links blends on same-named fields by default). A <join> inside ONE
+# <datasource> is a join, not a blend — it never produces a secondary
+# datasource-dependencies block, so it never matches here.
+#
+# Output: blend-plan.json next to the gaps report + one gap-report row, with a
+# per-blend ROUTE picked by comparing the primary/secondary <connection>
+# blocks (decision tree in refs/blending.md):
+#   same-warehouse-repoint   — same warehouse: ONE DM, two elements + a
+#                              relationship on the linking fields; repoint
+#                              connectionId by DEEP-WALKING the DM spec
+#                              (joins[].left/right nest sources recursively —
+#                              a top-level-only swap misses them)
+#   materialize-via-vds      — secondary is a file / extract / published
+#                              source: land it in the primary's warehouse with
+#                              the tableau-vds-to-cdw skill FIRST, then treat
+#                              as same-warehouse-repoint
+#   flag-unreachable         — secondary is a different live system we can
+#                              neither repoint nor land: surface the linking-
+#                              field report and leave the blend manual
+WAREHOUSE_CONN_CLASSES = %w[
+  snowflake redshift bigquery postgres greenplum sqlserver mysql oracle
+  databricks azure-sql synapse vertica teradata presto trino athena saphana
+].freeze
+FILE_CONN_CLASSES = %w[
+  textscan csv msexcel excel-direct hyper webdata-direct google-sheets
+  googlesheets salesforce sqlproxy
+].freeze
+
+def datasource_connections(xml)
+  out = {}
+  xml.elements.each('/workbook/datasources/datasource') do |ds|
+    name = ds.attributes['name'].to_s
+    next if name.empty? || name == 'Parameters' || name.start_with?('Parameters ')
+    conns = []
+    ds.elements.each('.//connection') do |c|
+      a = c.attributes
+      cls = a['class'].to_s
+      next if cls.empty? || cls == 'federated' # wrapper; real conns are nested
+      conns << {
+        'class'    => cls,
+        'server'   => a['server'],
+        'dbname'   => a['dbname'],
+        'schema'   => a['schema'],
+        'filename' => a['filename']
+      }.compact
+    end
+    out[name] = {
+      'name'        => name,
+      'caption'     => ds.attributes['caption'] || name,
+      'connections' => conns.uniq
+    }
+  end
+  out
+end
+
+def route_blend(primary_conns, secondary_conns)
+  same = primary_conns.any? do |pc|
+    secondary_conns.any? do |sc|
+      pc['class'] == sc['class'] && pc['server'].to_s == sc['server'].to_s &&
+        (pc['dbname'].nil? || sc['dbname'].nil? || pc['dbname'] == sc['dbname'] ||
+         pc['dbname'].to_s.casecmp(sc['dbname'].to_s).zero?)
+    end
+  end
+  return 'same-warehouse-repoint' if same
+  s_classes = secondary_conns.map { |c| c['class'] }
+  return 'materialize-via-vds' if s_classes.any? { |c| FILE_CONN_CLASSES.include?(c) } ||
+                                  s_classes.empty?
+  return 'materialize-via-vds' unless s_classes.any? { |c| WAREHOUSE_CONN_CLASSES.include?(c) }
+  'flag-unreachable'
+end
+
+ROUTE_BLURB = {
+  'same-warehouse-repoint' => 'both sources resolve to the SAME warehouse — emit ONE DM with both '                               'sources as elements + a relationship on the linking fields; repoint '                               'connectionId by deep-walking the spec (incl. joins[].left/right nesting)',
+  'materialize-via-vds'    => 'secondary is not in the warehouse — run the tableau-vds-to-cdw skill '                               'to land it in the primary\'s warehouse FIRST, then convert as a '                               'same-warehouse blend',
+  'flag-unreachable'       => 'secondary lives in a different live system — blend stays MANUAL; '                               'use the linking-field report in blend-plan.json to wire it post-publish'
+}.freeze
+
+def detect_blends(xml)
+  return [[], nil] if xml.nil?
+  ds_info = datasource_connections(xml)
+  blends = []
+  xml.elements.each('//worksheet') do |ws|
+    ws_name = ws.attributes['name']
+    used = ws.elements.to_a('.//view/datasources/datasource')
+             .map { |d| d.attributes['name'] }.compact
+             .select { |n| ds_info.key?(n) }
+    next unless used.length >= 2
+    deps = {}
+    ws.elements.each('.//datasource-dependencies') do |dd|
+      dsn = dd.attributes['datasource']
+      next unless dsn
+      caps = dd.elements.to_a('.//column').map do |c|
+        c.attributes['caption'] || c.attributes['name'].to_s.gsub(/^\[|\]$/, '')
+      end
+      deps[dsn] = ((deps[dsn] || []) + caps).uniq
+    end
+    primary = used.first
+    used[1..].each do |sec|
+      next unless deps.key?(sec) && !deps[sec].empty? # must pull fields from it
+      linking = (deps[primary] || []) & (deps[sec] || [])
+      route = route_blend(ds_info[primary]['connections'], ds_info[sec]['connections'])
+      blends << {
+        'worksheet'        => ws_name,
+        'primary'          => primary,
+        'primary_caption'  => ds_info[primary]['caption'],
+        'secondary'        => sec,
+        'secondary_caption'=> ds_info[sec]['caption'],
+        'linking_fields'   => linking,
+        'secondary_fields' => deps[sec],
+        'route'            => route,
+        'recommendation'   => ROUTE_BLURB[route]
+      }
+    end
+  end
+  return [[], nil] if blends.empty?
+  features = blends.group_by { |b| b['route'] }.map do |route, rs|
+    {
+      name:   "Data blending (#{route})",
+      status: route == 'same-warehouse-repoint' ? :hint : :manual,
+      count:  rs.length,
+      blurb:  "#{ROUTE_BLURB[route]}. Worksheets: #{rs.map { |b| b['worksheet'] }.uniq.join(', ')}. "               'Full linking-field report in blend-plan.json; decision tree in refs/blending.md (beads-sigma-iq8).'
+    }
+  end
+  [features, { 'datasources' => ds_info.values, 'blends' => blends }]
 end
 
 def render_md(wb_name, summary, results)
@@ -189,6 +321,7 @@ def main
   content = File.read(inp, encoding: 'utf-8', invalid: :replace)
 
   # Workbook summary via REXML
+  xml = nil
   begin
     xml = REXML::Document.new(content)
     n_dash = xml.elements.to_a('//dashboard').count
@@ -216,8 +349,18 @@ def main
 
   results = categorize(content)
   results.concat(detect_point_map_geo_role_gaps(content))
+  blend_features, blend_plan = detect_blends(xml)
+  results.concat(blend_features)
   md_path = out
   json_path = out.sub(/\.md$/, '.json')
+
+  if blend_plan
+    blend_plan_path = File.join(File.dirname(File.expand_path(out)), 'blend-plan.json')
+    blend_plan['workbook'] = File.basename(inp)
+    File.write(blend_plan_path, JSON.pretty_generate(blend_plan))
+    warn "wrote #{blend_plan_path} (#{blend_plan['blends'].length} blend(s): " +
+         blend_plan['blends'].map { |b| "#{b['worksheet']}→#{b['route']}" }.join(', ') + ')'
+  end
 
   File.write(md_path, render_md(File.basename(inp), summary, results))
   File.write(json_path, JSON.pretty_generate({

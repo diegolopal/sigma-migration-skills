@@ -103,8 +103,11 @@ if !opts[:finalize]
   puts ""
   plan['charts'].each_with_index do |c, i|
     cols = c['sigma_columns'] || []
-    next unless cols.length >= 2
-    sql = %(SELECT "#{cols[0]}" AS dim, "#{cols[1]}" AS val FROM "workbook"."#{c['sigma_element_id']}" ORDER BY dim NULLS FIRST)
+    # KPIs are single-column (value only) — they MUST be queried too (bead
+    # s6fo: the >=2 guard silently dropped every KPI from the actuals fetch).
+    next unless cols.length >= 1
+    sel = cols.each_with_index.map { |col, j| %("#{col}" AS f#{j}) }.join(', ')
+    sql = %(SELECT #{sel} FROM "workbook"."#{c['sigma_element_id']}" ORDER BY f0 NULLS FIRST)
     puts "  [#{i + 1}/#{plan['charts'].length}] #{c['chart']}"
     puts "    mcp__sigma-mcp-v2__query  type=workbook  workbookId=#{opts[:wb]}"
     puts "    sql=#{sql.inspect}"
