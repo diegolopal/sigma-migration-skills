@@ -61,6 +61,38 @@
         "row": 12,
         "colspan": 12,
         "rowspan": 9
+      },
+      {
+        "objectId": "fp-1",
+        "type": "filterpane",
+        "col": 0,
+        "row": 10,
+        "colspan": 4,
+        "rowspan": 6
+      },
+      {
+        "objectId": "lb-3",
+        "type": "listbox",
+        "col": 4,
+        "row": 10,
+        "colspan": 4,
+        "rowspan": 3
+      },
+      {
+        "objectId": "lb-4",
+        "type": "listbox",
+        "col": 8,
+        "row": 10,
+        "colspan": 4,
+        "rowspan": 3
+      },
+      {
+        "objectId": "lb-6",
+        "type": "listbox",
+        "col": 20,
+        "row": 0,
+        "colspan": 4,
+        "rowspan": 2
       }
     ]
   },
@@ -126,6 +158,14 @@
         "row": 12,
         "colspan": 12,
         "rowspan": 9
+      },
+      {
+        "objectId": "lb-5",
+        "type": "listbox",
+        "col": 0,
+        "row": 0,
+        "colspan": 4,
+        "rowspan": 3
       }
     ]
   },

@@ -145,6 +145,101 @@ def translate_measure(expr, resolve):
     if re.search(r"[A-Za-z_]{2,}", leftovers): return None
     return e
 
+def date_field(info, raw):
+    """Date-typed Qlik field? Engine layout tags ($date/$timestamp) are
+    authoritative; the qNumFormat date pattern and the raw warehouse column
+    name are fallbacks. Matters because a Sigma `list` control whose filter
+    target is a datetime column posts fine but Sigma SILENTLY STRIPS the
+    target (estate-repair gotcha) — date fields need date-range controls."""
+    tags = [str(t).lower() for t in (info.get("tags") or [])]
+    if "$date" in tags or "$timestamp" in tags: return True
+    if "$text" in tags: return False              # tagged, and tagged non-date
+    fmt = (info.get("numFmt") or "").upper()
+    if re.search(r"[DMY]{2,}[-./ ]", fmt): return True
+    return bool(re.search(r"(^|_)(DATE|DT|TIMESTAMP)(_|$)", str(raw or "").upper()))
+
+def build_control(lb, resolve, mcol_id, raw_of, warnings, scope, unbound, seen_fields):
+    """One Qlik listbox (standalone or filterpane child) -> one Sigma control
+    (control-targeting wave, workstream B). Qlik's associative model is GLOBAL:
+    any field selection filters every chart on every sheet. Every chart in this
+    workbook sources the single master table, so ONE filter entry on the master
+    propagates to all of them across all pages (the proven shape:
+    filters:[{source:{kind:table, elementId}, columnId}]) — exactly the Qlik
+    semantics; the sidecar asserts it via mustReach over every queryable
+    element on every page (filled after page assembly). Date-typed fields
+    become date-range controls (list-on-datetime targets get silently
+    stripped). Alternate-state listboxes have no Sigma equivalent: recorded in
+    the sidecar's `unbound` as MANUAL, never silently dropped. Returns the
+    element or None."""
+    info = lb.get("listbox") or {}
+    field = info.get("field")
+    state = info.get("state")
+    label = info.get("label") or lb.get("title") or field
+    sig = f"{lb['vizType']} {lb['id']} field {field!r}"
+    if not field:
+        warnings.append(f"control '{lb['id']}': listbox has no field — skipped")
+        unbound.append({"sourceName": sig, "status": "unbound", "reason": "listbox has no field"})
+        return None
+    if state and state != "$":
+        warnings.append(f"control '{label}' (field {field}): ALTERNATE STATE '{state}' — "
+                        "Sigma has no alternate-state equivalent; flagged MANUAL (not emitted)")
+        unbound.append({"sourceName": sig, "status": "manual",
+                        "reason": f"alternate state '{state}' has no Sigma equivalent — port by hand "
+                                  "(e.g. duplicated charts + a dedicated control) if the analysis needs it"})
+        return None
+    if field in seen_fields:
+        # the same field filters globally — a second listbox on it (another
+        # sheet's filterpane) is the SAME control; Sigma controlIds are unique.
+        unbound.append({"sourceName": sig, "status": "duplicate",
+                        "reason": f"same field as control '{seen_fields[field]}' — one global Sigma "
+                                  "control already covers every sheet (Qlik associative semantics)"})
+        return None
+    dn = resolve(field)
+    if dn is None or dn not in mcol_id:
+        warnings.append(f"control '{label}': field '{field}' not on the denorm element — "
+                        "skipped (resolve the field and wire manually)")
+        unbound.append({"sourceName": sig, "status": "unbound",
+                        "reason": f"field '{field}' does not resolve to a denorm-element column; "
+                                  "dropped loudly rather than wired to a wrong column or shipped dead"})
+        return None
+    cid = mcol_id[dn]
+    ctl_id = re.sub(r"[^A-Za-z0-9]", "", str(dn).title()) + "Filter"
+    seen_fields[field] = ctl_id
+    el = {"id": "el-" + re.sub(r"[^a-z0-9]", "", str(lb["id"]).lower()),
+          "kind": "control", "controlId": ctl_id, "name": label or dn,
+          "filters": [{"source": {"kind": "table", "elementId": MASTER_ID}, "columnId": cid}]}
+    if date_field(info, raw_of.get(dn)):
+        # date-range needs no `source` (the column comes from the filter
+        # binding) but DOES require a flat `mode` — without it the POST fails
+        # with the misleading "Invalid kind: control" (live-verified 2026-06-12;
+        # the widget shape is picked by mode, see sigma-workbooks controls.md).
+        el.update({"controlType": "date-range", "mode": "between",
+                   "includeNulls": "when-no-value-is-selected"})
+    else:
+        el.update({"controlType": "list", "mode": "include", "selectionMode": "multiple",
+                   "values": [],
+                   "source": {"kind": "source",
+                              "source": {"kind": "table", "elementId": MASTER_ID}, "columnId": cid}})
+    # CONTRACT entry (lib/control_lint.rb header): scope "page" covers the
+    # same-page reach check; mustReach (every queryable element id on every
+    # page, filled after assembly) makes the lint statically assert Qlik's
+    # GLOBAL associative reach.
+    scope.append({"controlId": ctl_id, "sourceName": sig, "status": "wired",
+                  "controlType": el["controlType"], "scope": "page", "mustReach": [],
+                  "wired": [{"elementId": MASTER_ID, "columnId": cid}]})
+    return el
+
+def control_subcell(cell, i, n):
+    """Split a filterpane's sheet cell among its N child listbox controls —
+    vertically when the pane is taller than wide, else horizontally."""
+    if n <= 1:
+        return cell
+    if cell.get("rowspan", 1) >= cell.get("colspan", 1):
+        h = cell["rowspan"] / n
+        return {**cell, "row": cell["row"] + i * h, "rowspan": h}
+    w = cell["colspan"] / n
+    return {**cell, "col": cell["col"] + i * w, "colspan": w}
+
 def qlik_sort(c, dim_ids, meas_ids):
     """Explicit Qlik sort -> (columnId, direction) or None."""
     s = c.get("sort") or {}
@@ -339,25 +434,35 @@ def grid_layout(page_id, sheet, placed):
     for cell, el in placed:
         c0 = round(cell["col"] * 24 / qcols) + 1
         c1 = round((cell["col"] + cell["colspan"]) * 24 / qcols) + 1
-        r0 = cell["row"] * ROW_SCALE + 1
-        r1 = (cell["row"] + cell["rowspan"]) * ROW_SCALE + 1
+        # control_subcell splits a filterpane cell fractionally — round to grid
+        r0 = int(round(cell["row"] * ROW_SCALE)) + 1
+        r1 = int(round((cell["row"] + cell["rowspan"]) * ROW_SCALE)) + 1
         if el["kind"] == "kpi-chart" and (r1 - r0) < KPI_MIN_ROWS:
             r1 = r0 + KPI_MIN_ROWS
+        if el["kind"] == "control" and (r1 - r0) < 2:
+            r1 = r0 + 2
         items.append([el["id"], c0, c1, r0, r1])
     return banded_page(page_id, items, sheet.get("title"))
 
 def auto_layout(page_id, elems, title=None):
-    """Fallback when no layout.json: header band, KPI strip band, then chart
-    rows 2-wide — each a container. Returns (page_xml, extra_spec_elements)."""
+    """Fallback when no layout.json: header band, controls band, KPI strip band,
+    then chart rows 2-wide — each a container. Returns (page_xml, extra_spec_elements)."""
+    ctls = [e for e in elems if e["kind"] == "control"]
     kpis = [e for e in elems if e["kind"] == "kpi-chart"]
-    charts = [e for e in elems if e["kind"] != "kpi-chart"]
+    charts = [e for e in elems if e["kind"] not in ("kpi-chart", "control")]
     items, row = [], 1
+    if ctls:
+        w = 24 // len(ctls)
+        for i, e in enumerate(ctls):
+            c0 = 1 + i * w; c1 = c0 + w if i < len(ctls) - 1 else 25
+            items.append([e["id"], c0, c1, row, row + 3])
+        row += 3
     if kpis:
         w = 24 // len(kpis)
         for i, e in enumerate(kpis):
             c0 = 1 + i * w; c1 = c0 + w if i < len(kpis) - 1 else 25
-            items.append([e["id"], c0, c1, 1, 6])
-        row = 6
+            items.append([e["id"], c0, c1, row, row + 5])
+        row += 5
     for i in range(0, len(charts), 2):
         pair = charts[i:i + 2]
         for j, e in enumerate(pair):
@@ -380,6 +485,9 @@ def main():
     ap.add_argument("--spec-out", default="wb-spec.json")
     ap.add_argument("--layout-out", default="layout.xml")
     ap.add_argument("--element-map", default="element-map.json")
+    ap.add_argument("--control-scope-out", default=None,
+                    help="intended-scope contract for the control lint "
+                         "(default: control-scope.json next to --spec-out)")
     a = ap.parse_args()
 
     charts = {c["id"]: c for c in json.load(open(a.charts))}
@@ -429,6 +537,31 @@ def main():
 
     CHARTY = {"kpi", "auto-chart", "barchart", "linechart", "piechart", "combochart",
               "scatterplot", "table", "pivot-table"}
+    # master column id / raw warehouse column per display name — control
+    # source/filter targets + date-typed detection fallback
+    mcol_id = {dn: f"o{i}" for i, (dn, _raw) in enumerate(denorm_cols)}
+    raw_of = {dn: raw for dn, raw in denorm_cols}
+    scope, unbound, seen_fields, n_controls, n_signals = [], [], {}, 0, 0
+
+    def controls_for(c):
+        """Filterpane -> one control per child listbox; bare listbox -> one."""
+        if c["vizType"] == "filterpane":
+            lbs = [charts.get(ch) for ch in (c.get("children") or [])]
+            lbs = [lb for lb in lbs if lb]
+            if not lbs:
+                warnings.append(f"filterpane '{c.get('title') or c['id']}': no child listboxes "
+                                "discovered — no controls emitted")
+                unbound.append({"sourceName": f"filterpane {c['id']}", "status": "unbound",
+                                "reason": "no child listboxes discovered"})
+            for lb in lbs:  # a pane-level alternate state applies to its children
+                if c.get("state") and not (lb.get("listbox") or {}).get("state"):
+                    lb.setdefault("listbox", {})["state"] = c["state"]
+        else:
+            lbs = [c]
+        return [el for el in (build_control(lb, resolve, mcol_id, raw_of, warnings,
+                                            scope, unbound, seen_fields)
+                              for lb in lbs) if el]
+
     if sheets:
         for si, sheet in enumerate(sheets):
             pid = f"pg-{si + 1}"
@@ -436,6 +569,14 @@ def main():
             for cell in sorted(sheet["cells"], key=lambda c: (c["row"], c["col"])):
                 c = charts.get(cell["objectId"])
                 if c is None: continue
+                if c["vizType"] in ("filterpane", "listbox"):
+                    n_signals += 1
+                    ctls = controls_for(c)
+                    for i, ctl in enumerate(ctls):
+                        elems.append(ctl)
+                        placed.append((control_subcell(cell, i, len(ctls)), ctl))
+                    n_controls += len(ctls)
+                    continue
                 if c["vizType"] not in CHARTY and not (c.get("measures") or c.get("dimensions")):
                     warnings.append(f"skip '{cell['objectId']}' ({c['vizType']}): not a chart"); continue
                 el = build_element(c, resolve, warnings)
@@ -452,9 +593,19 @@ def main():
             pages.append({"id": pid, "name": sheet["title"], "elements": elems + extra})
             layout_pages.append(xml)
     else:
-        # no sheet layout discovered — build every dim+measure chart, auto-layout
+        # no sheet layout discovered — build every dim+measure chart, auto-layout;
+        # filterpanes/listboxes still become controls (top band). Children of a
+        # filterpane are skipped standalone (the pane emits them).
         pid, elems = "pg-1", []
+        child_ids = {ch for c in charts.values() if c["vizType"] == "filterpane"
+                     for ch in (c.get("children") or [])}
         for c in charts.values():
+            if c["vizType"] == "filterpane" or (c["vizType"] == "listbox" and c["id"] not in child_ids):
+                n_signals += 1
+                ctls = controls_for(c)
+                elems.extend(ctls)
+                n_controls += len(ctls)
+                continue
             if not (c.get("measures")): continue
             el = build_element(c, resolve, warnings)
             if el is None: continue
@@ -474,10 +625,33 @@ def main():
     json.dump(spec, open(a.spec_out, "w"), indent=2)
     open(a.layout_out, "w").write('<?xml version="1.0" encoding="utf-8"?>\n' + "\n".join(layout_pages))
     json.dump(emap, open(a.element_map, "w"), indent=2)
+    # control-scope.json — the intended-scope contract sidecar (schema: the
+    # CONTRACT block in scripts/lib/control_lint.rb + refs/control-parity.md).
+    # Qlik selections are GLOBAL (associative model), so every wired control
+    # gets mustReach = every queryable element on EVERY content page — the
+    # lint then statically asserts the global reach, not just same-page.
+    # sourceFilterSignals counts the source app's filter objects (filterpanes
+    # + standalone listboxes; pane children are part of their pane's signal) —
+    # >0 with zero spec controls FAILS gate 7 (the silently-dropped class this
+    # change exists to kill).
+    QUERYABLE = {"table", "pivot-table", "bar-chart", "line-chart", "pie-chart",
+                 "donut-chart", "area-chart", "scatter-chart", "combo-chart",
+                 "kpi-chart", "region-map", "point-map"}
+    must = [e["id"] for p in pages if p["id"] != "page-data"
+            for e in p["elements"] if e.get("kind") in QUERYABLE]
+    for sc in scope:
+        if sc.get("status") == "wired":
+            sc["mustReach"] = must
+    scope_path = a.control_scope_out or os.path.join(
+        os.path.dirname(os.path.abspath(a.spec_out)), "control-scope.json")
+    json.dump({"version": 1, "source": "qlik", "sourceFilterSignals": n_signals,
+               "controls": scope, "unbound": unbound},
+              open(scope_path, "w"), indent=2)
 
     n_elem = sum(len(p["elements"]) for p in pages) - 1
     result = {"workbookId": None, "pages": len(pages), "elements": n_elem,
               "kpis": sum(1 for e in emap if e["kind"] == "kpi-chart"),
+              "controls": n_controls, "controlScope": scope_path,
               "warnings": warnings, "layoutFile": a.layout_out, "elementMap": a.element_map}
     if a.dry_run:
         print(f"DRY RUN: spec -> {a.spec_out} ({len(pages)} pages, {n_elem} elements)", file=sys.stderr)

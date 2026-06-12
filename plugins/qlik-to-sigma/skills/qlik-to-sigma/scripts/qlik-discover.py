@@ -426,6 +426,39 @@ def main():
     sheets.sort(key=lambda s: (s["rank"] is None, s["rank"]))
     awrite(os.path.join(a.out, "layout.json"), sheets)
 
+    # Filterpane children (control-targeting wave, workstream B): a filterpane's
+    # listboxes are CHILD objects — not in its properties. `qlik app object
+    # layout` evaluates the object's layout incl. qChildList.qItems. Fetched
+    # through the same pool (filterpanes are few).
+    fp_ids = [o.get("qId") for o in objs if o.get("qType") == "filterpane"]
+    def _fp_children(fid):
+        lay = qlik("app", "object", "layout", fid, "-a", a.app, *ctx) or {}
+        items = ((lay.get("qChildList") or {}).get("qItems")) or []
+        return [it.get("qInfo", {}).get("qId") for it in items if it.get("qInfo", {}).get("qId")]
+    with stage("filterpane-children"):
+        fp_children = dict(zip(fp_ids, pmap(_fp_children, fp_ids, a.pool)))
+
+    # Listbox field metadata from the EVALUATED layout (qListObject.qDimensionInfo):
+    # qTags carries the field's type tags ($date/$timestamp) — the workbook builder
+    # needs them to emit a date-range control instead of a list (a list control's
+    # filter targets on a datetime column get SILENTLY STRIPPED by Sigma). Also the
+    # only source of field/title for pane children that `app object ls` omits.
+    known_ids = {o.get("qId") for o in objs}
+    lb_ids = [o.get("qId") for o in objs if o.get("qType") == "listbox"]
+    lb_ids += [c for kids in fp_children.values() for c in kids if c not in known_ids]
+    def _lb_meta(lid):
+        lay = qlik("app", "object", "layout", lid, "-a", a.app, *ctx) or {}
+        lo = lay.get("qListObject") or {}
+        di = lo.get("qDimensionInfo") or {}
+        return {"field": (di.get("qGroupFieldDefs") or [None])[0],
+                "label": di.get("qFallbackTitle"),
+                "title": (lay.get("title") or di.get("qFallbackTitle")),
+                "state": lo.get("qStateName") or lay.get("qStateName"),
+                "tags": di.get("qTags") or [],
+                "numFmt": (di.get("qNumFormat") or {}).get("qFmt")}
+    with stage("listbox-meta"):
+        lb_meta = dict(zip(lb_ids, pmap(_lb_meta, lb_ids, a.pool)))
+
     for o in objs:
         oid, qtype = o.get("qId"), o.get("qType")
         if qtype == "sheet": continue
@@ -451,7 +484,7 @@ def main():
                     hc = lhc
                     qdims, qmeas = lhc.get("qDimensions", []), lhc.get("qMeasures", [])
                     break
-        charts.append({
+        rec = {
             "id": oid, "vizType": qtype,
             "title": (props.get("qMetaDef") or {}).get("title") or (props.get("title")),
             "sheet": obj_sheet.get(oid),
@@ -462,7 +495,47 @@ def main():
             "measureLabels": [ mm.get("qDef", {}).get("qLabel") for mm in qmeas ],
             "measureFmts": [ (mm.get("qDef", {}).get("qNumFormat") or {}).get("qFmt") for mm in qmeas ],
             "sort": sort,
-        })
+        }
+        # Filter objects (control-targeting wave): a listbox's field lives on
+        # qListObjectDef (NOT the hypercube), and an alternate-state object
+        # carries qStateName — the workbook builder turns these into Sigma list
+        # controls (default state) or flags them manual (alternate state).
+        if qtype == "listbox":
+            lod = props.get("qListObjectDef") or {}
+            ldef = lod.get("qDef") or {}
+            meta = lb_meta.get(oid) or {}
+            rec["listbox"] = {
+                "field": (ldef.get("qFieldDefs") or [None])[0] or lod.get("qLibraryId")
+                         or meta.get("field"),
+                "label": (ldef.get("qFieldLabels") or [None])[0] or rec["title"]
+                         or meta.get("label"),
+                "state": lod.get("qStateName") or props.get("qStateName") or meta.get("state"),
+                "tags": meta.get("tags") or [],
+                "numFmt": meta.get("numFmt"),
+            }
+        elif qtype == "filterpane":
+            rec["children"] = fp_children.get(oid, [])
+            rec["state"] = props.get("qStateName")
+        charts.append(rec)
+    # Pane children that `app object ls` did NOT list as standalone objects:
+    # synthesize their listbox records from the evaluated layouts so the
+    # workbook builder still emits one control per pane field.
+    for fid, kids in fp_children.items():
+        for kid in kids:
+            if kid in known_ids:
+                continue
+            meta = lb_meta.get(kid) or {}
+            charts.append({"id": kid, "vizType": "listbox",
+                           "title": meta.get("title"),
+                           "sheet": obj_sheet.get(fid),
+                           "dimensions": [], "dimLabels": [], "dimNullSuppression": [],
+                           "measures": [], "measureLabels": [], "measureFmts": [],
+                           "sort": {},
+                           "listbox": {"field": meta.get("field"),
+                                       "label": meta.get("label"),
+                                       "state": meta.get("state"),
+                                       "tags": meta.get("tags") or [],
+                                       "numFmt": meta.get("numFmt")}})
     awrite(os.path.join(a.out, "charts.json"), charts)
 
     # converter input (feed the Qlik MODEL field names; simple dims are skipped by converter)
