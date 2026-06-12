@@ -5,6 +5,11 @@ export API and compare against expected_parity.json (MicroStrategy ground truth)
 
 Money / counts: exact. Profit Margin Pct: relative tolerance 1e-6.
 
+Also writes the cross-plugin gate sentinels next to --report:
+  parity-final.json  {status, mode, charts_total, charts_pass, fail_names}
+  wb-ids.json        {workbookId}
+so scripts/assert-phase6-ran.rb (gates 1-7, shared) can prove this phase ran.
+
 Usage: python3 verify_parity.py --workbook-id <id> [--report parity_report.md]
 Requires SIGMA_BASE_URL + SIGMA_API_TOKEN (eval "$(scripts/get-token.sh)").
 """
@@ -95,7 +100,11 @@ def main():
     el_by_name = {}
     for pg in spec["pages"]:
         for el in pg["elements"]:
-            el_by_name[el["name"]] = el["id"]
+            # skip layout containers / header text / controls (no name or
+            # not a queryable element)
+            if el.get("name") and el.get("kind") not in ("container", "text",
+                                                         "control"):
+                el_by_name[el["name"]] = el["id"]
 
     os.makedirs(args.save_csv_dir, exist_ok=True)
     lines = ["# MicroStrategy -> Sigma Parity Report", "",
@@ -189,9 +198,26 @@ def main():
     lines.append("Tolerances: money and counts exact; Profit Margin Pct relative 1e-6.")
 
     open(args.report, "w").write("\n".join(lines) + "\n")
+
+    # gate sentinels (contract: scripts/assert-phase6-ran.rb gate 1 reads
+    # parity-final.json; gates 3/4/6/7 resolve the workbook via wb-ids.json)
+    outdir = os.path.dirname(os.path.abspath(args.report))
+    n_pass = sum(1 for _n, m, t, _x, st_ in summary
+                 if st_ == "PASS" and m == t)
+    json.dump({
+        "status": "PASS" if all_green else "FAIL",
+        "mode": "live",
+        "charts_total": len(summary),
+        "charts_pass": n_pass,
+        "fail_names": [n for n, _m, _t, _x, st_ in summary if st_ != "PASS"],
+        "generated_by": "verify_parity.py",
+    }, open(os.path.join(outdir, "parity-final.json"), "w"), indent=1)
+    json.dump({"workbookId": args.workbook_id},
+              open(os.path.join(outdir, "wb-ids.json"), "w"), indent=1)
+
     for name, m, t, _x, st_ in summary:
         print(f"{st_}: {name} {m}/{t}")
-    print(f"report -> {args.report}")
+    print(f"report -> {args.report} (+ parity-final.json, wb-ids.json)")
     sys.exit(0 if all_green else 1)
 
 
