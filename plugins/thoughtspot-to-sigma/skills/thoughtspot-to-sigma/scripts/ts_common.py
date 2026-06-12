@@ -67,6 +67,8 @@ def build_resolver(model_root):
         ctype = (c.get("type") or props.get("column_type") or "").upper()
         iso = (props.get("currency_type") or {}).get("iso_code")
         fmt = ts_format_to_sigma(props.get("format_pattern"), iso)
+        is_formula = False
+        table = field = None
         if "::" in cid:                       # physical column
             table, phys = cid.split("::", 1)
             field = sigma_display_name(phys)
@@ -75,10 +77,15 @@ def build_resolver(model_root):
         elif c.get("formula_id"):             # formula column (lives on the fact element)
             name = c.get("name", c["formula_id"])
             ofv = name
+            is_formula = True
         else:
             continue
         friendly = re.sub(r'\s+', ' ', name.replace("(", "").replace(")", "")).strip()
-        resolver[name] = {"measure": ctype == "MEASURE", "ofv": ofv, "friendly": friendly, "fmt": fmt}
+        resolver[name] = {"measure": ctype == "MEASURE", "ofv": ofv, "friendly": friendly, "fmt": fmt,
+                          "agg": (str(props.get("aggregation") or "").upper() or None),
+                          "is_formula": is_formula, "table": table, "field": field}
+    resolver["__model_formulas__"] = model_formula_map(model_root)
+    resolver["__fact__"] = fact
     return resolver
 
 # ── ThoughtSpot side: a viz spec -> a Liveboard visualization dict (fixtures) ─
@@ -104,7 +111,7 @@ def ts_viz(idx, spec):
 def _strip_total(c):
     return c[len("Total "):] if c.startswith("Total ") else c
 
-def parse_ts_viz(v):
+def parse_ts_viz(v, resolver=None):
     a = v.get("answer")
     if not a:
         return None
@@ -116,13 +123,72 @@ def parse_ts_viz(v):
     if ordered:
         known = set(cols)
         cols = [c for c in ordered if c in known] + [c for c in cols if c not in set(ordered)]
-    measures = [_strip_total(c) for c in cols if c.startswith("Total ")]
-    dims = [c for c in cols if not c.startswith("Total ")]
-    ctype = (a.get("chart") or {}).get("type", "TABLE")
+    af = {f["name"]: f.get("expr", "") for f in (a.get("formulas") or []) if f.get("name")}
+    mf = (resolver or {}).get("__model_formulas__") or {}
+    dims, measures, mtypes, row_formulas, flagged = [], [], {}, {}, []
+
+    def add_formula_col(name, expr):
+        cls = formula_class(expr)
+        if cls == "row":
+            dims.append(name)
+            row_formulas[name] = expr
+        else:
+            measures.append(name)
+            mtypes[name] = {"kind": cls, "expr": expr}
+            if cls == "window":
+                flagged.append({"name": name, "fn": window_fn_name(expr)})
+
+    for c in cols:
+        if c in af:                                   # answer-level formula
+            add_formula_col(c, af[c])
+            continue
+        hit = False
+        for prefix, agg in (("Total ", "SUM"), ("Average ", "AVERAGE"),
+                            ("Min ", "MIN"), ("Max ", "MAX")):
+            if c.startswith(prefix):
+                base = c[len(prefix):]
+                ent = (resolver or {}).get(base) or {}
+                info = {"kind": "plain", "agg": agg}
+                if ent.get("is_formula"):
+                    mexpr = mf.get(base, "")
+                    if formula_class(mexpr) == "row":   # e.g. "Total Avg Order Value"
+                        info["needs_row_calc"] = True
+                    else:
+                        info = {"kind": "aggregate", "expr": mexpr}
+                measures.append(base)
+                mtypes[base] = info
+                hit = True
+                break
+        if hit:
+            continue
+        ent = (resolver or {}).get(c)
+        if ent and ent.get("is_formula"):             # bare model formula (e.g. Order Count)
+            add_formula_col(c, mf.get(c, ""))
+            continue
+        if ent and ent.get("measure"):                # bare model measure (uses model agg)
+            measures.append(c)
+            mtypes[c] = {"kind": "plain", "agg": ent.get("agg") or "SUM"}
+            continue
+        dims.append(c)
+
+    chart_node = a.get("chart") or {}
+    ctype = chart_node.get("type", "TABLE")
     if a.get("display_mode") == "TABLE_MODE":
         ctype = "TABLE"
+    # Axis configs: honor the chart's own x ordering and color/series dim.
+    ax = (chart_node.get("axis_configs") or [{}])[0] or {}
+    xs = [d for d in (ax.get("x") or []) if d in dims]
+    if xs:
+        dims = xs + [d for d in dims if d not in xs]
+    color = next((d for d in (ax.get("color") or []) if d in dims), None)
+    if color:
+        dims = [d for d in dims if d != color] + [color]    # color dim LAST
+    m = re.search(r"\btop\s+(\d+)\b", a.get("search_query", "") or "", re.I)
     return {"name": a.get("name", "Viz"), "chart": ctype, "dims": dims, "measures": measures,
-            "filters": parse_filters(a.get("search_query", "")), "sorts": parse_sorts(a)}
+            "filters": parse_filters(a.get("search_query", "")), "sorts": parse_sorts(a),
+            "mtypes": mtypes, "row_formulas": row_formulas, "flagged": flagged,
+            "color_dim": color, "topn": int(m.group(1)) if m else None,
+            "af_names": sorted(af.keys())}
 
 def parse_sorts(a):
     """Carry the answer's sorts: (1) `sort by [Col] descending` tokens in the
@@ -199,8 +265,20 @@ def _resolve(resolver, base):
 
 def sigma_element(spec, resolver, master="OFV"):
     """Build the element, then apply any ThoughtSpot search-query filters as
-    Sigma element list-filters (adds the filter column if not already present)."""
+    Sigma element list-filters (adds the filter column if not already present).
+    Also: TS `top N` search tokens become a Sigma top-n element filter, and
+    window-formula tiles get a loud [FLAGGED: …] title (flag-not-drop, bead 5d9k)."""
     el = _element_core(spec, resolver, master)
+    if spec.get("topn") and el.get("kind") != "kpi-chart" and spec.get("measures"):
+        mname = spec["measures"][0]
+        mcol = next((c for c in el["columns"] if c.get("name") in (mname, "Total " + mname)), None)
+        if mcol:
+            el.setdefault("filters", []).append({"id": nid(), "columnId": mcol["id"],
+                "kind": "top-n", "rankingFunction": "rank", "mode": "top-n",
+                "rowCount": spec["topn"]})
+    if spec.get("flagged"):
+        fns = ", ".join(sorted({f["fn"] for f in spec["flagged"]}))
+        el["name"] = f"{el['name']} [FLAGGED: {fns} not converted]"
     # Show value labels on bar/pie/donut (Sigma defaults them OFF). Lines stay clean.
     if el.get("kind") in ("bar-chart", "pie-chart", "donut-chart"):
         el["dataLabel"] = {"labels": "shown"}
@@ -246,10 +324,43 @@ def _apply_sorts(el, spec):
 def _element_core(spec, resolver, master="OFV"):
     name, chart, dims, meas = spec["name"], spec["chart"], spec["dims"], spec["measures"]
     src = {"elementId": "m-ofv", "kind": "table"}
-    mref = lambda b: f"Sum([{master}/{_resolve(resolver, b)['friendly']}])"
+    mtypes = spec.get("mtypes") or {}
     dref = lambda b: f"[{master}/{_resolve(resolver, b)['friendly']}]"
+
+    def mref(b):
+        mt = mtypes.get(b)
+        if mt and mt.get("kind") == "aggregate":      # answer/model aggregate formula
+            return ts_expr_to_sigma(mt["expr"], lambda n: dref(n))
+        if mt and mt.get("kind") == "window":         # FLAGGED: inner raw aggregate fallback
+            inner = window_inner_ref(mt.get("expr")) or b
+            return f"Sum([{master}/{_resolve(resolver, inner)['friendly']}])"
+        agg = TS_AGG_TO_SIGMA.get((mt or {}).get("agg") or "SUM", "Sum")
+        return f"{agg}([{master}/{_resolve(resolver, b)['friendly']}])"
+
+    color_dim = spec.get("color_dim")
+    if color_dim and chart not in ("PIE", "DONUT", "PIVOT_TABLE", "PIVOT", "TABLE", "ADVANCED_COLUMN"):
+        dims = [d for d in dims if d != color_dim]    # x-dims only; color added below
     if chart == "KPI" or (not dims and meas):
         c = nid("c") + "-v"
+        ent = resolver.get(meas[0]) or {}
+        dim_els = resolver.get("__dim_elements__") or {}
+        tbl = ent.get("table")
+        mt0 = mtypes.get(meas[0]) or {}
+        plain = mt0.get("kind") in (None, "plain") and not mt0.get("needs_row_calc")
+        if (plain and not spec.get("filters") and tbl
+                and tbl != resolver.get("__fact__") and tbl in dim_els):
+            # Dimension-grain measure (e.g. CUSTOMER_DIM.LIFETIME_REVENUE): the
+            # denorm view fans each dim row across its fact rows, so aggregating
+            # over OFV over-counts (chasm trap). ThoughtSpot aggregates at the
+            # OWNING table's grain — source the DM's raw dim-table element.
+            de = dim_els[tbl]
+            agg = TS_AGG_TO_SIGMA.get(mt0.get("agg") or ent.get("agg") or "SUM", "Sum")
+            return {"id": nid(), "kind": "kpi-chart", "name": name,
+                    "source": {"dataModelId": resolver.get("__dm_id__"),
+                               "elementId": de["id"], "kind": "data-model"},
+                    "columns": [{"id": c, "formula": f"{agg}([{de['name']}/{ent['field']}])",
+                                 "name": meas[0], "format": _fmt(ent)}],
+                    "value": {"columnId": c}}
         return {"id": nid(), "kind": "kpi-chart", "name": name, "source": src,
                 "columns": [{"id": c, "formula": mref(meas[0]), "name": meas[0],
                              "format": _fmt(_resolve(resolver, meas[0]))}], "value": {"columnId": c}}
@@ -271,11 +382,13 @@ def _element_core(spec, resolver, master="OFV"):
         return {"id": nid(), "kind": "pivot-table", "name": name, "source": src, "columns": cols,
                 "rowsBy": [{"id": rid}], "columnsBy": [{"id": cidd}], "values": mids}
     if chart in ("TABLE", "ADVANCED_COLUMN"):
-        did = nid("d"); cols = [{"id": did, "formula": dref(dims[0]), "name": dims[0]}]; mids = []
+        dids, cols, mids = [], [], []
+        for d in dims:
+            did = nid("d"); cols.append({"id": did, "formula": dref(d), "name": d}); dids.append(did)
         for m in meas:
             mid = nid("m"); cols.append({"id": mid, "formula": mref(m), "name": m, "format": _fmt(_resolve(resolver, m))}); mids.append(mid)
         return {"id": nid(), "kind": "table", "name": name, "source": src, "columns": cols,
-                "groupings": [{"id": nid(), "groupBy": [did], "calculations": mids}]}
+                "groupings": [{"id": nid(), "groupBy": dids, "calculations": mids}]}
     # Scatter / bubble — plot two measures (x vs y) with an optional category color.
     # Falls through to the default axis chart when there aren't two measures.
     if chart in ("SCATTER", "BUBBLE") and len(meas) >= 2:
@@ -307,19 +420,186 @@ def _element_core(spec, resolver, master="OFV"):
     x = nid("x"); cols = [{"id": x, "formula": dref(dims[0]), "name": dims[0]}]; ymids = []
     for m in meas:
         y = nid("y"); cols.append({"id": y, "formula": mref(m), "name": m, "format": _fmt(_resolve(resolver, m))}); ymids.append(y)
-    return {"id": nid(), "kind": KIND.get(chart, "bar-chart"), "name": name, "source": src,
-            "columns": cols, "xAxis": {"columnId": x}, "yAxis": {"columnIds": ymids}}
+    el = {"id": nid(), "kind": KIND.get(chart, "bar-chart"), "name": name, "source": src,
+          "columns": cols, "xAxis": {"columnId": x}, "yAxis": {"columnIds": ymids}}
+    if color_dim:
+        cc = nid("c"); cols.append({"id": cc, "formula": dref(color_dim), "name": color_dim})
+        el["color"] = {"by": "category", "column": cc}
+    return el
 
 def master_element(specs, resolver, dm_id, denorm_elem, denorm_name="Order Fact View"):
-    seen, cols, i = {}, [], 0
-    for s in specs:
-        for base in s.get("dims", []) + s["measures"] + [f["col"] for f in s.get("filters", [])]:
-            e = _resolve(resolver, base)
-            if e["friendly"] in seen:
-                continue
+    """Master table fed by the DM denorm view. Plain columns pass through; the
+    DM's row-level formula columns are NOT on the denorm view, so any row-level
+    formula (model or answer) is re-materialized here as a calc column over its
+    underlying master columns (recursively); aggregate/window formulas get their
+    underlying raw columns surfaced (the aggregate lives on the viz element)."""
+    mf = (resolver or {}).get("__model_formulas__") or {}
+    seen, cols = {}, []
+
+    def add_base(base):
+        e = _resolve(resolver, base)
+        if e["friendly"] not in seen:
             seen[e["friendly"]] = 1
-            cols.append({"id": "ofv-%d" % i, "name": e["friendly"], "formula": f"[{denorm_name}/{e['ofv']}]"})
-            i += 1
+            cols.append({"id": "ofv-%d" % len(cols), "name": e["friendly"],
+                         "formula": f"[{denorm_name}/{e['ofv']}]"})
+        return e["friendly"]
+
+    def materialize(name, expr):
+        fr = _resolve(resolver, name)["friendly"]
+        if fr in seen:
+            return fr
+        seen[fr] = 1                       # reserve before recursing into deps
+        formula = ts_expr_to_sigma(expr, lambda n: "[%s]" % ensure(n))
+        cols.append({"id": "ofv-%d" % len(cols), "name": fr, "formula": formula or "null"})
+        return fr
+
+    def ensure(name):
+        ent = (resolver or {}).get(name)
+        if ent and ent.get("is_formula") and formula_class(mf.get(name, "")) == "row":
+            return materialize(name, mf.get(name, ""))
+        return add_base(name)
+
+    for s in specs:
+        mtypes, rfs = s.get("mtypes") or {}, s.get("row_formulas") or {}
+        for base in s.get("dims", []) + s["measures"] + [f["col"] for f in s.get("filters", [])]:
+            mt = mtypes.get(base)
+            if base in rfs:                                  # row-level formula dim
+                materialize(base, rfs[base])
+            elif mt and mt.get("kind") == "window":          # flagged: surface the raw measure
+                inner = window_inner_ref(mt.get("expr"))
+                ensure(inner) if inner else None
+            elif mt and mt.get("kind") == "aggregate":       # element-level agg formula deps
+                for rn in expr_refs(mt.get("expr") or ""):
+                    ensure(rn)
+            elif mt and mt.get("needs_row_calc"):            # e.g. "Total Avg Order Value"
+                materialize(base, mf.get(base, ""))
+            else:
+                ensure(base)
     return {"id": "m-ofv", "name": "OFV", "kind": "table",
             "source": {"dataModelId": dm_id, "elementId": denorm_elem, "kind": "data-model"},
             "columns": cols}
+# ── Answer/model formula support (fleet run 2026-06-11, bead d0qu) ───────────
+# ThoughtSpot formulas appear at two levels: model TML `formulas:` (worksheet
+# formulas — e.g. Order Count = count([ORDER_FACT::ORDER_ID])) and answer-level
+# `answer.formulas` on a Liveboard viz (e.g. Return Rate = safe_divide(...)).
+# Classification:
+#   row        → materialized as a master-element calc column (if/then buckets)
+#   aggregate  → translated to a Sigma aggregate formula on the viz element
+#   window     → NOT converted (bead 5d9k): the tile is built from the inner
+#                raw aggregate and its element name carries a [FLAGGED: …]
+#                marker; parity records it as flagged, never silently dropped.
+_WINDOW_RE = re.compile(
+    r'\b(cumulative_sum|running_total|moving_average|moving_sum|moving_min|moving_max|'
+    r'rank|dense_rank|cumulative_average|cumulative_max|cumulative_min|group_aggregate)\s*\(', re.I)
+_AGG_FN_RE = re.compile(
+    r'\b(sum|count_distinct|unique_count|count_not_null|count|average|avg|max|min|median|'
+    r'std_deviation|stddev|variance|sum_if|count_if|average_if|max_if|min_if|unique_count_if)\s*\(', re.I)
+_UNIQUE_COUNT_RE = re.compile(r'\bunique\s+count\s*\(', re.I)
+
+TS_AGG_TO_SIGMA = {"SUM": "Sum", "AVERAGE": "Avg", "AVG": "Avg", "MIN": "Min", "MAX": "Max",
+                   "COUNT": "Count", "COUNT_DISTINCT": "CountDistinct", "MEDIAN": "Median",
+                   "STD_DEVIATION": "StdDev", "VARIANCE": "Variance"}
+
+def formula_class(expr):
+    if not expr:
+        return "row"
+    if _WINDOW_RE.search(expr):
+        return "window"
+    if _AGG_FN_RE.search(expr) or _UNIQUE_COUNT_RE.search(expr):
+        return "aggregate"
+    return "row"
+
+def window_fn_name(expr):
+    m = _WINDOW_RE.search(expr or "")
+    return m.group(1).lower() if m else "window"
+
+def window_inner_ref(expr):
+    """First bracketed ref inside a window call — the raw measure to fall back to."""
+    m = re.search(r'\(\s*\[([^\]]+)\]', expr or "")
+    return m.group(1) if m else None
+
+def expr_refs(expr):
+    """All column refs in a TS expr, normalized to worksheet display names."""
+    out = []
+    for ref in re.findall(r'\[([^\]]+)\]', expr or ""):
+        if "::" in ref:
+            ref = sigma_display_name(ref.split("::", 1)[1].strip())
+        out.append(ref)
+    return out
+
+def _balanced_two_args(s, start):
+    """Given s[start:] = '( a , b )…' return (a, b, end_index) honoring nesting."""
+    depth, args, cur, i = 0, [], "", start
+    while i < len(s):
+        ch = s[i]
+        if ch == "(":
+            depth += 1
+            if depth > 1:
+                cur += ch
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                args.append(cur.strip())
+                return args[0] if args else "", args[1] if len(args) > 1 else "", i + 1
+            cur += ch
+        elif ch == "," and depth == 1:
+            args.append(cur.strip()); cur = ""
+        else:
+            cur += ch
+        i += 1
+    return None, None, len(s)
+
+def _rewrite_safe_divide(s):
+    out = s
+    while True:
+        m = re.search(r'\bsafe_divide\s*\(', out, re.I)
+        if not m:
+            return out
+        a, b, end = _balanced_two_args(out, m.end() - 1)
+        if a is None:
+            return out
+        repl = f"If(IsNull({b}) or {b} = 0, null, {a} / {b})"
+        out = out[:m.start()] + repl + out[end:]
+
+def _convert_if_chain(s):
+    """`if ( c ) then a else b` (chained else-if) → nested If(...). Conditions in
+    the fleet/model TMLs are simple comparisons; nested-paren conditions are out
+    of scope (gap-scout catches them)."""
+    m = re.match(r'\s*if\s*\((.*?)\)\s*then\s*(.*?)\s*else\s*(.*)$', s, re.S | re.I)
+    if not m:
+        return s
+    cond, then, els = m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
+    return f"If({cond}, {then}, {_convert_if_chain(els)})"
+
+def ts_expr_to_sigma(expr, ref):
+    """Translate a ThoughtSpot formula expr to a Sigma formula. `ref(name)` maps a
+    worksheet column display name to the Sigma reference to emit. Returns None
+    for window formulas (flag-not-drop, bead 5d9k)."""
+    if formula_class(expr) == "window":
+        return None
+    s = expr.strip()
+    s = re.sub(r'\[([^\]:]+)::([^\]]+)\]', lambda m: f"[{sigma_display_name(m.group(2).strip())}]", s)
+    s = _convert_if_chain(s)
+    # `<ref> in { "a" , "b" }` → In(<ref>, "a", "b")
+    s = re.sub(r'(\[[^\]]+\])\s+in\s*\{([^}]+)\}',
+               lambda m: f"In({m.group(1)}, {', '.join(v.strip() for v in m.group(2).split(','))})",
+               s, flags=re.I)
+    s = _UNIQUE_COUNT_RE.sub("CountDistinct(", s)
+    for ts_fn, sig_fn in [("count_distinct", "CountDistinct"), ("unique_count", "CountDistinct"),
+                          ("count_not_null", "CountDistinct"), ("std_deviation", "StdDev"),
+                          ("average", "Avg"), ("avg", "Avg"), ("variance", "Variance"),
+                          ("median", "Median"), ("sum", "Sum"), ("count", "Count"),
+                          ("max", "Max"), ("min", "Min")]:
+        s = re.sub(r'\b' + ts_fn + r'\s*\(', sig_fn + "(", s, flags=re.I)
+    s = _rewrite_safe_divide(s)
+    # Map every remaining bracketed ref through the resolver
+    s = re.sub(r'\[([^\]/]+)\]', lambda m: ref(m.group(1)), s)
+    return re.sub(r'\s+', ' ', s).strip()
+
+def model_formula_map(model_root):
+    """{formula display name: expr} from the model/worksheet TML."""
+    out = {}
+    for f in model_root.get("formulas", []) or []:
+        if f.get("name") and f.get("expr"):
+            out[f["name"]] = f["expr"]
+    return out

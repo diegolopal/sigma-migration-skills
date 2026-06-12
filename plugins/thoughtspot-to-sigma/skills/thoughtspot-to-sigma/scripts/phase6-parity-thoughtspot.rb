@@ -36,8 +36,12 @@
 #   Runs verify-parity.rb, prints the pass/fail summary, writes
 #   parity-final.txt + parity-final.json (the hard-gate sentinel).
 #
-# Plain `table` elements aren't auto-planned (no single dim/measure axis) —
-# query-verify those manually and note it in the migration report.
+# Plain `table` elements ARE auto-planned (first groupBy dim + first grouping
+# calculation — parity compares per-dim totals of the first measure), as are
+# `pivot-table` elements (rowsBy[0] dim + values[0] measure; their CSV export
+# is a matrix whose per-row `Total` column carries the row-dim totals — the
+# Python caller handles that shape). The DM master element (id m-ofv) is the
+# denorm feed, not a tile, and stays excluded.
 
 require 'json'
 require 'optparse'
@@ -81,6 +85,16 @@ def chart_columns(el)
     did = el.dig('color', 'id') || el.dig('color', 'columnId')
     vid = el.dig('value', 'id') || el.dig('value', 'columnId')
     by_id[did] && by_id[vid] ? [[did, by_id[did]], [vid, by_id[vid]]] : nil
+  when 'table'
+    g = Array(el['groupings']).first || {}
+    did = Array(g['groupBy']).first  || cols.map { |c| c['id'] }.find { |i| i.to_s.start_with?('d-') }
+    vid = Array(g['calculations']).first || cols.map { |c| c['id'] }.find { |i| i.to_s.start_with?('m-') }
+    by_id[did] && by_id[vid] ? [[did, by_id[did]], [vid, by_id[vid]]] : nil
+  when 'pivot-table'
+    did = (Array(el['rowsBy']).first || {})['id']
+    vid = Array(el['values']).first
+    vid = vid['id'] if vid.is_a?(Hash)
+    by_id[did] && by_id[vid] ? [[did, by_id[did]], [vid, by_id[vid]]] : nil
   else # bar-chart, line-chart, combo-chart, scatter-chart, ...
     did = el.dig('xAxis', 'columnId')
     vid = Array(el.dig('yAxis', 'columnIds')).first
@@ -102,9 +116,18 @@ if !opts[:finalize]
   File.write(File.join(opts[:dir], 'wb-readback.json'), JSON.pretty_generate(spec))
 
   charts = []
+  flagged = []
   Array(spec['pages']).each do |page|
     Array(page['elements']).each do |el|
-      next unless el['kind'].to_s.end_with?('-chart')
+      plannable = el['kind'].to_s.end_with?('-chart') ||
+                  (%w[table pivot-table].include?(el['kind'].to_s) && el['id'].to_s != 'm-ofv')
+      next unless plannable
+      if el['name'].to_s.include?('[FLAGGED')
+        # flag-not-drop tile (window formula, bead 5d9k): present in the workbook,
+        # excluded from value parity, surfaced in the summary as flagged.
+        flagged << { 'chart' => el['name'], 'sigma_element_id' => el['id'], 'kind' => el['kind'] }
+        next
+      end
       pairs = chart_columns(el)
       next unless pairs
       charts << { 'chart' => el['name'], 'sigma_element_id' => el['id'],
@@ -116,7 +139,7 @@ if !opts[:finalize]
   end
   abort('no plannable chart elements found in the workbook spec') if charts.empty?
 
-  File.write(plan_path, JSON.pretty_generate({ 'charts' => charts }))
+  File.write(plan_path, JSON.pretty_generate({ 'charts' => charts, 'flagged' => flagged }))
 
   puts ''
   puts '=' * 70
@@ -186,6 +209,7 @@ File.write(File.join(opts[:dir], 'parity-final.txt'), out)
 total  = plan['charts'].size
 passed = out.scan(/^PASS\s+\[[^\]]+\]\s+(.+)$/).flatten.map(&:strip)
 failed = out.scan(/^DIVERGE\s+\[[^\]]+\]\s+(.+)$/).flatten.map(&:strip)
+flagged = Array(plan['flagged'])
 summary = {
   'workbook_id'  => plan.dig('charts', 0, 'workbook_id'),
   'ran_at'       => Time.now.utc.iso8601,
@@ -194,6 +218,8 @@ summary = {
   'charts_total' => total,
   'charts_pass'  => passed.size,
   'charts_fail'  => failed.size,
+  'charts_flagged' => flagged.size,
+  'flagged_names'  => flagged.map { |f| f['chart'] },
   'pass_names'   => passed,
   'fail_names'   => failed,
   'status'       => (status.success? && total > 0 && passed.size == total) ? 'PASS' : 'FAIL'
