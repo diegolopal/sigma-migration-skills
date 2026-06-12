@@ -36,7 +36,9 @@ def main():
     ap.add_argument("--out", default="denorm-element.json")
     a = ap.parse_args()
     tables = json.load(open(a.reconcile))
-    def wh(t): return f'{a.database}.{a.schema}.{re.sub(r"\.csv$","",t["sourceTable"],flags=re.I)}'
+    def wh(t):
+        s = re.sub(r"\.csv$", "", t["sourceTable"], flags=re.I)
+        return s if "." in s else f'{a.database}.{a.schema}.{s}'
     keyfields = lambda t: [f["qlikField"] for f in t["fields"] if f["qlikField"].upper().endswith("_KEY")]
     # fact = name has FACT, else most *_KEY fields
     fact = next((t for t in tables if "FACT" in t["qlikTable"].upper()), None) \

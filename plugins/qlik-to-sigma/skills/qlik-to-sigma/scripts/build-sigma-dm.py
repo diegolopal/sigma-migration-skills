@@ -30,7 +30,7 @@ metricsKept, metricsDropped, columnsDropped}. With --dry-run nothing is POSTed
 
 Env (live mode): SIGMA_BASE_URL + SIGMA_API_TOKEN (eval "$(scripts/vendor/get-token.sh)").
 """
-import json, os, re, sys, argparse, urllib.request
+import json, os, re, sys, time, argparse, urllib.request
 
 # Sigma's display-name rule (verified live 2026-06-10): lowercase particles
 # unless first word — DAYS_TO_SHIP -> "Days to Ship".
@@ -47,11 +47,20 @@ def api(method, path, body=None):
     req = urllib.request.Request(BASE + path, data=data, method=method,
         headers={"Authorization": "Bearer " + TOK, "Content-Type": "application/json",
                  "Accept": "application/json"})
-    try:
-        with urllib.request.urlopen(req) as r:
-            raw = r.read().decode()
-    except urllib.error.HTTPError as e:
-        print("HTTP", e.code, "on", method, path, "->", e.read().decode()[:800], file=sys.stderr); raise
+    raw = None
+    for attempt in range(6):
+        try:
+            with urllib.request.urlopen(req) as r:
+                raw = r.read().decode()
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode()
+            if e.code == 429 and attempt < 5:  # Cloudflare 1015 rate limit: transient, retryable
+                wait = min(120, 30 * (2 ** attempt))
+                print(f"HTTP 429 on {method} {path} -- backing off {wait}s (attempt {attempt+1}/6)", file=sys.stderr)
+                time.sleep(wait)
+                continue
+            print("HTTP", e.code, "on", method, path, "->", detail[:800], file=sys.stderr); raise
     try:
         return json.loads(raw or "{}")
     except json.JSONDecodeError:
@@ -141,7 +150,12 @@ def main():
         if m.get("name") in seen_metric: continue
         seen_metric.add(m.get("name"))
         refs = [r.split("/")[-1] for r in re.findall(r"\[([^\]]+)\]", m.get("formula", ""))]
-        if refs and all(r.lower() in denorm_disp for r in refs):
+        # Qlik-only residue the converter could not translate ($(var) expansion,
+        # inter-record/ranking/Aggr functions) POST-blocks the WHOLE spec with a
+        # 400 -- drop + report instead of emitting an invalid formula
+        body = re.sub(r"\[[^\]]*\]", "", m.get("formula", ""))
+        qlik_only = re.search(r"\$\(|\b(?:Rank|HRank|Aggr|Above|Below|Peek|Previous|RowNo|FirstSortedValue)\s*\(", body, re.I)
+        if refs and not qlik_only and all(r.lower() in denorm_disp for r in refs):
             if src_expr.get(m.get("name")):
                 m.setdefault("description", f"Qlik: {src_expr[m['name']]}")
             kept.append(m)

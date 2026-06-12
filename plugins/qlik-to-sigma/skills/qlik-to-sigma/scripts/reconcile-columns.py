@@ -19,24 +19,45 @@ Handles: `SQL SELECT ... FROM db.schema.TABLE;` (real migration) and
 import re, json, argparse, sys
 
 BLOCK = re.compile(
-    r'(\w+)\s*:\s*\n\s*LOAD\b(.*?);\s*(?:\n|$)', re.IGNORECASE | re.DOTALL)
+    r'(\w+)\s*:\s*\n\s*LOAD\b(.*?;)\s*((?:SQL\s+)?SELECT\b.*?;)?\s*(?:\n|$)',
+    re.IGNORECASE | re.DOTALL)
 SOURCE = re.compile(
-    r'\bSQL\s+SELECT\b.*?\bFROM\s+([A-Za-z0-9_."]+(?:\.[A-Za-z0-9_."]+)*)'  # SQL FROM db.schema.table
+    r'\b(?:SQL\s+)?SELECT\b.*?\bFROM\s+([A-Za-z0-9_."]+(?:\.[A-Za-z0-9_."]+)*)'  # [SQL] SELECT ... FROM db.schema.table
     r'|\bFROM\s+\[lib://[^/]+/([^\]]+)\]'                                    # lib CSV
     r'|\bRESIDENT\s+(\w+)|\b(INLINE|AUTOGENERATE)\b',
     re.IGNORECASE | re.DOTALL)
 
+def split_fields(s):
+    """Split a LOAD field list on top-level commas only (paren-depth aware), so
+    function-built fields like `Dual(MONTH_NAME, MONTH_NUMBER) AS MONTH` stay
+    one token instead of shedding a bogus duplicate column."""
+    parts, depth, cur = [], 0, []
+    for ch in s:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            parts.append("".join(cur)); cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        parts.append("".join(cur))
+    return parts
+
 def parse(qvs):
     out = []
     for m in BLOCK.finditer(qvs):
-        name, body = m.group(1), m.group(2)
-        # split source clause off the field list
-        src_m = SOURCE.search(body)
-        field_part = body[:src_m.start()] if src_m else body
+        name, body, trailing = m.group(1), m.group(2), (m.group(3) or "")
+        # split source clause off the field list (the SELECT may trail the LOAD as
+        # a separate preceding-load statement, with or without the SQL keyword)
+        full = body + ("\n" + trailing if trailing else "")
+        src_m = SOURCE.search(full)
+        field_part = body[:src_m.start()] if src_m and src_m.start() < len(body) else body
         sql_from, lib_file, resident, special = (src_m.groups() if src_m else (None, None, None, None))
         source = (sql_from or "").strip('"') or (lib_file or "") or (f"RESIDENT {resident}" if resident else "") or (special or "?")
         fields = []
-        for tok in field_part.split(","):
+        for tok in split_fields(field_part):
             tok = tok.strip().strip(";").strip()
             if not tok or tok.upper() == "LOAD": continue
             tok = re.sub(r'^LOAD\b', '', tok, flags=re.IGNORECASE).strip()
@@ -44,6 +65,11 @@ def parse(qvs):
             if am:
                 real = am.group(1).strip().strip('"'); qlik = am.group(2)
                 # real may be an expression; flag if not a plain column
+                dual = re.match(r'^Dual\s*\(\s*"?([A-Za-z0-9_]+)"?\s*,\s*"?([A-Za-z0-9_]+)"?\s*\)$', real, re.IGNORECASE)
+                if dual:  # Dual(text, num): the dual's IDENTITY is the numeric arg
+                    # (Qlik collapses buckets by number; text is display-only and
+                    # may be dirty, e.g. mixed Apr/April) -> map to the numeric column
+                    real = dual.group(2)
                 renamed = real.upper() != qlik.upper()
                 fields.append({"qlikField": qlik, "realColumn": real, "renamed": renamed,
                                "isExpression": not re.match(r'^[A-Za-z0-9_]+$', real)})
