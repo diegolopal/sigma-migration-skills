@@ -295,6 +295,135 @@ def translate_dim_calc(formula, mmap, columns_by_guid = {})
   nil
 end
 
+# ---- FIXED-LOD / grain-aware two-stage aggregation --------------------------
+# Tableau `{FIXED [dims] : AGG([m])}` (and Avg-of-a-dim-table-measure, which
+# Tableau evaluates at the dim table's native grain under relationship
+# semantics) CANNOT be expressed as a single workbook formula: Sigma evaluates
+# chart formulas at the source's base row grain, and window functions silently
+# error in master/DM calc columns (feedback_sigma_window_functions). The
+# verified translation (LODPROBE2, 2026-06-11) is a HIDDEN TWO-LEVEL GROUPED
+# helper element on the Data page (the PR #65 / ry0n machinery):
+#   level 2 (inner)  = the FIXED dims, computing the LOD aggregate
+#   level 1 (outer)  = the dims the chart plots (or a constant for KPIs),
+#                      computing the SECOND-stage aggregate over the inner
+#                      group values (Sigma grouping calcs aggregate over child
+#                      GROUP values, not base rows — verified)
+# The chart sources the helper and references the outer calc via Max(): a
+# chart re-aggregates a grouped source at BASE grain (group calcs replicated
+# per row, window-style — verified), and Max over replicated identical values
+# is exact.
+# ⚠ Carried chart dims join the OUTER grouping — exact iff they are
+# functionally dependent on (coarser than) the FIXED dims (e.g. Customer
+# Segment per Customer Id). The emitted warning documents this assumption.
+#
+# DISPATCH (single vs nested FIXED — the two paths are disjoint by design):
+#   - SINGLE-level {FIXED [dims] : AGG([m])}  → THIS path (parse_fixed_lod /
+#     build_two_stage_helper): the regex below is anchored (\A..\z) to exactly
+#     one non-nested FIXED, so it returns nil for anything nested. Parity-
+#     proven on the fat workbook (40/40 strict incl. the dim-native-grain
+#     subtlety).
+#   - NESTED {FIXED ... {FIXED ...}}          → decompose_nested_fixed below
+#     (requires ≥2 `{FIXED` occurrences): emits a helper-element CHAIN plan
+#     into the -lod-chains.json sidecar for the agent to build. Never reaches
+#     this path, and single-level LODs never reach the chain path.
+def parse_fixed_lod(formula, columns_by_guid = {})
+  s = formula.to_s.gsub(/\s+/, ' ').strip
+  m = s.match(/\A\{\s*FIXED\s+(\[[^\]]+\](?:\s*,\s*\[[^\]]+\])*)\s*:\s*(SUM|AVG|MIN|MAX|MEDIAN|COUNTD|COUNT)\s*\(\s*\[([^\]]+)\]\s*\)\s*\}\z/i)
+  return nil unless m
+  resolve = lambda do |ref|
+    if ref =~ /\A[0-9a-f\-]{36}\z/i
+      info = columns_by_guid[ref]
+      info && info['caption'] && info['caption'].strip
+    else
+      ref.strip
+    end
+  end
+  dims = m[1].scan(/\[([^\]]+)\]/).flatten.map { |d| resolve.call(d) }
+  meas = resolve.call(m[3])
+  return nil if dims.empty? || dims.any?(&:nil?) || meas.nil?
+  { 'dims' => dims, 'agg' => m[2].upcase, 'measure' => meas }
+end
+
+# Strip the aggregation/date-part prefix off a Tableau CSV header so it can be
+# matched against a worksheet calc name ("Avg. Customer LTV LOD" -> "Customer
+# LTV LOD"). Mirrors auto-parity-plan's header_base.
+def header_base(h)
+  h.to_s.strip
+   .sub(/^(?:sum|avg|average|min|max|median|distinct count|count) of /i, '')
+   .sub(/^(?:avg|sum|min|max|med|cnt|ctd)\.\s*/i, '')
+   .sub(/^(?:second|minute|hour|day|week|month|quarter|year) of /i, '')
+   .strip
+end
+
+LOD_INNER_AGG = {
+  'SUM' => 'Sum', 'AVG' => 'Avg', 'MIN' => 'Min', 'MAX' => 'Max',
+  'MEDIAN' => 'Median', 'COUNTD' => 'CountDistinct',
+  'COUNT' => 'CountIf(IsNotNull(%s))'
+}.freeze
+
+# Build the hidden two-level grouped helper element for a FIXED LOD (see the
+# block comment above). Returns [element_hash, src_name, stage2_col_name].
+#   value_name:    display name of the LOD value ("Customer LTV LOD")
+#   value_formula: the inner aggregate over master refs ("Sum([Master/Net Revenue])")
+#   inner_keys:    [{'name','formula'}] — the FIXED dims (master refs)
+#   outer_dims:    [{'name','formula'}] — chart dims carried downstream; empty
+#                  for KPIs (a constant "All Rows" key keeps the outer level)
+#   stage2_agg:    Sigma agg template for the second stage ('Avg' or '%s' form)
+def build_two_stage_helper(el_id:, master_id:, value_name:, value_formula:,
+                           inner_keys:, outer_dims:, stage2_agg:)
+  src_id = "#{el_id}-lod-src"
+  src_name = "#{value_name} Source (#{el_id.sub(/^el-(kpi-)?/, '')})"
+  stage2_name = "#{value_name} 2nd Stage"
+  outer = outer_dims.empty? ? [{ 'name' => 'All Rows', 'formula' => '1' }] : outer_dims
+  outer_cols = outer.each_with_index.map do |d, i|
+    { 'id' => "#{src_id}-d#{i}", 'name' => d['name'], 'formula' => d['formula'] }
+  end
+  inner_cols = inner_keys.each_with_index.map do |k, i|
+    { 'id' => "#{src_id}-k#{i}", 'name' => k['name'], 'formula' => k['formula'] }
+  end
+  value_col  = { 'id' => "#{src_id}-v", 'name' => value_name, 'formula' => value_formula }
+  stage2_col = { 'id' => "#{src_id}-s2", 'name' => stage2_name,
+                 'formula' => render_agg(stage2_agg, "[#{value_name}]") }
+  element = {
+    'id' => src_id, 'kind' => 'table', 'name' => src_name,
+    'source' => { 'kind' => 'table', 'elementId' => master_id },
+    'columns' => outer_cols + inner_cols + [value_col, stage2_col],
+    'groupings' => [
+      { 'id' => "#{src_id}-g1", 'groupBy' => outer_cols.map { |c| c['id'] },
+        'calculations' => [stage2_col['id']] },
+      { 'id' => "#{src_id}-g2", 'groupBy' => inner_cols.map { |c| c['id'] },
+        'calculations' => [value_col['id']] }
+    ],
+    'visibleAsSource' => false
+  }
+  [element, src_name, stage2_name]
+end
+
+# Build the hidden DIM-GRAIN passthrough helper for an aggregate of a dim-table
+# measure (grain annotation on the master-map entry — see mechanical-specs
+# derive_master). The helper sources the DIM ELEMENT of the data model itself
+# (NOT the fact master): Tableau's relationship semantics aggregate a dim-table
+# column over the dim table's OWN rows, including entities with no fact match —
+# a fact-side group-by can never reproduce that (verified: AvgLTR 11418.65 over
+# 25 CUSTOMER_DIM rows vs 10480.53 fact-side). The source elementId is a
+# placeholder ("__DM_ELEMENT__:<name>") — migrate-tableau resolves it against
+# the posted DM readback (build-charts runs before it knows live element ids).
+# Returns [element_hash, src_name].
+def build_dim_grain_helper(el_id:, grain:, columns:)
+  src_id = "#{el_id}-grain-src"
+  src_name = "#{grain['element']} Grain (#{el_id.sub(/^el-(kpi-)?/, '')})"
+  cols = columns.each_with_index.map do |name, i|
+    { 'id' => "#{src_id}-c#{i}", 'name' => name, 'formula' => "[#{grain['element']}/#{name}]" }
+  end
+  element = {
+    'id' => src_id, 'kind' => 'table', 'name' => src_name,
+    'source' => { 'kind' => 'data-model', 'elementId' => "__DM_ELEMENT__:#{grain['element']}" },
+    'columns' => cols,
+    'visibleAsSource' => false
+  }
+  [element, src_name]
+end
+
 # Translate the Tableau column reference inside aggregations dict to a clean key
 # we can look up. Tableau uses internal IDs like "[33b6c718-9b55-3dc0-9698-…]"
 # OR friendly names like "[NET_REVENUE]". We strip the brackets for matching.
@@ -574,19 +703,25 @@ def translate_tableau_tc(formula)
 
   # LOD calcs — Tableau's `{FIXED [dim] : AGG([m])}` family.
   # Translation strategy (Sigma):
-  #   {FIXED [dim] : SUM([m])}    → workbook metric `Sum([m])` grouped by [dim]
-  #                                 OR Custom SQL `SUM(m) OVER (PARTITION BY dim)`
+  #   {FIXED [dims] : AGG([m])}   → AUTO-BUILT when plotted as a chart/KPI
+  #                                 measure: hidden two-level grouped helper
+  #                                 element (inner = FIXED dims computing the
+  #                                 LOD aggregate, outer = chart dims computing
+  #                                 the 2nd-stage aggregate) — see
+  #                                 parse_fixed_lod/build_two_stage_helper.
   #   {FIXED : SUM([m])}          → unscoped `Sum([m])` (workbook-level scalar)
+  #   nested {FIXED…{FIXED…}}     → handled UPSTREAM by decompose_nested_fixed
+  #                                 (helper-element chain + -lod-chains.json
+  #                                 sidecar); the calc loop `next`s before this
+  #                                 translator runs, so no double hint.
   #   {INCLUDE [dim] : SUM([m])}  → add [dim] to chart grouping and just use Sum
   #   {EXCLUDE [dim] : SUM([m])}  → remove [dim] from chart grouping, use Sum
-  # The full translation needs context (chart's grouping cols), so we surface
-  # the suggested Sigma expression as a hint rather than auto-emitting.
+  # INCLUDE/EXCLUDE need the chart's grouping context — surfaced as manual
+  # hints, not auto-emitted.
   if s =~ /\{\s*FIXED\s+\[([^\]]+)\]\s*:\s*(SUM|AVG|MIN|MAX|COUNT|COUNTD)\s*\(\[([^\]]+)\]\)\s*\}/i
     dim, agg, m = $1, $2.upcase, $3
-    sigma_agg = { 'SUM' => 'Sum', 'AVG' => 'Avg', 'MIN' => 'Min', 'MAX' => 'Max',
-                  'COUNT' => 'Count', 'COUNTD' => 'CountDistinct' }[agg]
-    sigma_expr = "#{sigma_agg}([Master/#{m}]) over the partition of [Master/#{dim}]"
-    hints << "FIXED LOD → #{sigma_expr}; OR Custom SQL DM element with #{agg}(#{m}) OVER (PARTITION BY #{dim})"
+    hints << "FIXED LOD → auto-built as a hidden grouped helper element when plotted (inner grain = [#{dim}], " \
+             "#{agg}(#{m}); 2nd-stage agg at chart grain) ⚠ carried chart dims must be functionally dependent on the FIXED dims"
     changed = true
   end
   if s =~ /\{\s*FIXED\s*:\s*(SUM|AVG|MIN|MAX|COUNT|COUNTD)\s*\(\[([^\]]+)\]\)\s*\}/i
@@ -630,8 +765,9 @@ end
 # row-weighted (caught live: row-weighted 969.82 vs correct 687.81 per-customer
 # Avg on CSA.TJ.ORDER_FACT). Custom SQL `GROUP BY` subqueries per level are
 # the equivalent alternative. decompose_nested_fixed
-# returns nil for non-nested formulas (single-FIXED keeps the existing
-# hint path in translate_tableau_tc) and otherwise:
+# returns nil for non-nested formulas — SINGLE-level FIXED takes the verified
+# two-level helper AUTO path instead (parse_fixed_lod / build_two_stage_helper
+# above; see the dispatch note on parse_fixed_lod) — and otherwise:
 #   { 'chain' => [{helper, dims, tableau_body, sigma_aggregate}, ...]  # innermost first
 #     'final' => "<outermost expr with [LOD Helper k/Value] refs>" }
 LOD_AGG_FN = { 'SUM' => 'Sum', 'AVG' => 'Avg', 'MIN' => 'Min', 'MAX' => 'Max',
@@ -902,7 +1038,7 @@ end
 # Without this, the chart_kind=kpi worksheet would fall through to the
 # CSV-driven flat-table flow and quietly produce nothing usable.
 # See beads-sigma-bw3.
-def build_kpi_element(z, meta, mmap, opts, warnings)
+def build_kpi_element(z, meta, mmap, opts, warnings, data_elements = [])
   cap = z['caption']
   el_id = "el-kpi-#{cap.downcase.gsub(/\W+/, '-')[0..38]}".sub(/-$/, '')
 
@@ -934,6 +1070,41 @@ def build_kpi_element(z, meta, mmap, opts, warnings)
   deriv = measure_field['derivation'].to_s.downcase
   norm = ->(x) { x.to_s.gsub(/^\[|\]$/, '').strip.downcase }
 
+  source_eid = opts[:master_id]
+  two_stage_formula = nil
+  ws_calc_lod = (z['calculations'] || []).find { |c| norm.call(c['name']) == norm.call(field_cap) }
+  lod = ws_calc_lod && parse_fixed_lod(ws_calc_lod['formula'], meta['columns_by_guid'] || {})
+  if lod
+    # FIXED-LOD KPI → two-level helper (constant outer key), Max() the outer calc.
+    map_name = ->(capn) { (m = map_column(capn, mmap)) ? m['name'] : capn }
+    inner_keys = lod['dims'].map { |d| n = map_name.call(d); { 'name' => n, 'formula' => "[Master/#{n}]" } }
+    meas_name = map_name.call(lod['measure'])
+    value_formula = render_agg(LOD_INNER_AGG[lod['agg']], "[Master/#{meas_name}]")
+    stage2 = SHELF_AGG_FOR_PREFIX[deriv] || 'Avg'
+    helper, src_name, s2_name = build_two_stage_helper(
+      el_id: el_id, master_id: opts[:master_id], value_name: field_cap.to_s.strip,
+      value_formula: value_formula, inner_keys: inner_keys, outer_dims: [], stage2_agg: stage2)
+    data_elements << helper
+    source_eid = helper['id']
+    two_stage_formula = "Max([#{src_name}/#{s2_name}])"
+    warnings << "'#{cap}' KPI measure '#{field_cap}' is a FIXED LOD ({FIXED #{lod['dims'].join(', ')} : #{lod['agg']}(#{lod['measure']})}) — " \
+                "auto-built hidden grouped helper '#{src_name}' (inner grain = FIXED dims, 2nd-stage #{stage2}) ⚠ verify in Sigma"
+  elsif %w[avg average].include?(deriv) && master['formula'].nil? && master['grain'] && ws_calc_lod.nil?
+    # Grain-aware average (bead AvgLTR): Avg of a dim-table measure — Tableau
+    # evaluates it at the DIM table's native grain (all dim rows, incl. entities
+    # with no fact match). Source the DM dim element directly via a hidden
+    # passthrough helper; a chart re-aggregates an UNGROUPED source at its base
+    # grain, so a plain Avg over the helper is exact.
+    helper, src_name = build_dim_grain_helper(el_id: el_id, grain: master['grain'],
+                                              columns: [master['name'].to_s.strip])
+    data_elements << helper
+    source_eid = helper['id']
+    two_stage_formula = "Avg([#{src_name}/#{master['name'].to_s.strip}])"
+    warnings << "'#{cap}' KPI measure '#{field_cap}' averages a #{master['grain']['element']} column — Tableau evaluates this at the " \
+                "dim table's native grain (relationship semantics), so the KPI sources the DM '#{master['grain']['element']}' element " \
+                "via hidden helper '#{src_name}' instead of the row-grain master ⚠ verify in Sigma"
+  end
+
   # Formula resolution priority (bead 3w4d — calc-measure KPIs used to drop):
   #   1. master-map entry with a verbatim aggregate `formula` (DM metrics like
   #      Return Rate / Gross Margin Pct / Revenue Per Order)
@@ -941,7 +1112,7 @@ def build_kpi_element(z, meta, mmap, opts, warnings)
   #   3. row-level worksheet calc (DATEDIFF(...)) → translate, wrap in the
   #      shelf aggregation (Avg/Sum/...)
   #   4. plain master column wrapped in the shelf aggregation
-  formula = master['formula']
+  formula = two_stage_formula || master['formula']
   ws_calc = (z['calculations'] || []).find { |c| norm.call(c['name']) == norm.call(field_cap) }
   if formula.nil? && ws_calc && %w[usr user].include?(deriv)
     formula = translate_user_agg_formula(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
@@ -994,7 +1165,7 @@ def build_kpi_element(z, meta, mmap, opts, warnings)
     'id'      => el_id,
     'kind'    => 'kpi-chart',
     'name'    => cap,
-    'source'  => { 'kind' => 'table', 'elementId' => opts[:master_id] },
+    'source'  => { 'kind' => 'table', 'elementId' => source_eid },
     'columns' => [measure_col],
     # value.columnId, NOT value.id — the live API 400s with
     # "value.columnId: Invalid string: undefined" (bead 3w4d; same fix as
@@ -1044,7 +1215,7 @@ layout.each do |dash|
     # into the CSV-driven 2-column flow which requires headers.length >= 2 and
     # silently drops single-measure tiles. beads-sigma-bw3.
     if z['chart_kind'] == 'kpi'
-      kpi_el = build_kpi_element(z, meta, mmap, opts, warnings)
+      kpi_el = build_kpi_element(z, meta, mmap, opts, warnings, data_elements)
       if kpi_el
         kpi_el['_worksheet'] = cap
         kpi_el['_dashboard'] = dash['dashboard']
@@ -1272,6 +1443,70 @@ layout.each do |dash|
       color_col_obj = { 'id' => "c-#{el_id}", 'name' => color_dim['name'],
                         'formula' => color_dim['formula'] || "[Master/#{color_dim['name']}]" }
     end
+
+    # ---- Two-stage aggregation (FIXED LOD / grain-aware average) ------------
+    # See the parse_fixed_lod block comment. Both cases retarget the chart at a
+    # hidden helper element; every downstream block that wraps the column
+    # formulas (null-dim IsNotNull, sort, dataLabel) keeps working because the
+    # column OBJECTS keep their ids/names — only formulas + source change.
+    chart_source_eid = opts[:master_id]
+    if meas['formula'].nil? && user_agg_formula.nil?
+      lod_calc = (z['calculations'] || []).find do |c|
+        c['name'].to_s.gsub(/^\[|\]$/, '').strip.casecmp?(header_base(meas_hdr))
+      end
+      # NB: parse_fixed_lod is nil for NESTED {FIXED} calcs — those route
+      # through decompose_nested_fixed (helper-element chain, -lod-chains.json
+      # sidecar) in the calc loop below; the agent wires the chain manually.
+      lod_parse = lod_calc && parse_fixed_lod(lod_calc['formula'], meta['columns_by_guid'] || {})
+      if lod_parse
+        # FIXED LOD → two-level grouped helper: inner = FIXED dims computing
+        # the LOD aggregate, outer = the chart's plotted dims computing the
+        # second-stage aggregate; chart Max()es the replicated outer calc.
+        map_name = ->(capn) { (mm = map_column(capn, mmap)) ? mm['name'] : capn }
+        inner_keys = lod_parse['dims'].map { |d| n = map_name.call(d); { 'name' => n, 'formula' => "[Master/#{n}]" } }
+        lod_meas = map_name.call(lod_parse['measure'])
+        value_name = header_base(meas_hdr)
+        outer_dims = [{ 'name' => dim['name'], 'formula' => dim_formula }]
+        outer_dims << { 'name' => color_col_obj['name'], 'formula' => color_col_obj['formula'] } if color_col_obj
+        stage2 = (SIGMA_AGG[agg_label] unless %w[None User].include?(agg_label.to_s)) || 'Avg'
+        helper, src_name, s2_name = build_two_stage_helper(
+          el_id: el_id, master_id: opts[:master_id], value_name: value_name,
+          value_formula: render_agg(LOD_INNER_AGG[lod_parse['agg']], "[Master/#{lod_meas}]"),
+          inner_keys: inner_keys, outer_dims: outer_dims, stage2_agg: stage2)
+        data_elements << helper
+        chart_source_eid = helper['id']
+        dim_col_obj['formula'] = "[#{src_name}/#{dim['name']}]"
+        color_col_obj['formula'] = "[#{src_name}/#{color_col_obj['name']}]" if color_col_obj
+        measure_formula = "Max([#{src_name}/#{s2_name}])"
+        warnings << "'#{cap}' measure '#{meas_hdr}' is a FIXED LOD ({FIXED #{lod_parse['dims'].join(', ')} : " \
+                    "#{lod_parse['agg']}(#{lod_parse['measure']})}) — auto-built hidden grouped helper '#{src_name}' " \
+                    "(inner grain = FIXED dims, 2nd-stage #{stage2} at chart grain) ⚠ exact iff the chart dims are " \
+                    'functionally dependent on the FIXED dims — verify in Sigma'
+      elsif sigma_agg == 'Avg' && meas['grain'] &&
+            dim['formula'].nil? && dim_trunc.nil? && (aliases_for_dim.nil? || aliases_for_dim.empty?) &&
+            dim['grain'] && dim['grain']['element'] == meas['grain']['element'] &&
+            (color_dim.nil? || (color_dim['grain'] && color_dim['grain']['element'] == meas['grain']['element']))
+        # Grain-aware average over a dim-table measure, plotted by dims that
+        # live on the SAME dim element → source the dim element at its native
+        # grain (ungrouped passthrough); the chart's Avg is then per-entity.
+        names = [dim['name'], meas['name']]
+        names << color_dim['name'] if color_dim
+        helper, src_name = build_dim_grain_helper(el_id: el_id, grain: meas['grain'], columns: names.uniq)
+        data_elements << helper
+        chart_source_eid = helper['id']
+        dim_col_obj['formula'] = "[#{src_name}/#{dim['name']}]"
+        color_col_obj['formula'] = "[#{src_name}/#{color_col_obj['name']}]" if color_col_obj
+        measure_formula = "Avg([#{src_name}/#{meas['name']}])"
+        warnings << "'#{cap}' averages a #{meas['grain']['element']} column — Tableau evaluates this at the dim table's " \
+                    "native grain (relationship semantics); chart sources the DM '#{meas['grain']['element']}' element via " \
+                    "hidden helper '#{src_name}' ⚠ verify in Sigma"
+      elsif sigma_agg == 'Avg' && meas['grain']
+        warnings << "'#{cap}' averages dim-table column '#{meas['name']}' (#{meas['grain']['element']}) but its chart dims " \
+                    'are not plain columns of that dim element — left at row grain; values may diverge from Tableau ' \
+                    '(relationship semantics average at the dim grain). Verify or restructure manually.'
+      end
+    end
+
     meas_col_obj = { 'id' => "y-#{el_id}", 'name' => meas['name'], 'formula' => measure_formula }
     # Format priority:
     #   1. explicit `format` on the master-map entry
@@ -1418,7 +1653,7 @@ layout.each do |dash|
       'id'      => el_id,
       'kind'    => kind,
       'name'    => cap,
-      'source'  => { 'kind' => 'table', 'elementId' => opts[:master_id] },
+      'source'  => { 'kind' => 'table', 'elementId' => chart_source_eid },
       'columns' => [dim_col_obj, meas_col_obj]
     }
     element['columns'] << extra_meas_col if extra_meas_col
@@ -1667,6 +1902,14 @@ layout.each do |dash|
     el_filter_col_for = lambda do |m|
       hit = (element['columns'] || []).find { |c| c['name'].to_s.strip.casecmp?(m['name'].to_s.strip) }
       return hit['id'] if hit
+      # A helper-sourced chart (FIXED LOD / dim-grain) cannot reach master
+      # columns the helper does not carry — surface it instead of emitting a
+      # ref that error-types at POST.
+      if chart_source_eid != opts[:master_id]
+        warnings << "value filter on '#{cap}' targets '#{m['name']}' but the chart sources a two-stage helper that " \
+                    'does not carry that column — filter NOT emitted; add the column to the helper manually if needed'
+        return nil
+      end
       fid = "f-#{el_id}-#{m['name'].to_s.downcase.gsub(/\W+/, '-')}"
       unless (element['columns'] || []).any? { |c| c['id'] == fid }
         element['columns'] << { 'id' => fid, 'name' => m['name'],
@@ -1690,8 +1933,10 @@ layout.each do |dash|
           warnings << "'#{cap}' quick filter on '#{fcap}' has no explicit members (Tableau 'All') — no Sigma element filter emitted"
           next
         end
+        fcol = el_filter_col_for.call(m)
+        next if fcol.nil? # helper-sourced chart, column unreachable (warned in el_filter_col_for)
         el_filters << {
-          'columnId' => el_filter_col_for.call(m),
+          'columnId' => fcol,
           'kind' => 'list', 'mode' => 'include', 'selectionMode' => 'multiple',
           'values' => f['members'], 'includeNulls' => 'never'
         }
@@ -1704,9 +1949,11 @@ layout.each do |dash|
         # explicit between-bounds (frozen — re-run to refresh).
         period   = (f['period_type'] || 'year').downcase
         inc_null = (f['include_null'].to_s == 'true' ? 'always' : 'never')
+        fcol = el_filter_col_for.call(m)
+        next if fcol.nil? # helper-sourced chart, column unreachable (warned in el_filter_col_for)
         if f['first_period'].to_i.zero? && f['last_period'].to_i.zero?
           el_filters << {
-            'columnId' => el_filter_col_for.call(m), 'kind' => 'date-range', 'mode' => 'current',
+            'columnId' => fcol, 'kind' => 'date-range', 'mode' => 'current',
             'unit' => period, 'includeNulls' => inc_null
           }
           warnings << "'#{cap}' relative-date 'this #{period}' → element filter mode:current unit:#{period} (rolls over automatically; verified to filter chart-data SQL, bead z135)"
@@ -1714,14 +1961,14 @@ layout.each do |dash|
           start_d, end_d = relative_period_bounds(period, f['first_period'], f['last_period'])
           if start_d
             el_filters << {
-              'columnId' => el_filter_col_for.call(m), 'kind' => 'date-range', 'mode' => 'between',
+              'columnId' => fcol, 'kind' => 'date-range', 'mode' => 'between',
               'startDate' => start_d, 'endDate' => end_d,
               'includeNulls' => inc_null
             }
             warnings << "'#{cap}' relative-date window #{f['first_period']}..#{f['last_period']} #{period}s → element filter mode:between (#{start_d[0..9]}..#{end_d[0..9]}); FROZEN — re-run to refresh"
           else
             el_filters << {
-              'columnId' => el_filter_col_for.call(m), 'kind' => 'date-range', 'mode' => 'relative',
+              'columnId' => fcol, 'kind' => 'date-range', 'mode' => 'relative',
               'unit' => period, 'count' => 1,
               'includeNulls' => inc_null
             }
@@ -1729,8 +1976,10 @@ layout.each do |dash|
           end
         end
       when 'number-range'
+        fcol = el_filter_col_for.call(m)
+        next if fcol.nil? # helper-sourced chart, column unreachable (warned in el_filter_col_for)
         el_filters << {
-          'columnId' => el_filter_col_for.call(m), 'kind' => 'number-range', 'mode' => 'between',
+          'columnId' => fcol, 'kind' => 'number-range', 'mode' => 'between',
           'min' => f['min'], 'max' => f['max'], 'includeNulls' => 'never'
         }
       end

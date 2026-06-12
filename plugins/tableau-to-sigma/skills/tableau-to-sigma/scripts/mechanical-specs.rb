@@ -695,6 +695,17 @@ module MechanicalSpecs
   # in master-column formulas [fact_name/Col]. base_el (optional) is the element a
   # derived view sources, whose metrics are also harvested.
   #
+  # model (optional): the full converter model. When supplied, every mmap entry
+  # whose converter column resolves through a relationship to a DIM element
+  # ([FACT/REL_NAME/Col]) is annotated with its native grain:
+  #   'grain' => { 'element' => '<Dim element display name>', 'relationship' => REL,
+  #                'key' => '<fact FK display name>' }
+  # Tableau evaluates aggregates of a dim-table measure at the DIM table's
+  # native grain (relationship semantics) — Avg([Lifetime Revenue]) averages
+  # over CUSTOMER_DIM rows, NOT over fact rows. build-charts uses the
+  # annotation to emit a dim-grain helper element so two-stage averages match
+  # (the FAT KPI AvgLTR class of divergence).
+  #
   # real_labels (optional): the ACTUAL column display labels of the derived fact
   # element, read back from the live DM (`/v2/dataModels/<id>/columns`). The
   # converter exposes a joined-dim column under its bare last-path-segment name
@@ -705,13 +716,34 @@ module MechanicalSpecs
   # every mmap regex) stays the BARE caption — so build-charts' [Master/<bare>]
   # refs and the bare Tableau chart captions still resolve. Without real_labels
   # we fall back to the bare-name formula (correct only for non-virtual conns).
-  def derive_master(fact_el, fact_name, base_el = nil, real_labels = nil)
+  def derive_master(fact_el, fact_name, base_el = nil, real_labels = nil, model = nil)
     master_columns = []
     mmap = {}
     seen = {}
     used_regex = {}
     untranslated = []
     guid_idx = guid_display_index(fact_el, base_el)
+    # Native-grain index: converter column formula -> dim element name + FK key
+    # (see the doc comment above). Keyed by the column's bare display name.
+    grain_for = {}
+    if model && base_el
+      els_by_id = all_elements(model).each_with_object({}) { |e, h| h[e['id']] = e }
+      key_cols = (base_el['columns'] || []).each_with_object({}) { |c, h| h[c['id']] = c }
+      (fact_el['columns'] || []).each do |c|
+        m = c['formula'].to_s.match(%r{\A\[([^/\]]+)/([^/\]]+)/([^\]]+)\]\z})
+        next unless m
+        rel = (base_el['relationships'] || []).find { |r| r['name'] == m[2] }
+        next unless rel
+        tgt = els_by_id[rel['targetElementId']]
+        next unless tgt
+        tgt_name = (tgt['name'] && !tgt['name'].to_s.empty?) ? tgt['name'] : display_name((tgt.dig('source', 'path') || []).last.to_s)
+        fk = key_cols[rel.dig('keys', 0, 'sourceColumnId')]
+        dn = col_display(c)
+        next unless dn
+        grain_for[dn.downcase] = { 'element' => tgt_name, 'relationship' => m[2],
+                                   'key' => fk && col_display(fk) }.compact
+      end
+    end
     # dname (BARE caption, used for name+mmap) -> real readback label (used for formula).
     real_for = lambda do |dname, real_label|
       lbl = (real_label && !real_label.to_s.empty?) ? real_label : dname
@@ -727,6 +759,7 @@ module MechanicalSpecs
       master_columns << { 'id' => id, 'name' => dname, 'formula' => real_for.call(dname, real_label) }
       entry = { 'id' => id, 'name' => dname }
       entry['format'] = format if format
+      entry['grain'] = grain_for[key] if grain_for[key]
       rx = header_regex(dname)
       unless used_regex[rx]
         mmap[rx] = entry

@@ -34,7 +34,9 @@ ruby scripts/migrate-tableau.rb \
   --workbook "<name>" --connection <SIGMA_CONNECTION_ID> --folder <SIGMA_FOLDER_ID> \
   [--db CSA --schema TJ] [--name '<prefix>'] [--row-scale 1.5] \
   [--reuse-dm [ID]] [--force] [--yes]
-# … run the printed mcp-v2 queries → <workdir>/parity-actuals.json …
+# … pass 1 auto-fills <workdir>/parity-actuals.json via the pooled CSV-export
+#   collector (collect-parity-actuals.rb); run the printed mcp-v2 queries for
+#   the REMAINING charts only (pivot grids) and merge them in …
 # PASS 2 — finalize: phase6 verify + cleanup-orphans + census-aware hard gate
 ruby scripts/migrate-tableau.rb --workbook "<name>" \
   --finalize --actuals <workdir>/parity-actuals.json [--allow-missing-tiles N]
@@ -60,9 +62,13 @@ Optional `--enhance [--enhance-accept <ids|all-low-risk>]` runs Phase E
 (opt-in) after all gates are green — see the Phase E section below.
 
 **Still manual by design (the orchestrator stops and tells you):**
-- **Parity actuals** — Sigma has no synchronous chart-data REST endpoint; the
-  per-chart values come from `mcp__sigma-mcp-v2__query` calls the agent runs
-  between pass 1 and `--finalize`.
+- **Parity actuals (pivot grids only)** — pass 1 now collects actuals for every
+  exportable chart itself: `collect-parity-actuals.rb` pools the element CSV
+  exports (`POST /v2/workbooks/{wb}/export` → poll → download, 5-wide, under
+  `sigma_rest`'s auto-refresh) straight into `parity-actuals.json`. Only
+  pivot-tables stay agent-mediated (their CSV export is the WIDE grid, not the
+  long row/col/value tuples the plan compares) — pass 1 prints exactly those
+  `mcp__sigma-mcp-v2__query` calls; merge their rows into the same file.
 - **Empty-view-CSV recovery** — a view that exports an empty CSV produces no
   chart; surfaced at the OPEN-QUESTIONS checkpoint AND by the tile census at
   `--finalize` (exit 7 → rebuild the chart manually or explain with
@@ -906,7 +912,24 @@ Write the spec to `/tmp/<name>/dm-spec.json`. Full schema is in
 
 > **Sigma window functions silently fail in DM calc columns and in workbook master (grouping-table) calc columns.** `CountOver`, `SumOver`, `RankOver`, `RowNumberOver`, `MaxOver`, `MinOver`, `AvgOver`, `FirstOver`, `LastOver`, `MedianOver`, `StdDevOver`, `CumulativeSum`, `CumulativeAvg`, etc. all POST/PUT successfully and return `success: true`, but the column resolves as `error` on GET and the chart that references it renders blank. The validator now hard-fails on these (see `scripts/validate-spec.rb`), but the right fix at design time is to NOT write them as calc columns in the first place.
 
-Any Tableau calc whose `requires_custom_sql: true` (from Phase 1e) — that is, any `WINDOW_*` / `RUNNING_*` / `RANK*` / `INDEX` / `FIRST` / `LAST` / `SIZE` / `TOTAL` / `LOOKUP` / `PREVIOUS_VALUE` table calc, or any `{FIXED/INCLUDE/EXCLUDE}` LOD — must be implemented as a **Sigma Custom SQL data-model element**:
+> **`{FIXED ...}` LODs are AUTO-TRANSLATED — no Custom SQL needed.** When a
+> `{FIXED [dims] : AGG([m])}` calc is plotted as a chart/KPI measure,
+> `build-charts-from-signals.rb` emits a hidden TWO-LEVEL grouped helper
+> element on the Data page (`visibleAsSource:false`; inner grouping = the
+> FIXED dims computing the LOD aggregate, outer grouping = the chart's dims
+> computing the 2nd-stage aggregate over the inner GROUP values) and the chart
+> sources the helper, `Max()`-ing the outer calc (a chart re-aggregates a
+> grouped source at BASE grain with group calcs replicated per row — Max over
+> identical replicas is exact; verified live 2026-06-12). ⚠ Carried chart dims
+> must be functionally dependent on the FIXED dims (e.g. Customer Segment per
+> Customer Id) — the build emits a per-chart verify warning. The same helper
+> machinery handles **grain-aware averages**: `Avg` of a dim-table column
+> (Tableau relationship semantics evaluate it at the dim table's NATIVE grain,
+> including entities with no fact rows) sources the DM dim element directly.
+> NEVER write these as `SumOver`/`CountOver` master or DM calc columns — they
+> silently error.
+
+Any Tableau calc whose `requires_custom_sql: true` (from Phase 1e) — that is, any `WINDOW_*` / `RUNNING_*` / `RANK*` / `INDEX` / `FIRST` / `LAST` / `SIZE` / `TOTAL` / `LOOKUP` / `PREVIOUS_VALUE` table calc, or an `{INCLUDE/EXCLUDE}` LOD (those need the chart-grouping context) — must be implemented as a **Sigma Custom SQL data-model element**:
 
 ```json
 {
@@ -938,7 +961,7 @@ Key points:
   - `RUNNING_SUM(SUM([X]))` → `SUM(X) OVER (ORDER BY <time> ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`
   - `WINDOW_SUM(SUM([X]))` → `SUM(X) OVER (<partition / order>)`
   - `RANK(SUM([X]))` → `RANK() OVER (PARTITION BY <p> ORDER BY <X> DESC)`
-  - `{FIXED [Dim] : SUM([X])}` → `SUM(X) OVER (PARTITION BY Dim)` or a pre-aggregated subquery joined back
+  - `{FIXED [Dim] : SUM([X])}` → `SUM(X) OVER (PARTITION BY Dim)` or a pre-aggregated subquery joined back — **fallback only**: when the LOD is plotted as a chart/KPI measure it is AUTO-TRANSLATED via the hidden two-level helper element (see the callout above), no Custom SQL needed
   - **Nested LODs** (`{FIXED A : AVG({FIXED A, B : SUM([X])})}`) → a helper-element CHAIN, not one formula: innermost LOD = helper element 1 (grouped by its dims, aggregate as `Value`), each outer level consumes `[LOD Helper k/Value]` via a relationship on the shared dims. `build-charts-from-signals.rb` decomposes these automatically into `<out>-lod-chains.json` (innermost first) — build one grouped element (or Custom SQL `GROUP BY` subquery) per level. **Each outer level's source MUST carry `groupingId` pointing at the inner element's grouping** — a plain `{kind: table, elementId}` source reads BASE-grain rows with the aggregate repeated per row, so outer Avg/Median/Count silently come out row-weighted (caught live: 969.82 row-weighted vs 687.81 correct on CSA.TJ.ORDER_FACT). Live-verified pattern (exact parity vs warehouse SQL), 2026-06-11.
   - `LOOKUP(SUM([X]), -1)` → `LAG(X) OVER (ORDER BY <time>)`
 
@@ -1426,7 +1449,18 @@ The output is wrapped as `{ "extract": <bool>, "charts": [...] }` — the `extra
 
 ### 6b. Fetch Sigma actuals
 
-For every chart in the plan that lacks an `actual` key, query Sigma via the MCP tool. **Fire all N chart queries in a SINGLE parallel tool-use batch** — one message with N `mcp__sigma-mcp-v2__query` tool blocks side-by-side. Each individual query takes ~5–20s; parallel cap is bounded by the slowest one, sequential is N × that.
+**Pooled collection first (the fast path).** `phase6-parity.rb` pass 1 runs
+`scripts/collect-parity-actuals.rb` automatically: it pools the element CSV
+exports (`POST /v2/workbooks/{wb}/export` → poll `GET /v2/query/{q}/download`,
+5-wide, with the discovery pool's backoff pattern, under `lib/sigma_rest`'s
+auto-refresh) and fills `parity-actuals.json` for every chart kind except
+pivot-tables — the export returns exactly the plotted channels with column
+display names as headers, in the long form the plan compares (verified on the
+40-chart fat workbook: grouped "level" tables included; pivot CSV export is
+the WIDE grid, so pivots stay agent-mediated). ~40 charts collect in well
+under a minute vs ~6 minutes of serial MCP queries.
+
+For every REMAINING chart (pass 1 prints exactly those), query Sigma via the MCP tool. **Fire all N chart queries in a SINGLE parallel tool-use batch** — one message with N `mcp__sigma-mcp-v2__query` tool blocks side-by-side. Each individual query takes ~5–20s; parallel cap is bounded by the slowest one, sequential is N × that.
 
 ```
 mcp__sigma-mcp-v2__query  type="workbook"  workbookId="<wbId>"

@@ -87,28 +87,54 @@ if !opts[:finalize]
 
   plan = JSON.parse(File.read(plan_path))
 
-  # Emit per-chart MCP instructions
+  # Pooled Sigma-side actuals collection (collect-parity-actuals.rb): the
+  # element CSV export serves every chart kind except pivot-tables, N-wide,
+  # under sigma_rest's auto-refresh. Only the genuinely agent-mediated charts
+  # (pivot grids) are printed as MCP instructions below.
+  actuals_path = File.join(opts[:tab], 'parity-actuals.json')
+  t_collect = Time.now
+  coll_out, coll_err, coll_st = Open3.capture3(
+    'ruby', File.join(__dir__, 'collect-parity-actuals.rb'),
+    '--plan', plan_path, '--workbook-id', opts[:wb],
+    '--workbook-spec', File.join(opts[:tab], 'wb-readback.json'),
+    '--out', actuals_path)
+  puts coll_out unless coll_out.empty?
+  warn coll_err unless coll_err.empty?
+  warn 'collect-parity-actuals failed — ALL charts fall back to agent-mediated MCP queries' unless coll_st.success?
+  collected = (JSON.parse(File.read(actuals_path)) rescue {}) if File.exist?(actuals_path)
+  collected ||= {}
+  remaining = plan['charts'].reject { |c| collected.key?(c['chart']) && (c['sigma_columns'] || []).length >= 1 }
+                            .select { |c| (c['sigma_columns'] || []).length >= 1 }
+  warn format('parity collection: %d/%d chart(s) pooled in %.1fs; %d agent-mediated',
+              collected.size, plan['charts'].size, Time.now - t_collect, remaining.size)
+
+  # Emit per-chart MCP instructions for the REMAINDER only.
   puts ""
   puts "=" * 70
   puts "PHASE 6 PASS 1 OUTPUT — Sigma chart data fetch instructions"
   puts "=" * 70
   puts ""
-  puts "Agent: run ONE mcp__sigma-mcp-v2__query call per chart below, then save"
-  puts "the results to /tmp/<name>/parity-actuals.json with shape:"
-  puts '  { "<Sigma chart name>": [[dim, val], [dim, val], ...], ... }'
+  if remaining.empty?
+    puts "ALL #{collected.size} chart actuals were collected by the pooled exporter —"
+    puts "#{actuals_path} is complete. No MCP queries needed."
+  else
+    puts "The pooled exporter filled #{actuals_path} for #{collected.size} chart(s)."
+    puts "Agent: run ONE mcp__sigma-mcp-v2__query call per REMAINING chart below and"
+    puts "MERGE the results into that same file (shape:"
+    puts '  { "<Sigma chart name>": [[dim, val], [dim, val], ...], ... } ).'
+  end
   puts ""
   puts "Then re-run:"
   puts "  ruby scripts/phase6-parity.rb --tableau #{opts[:tab]} \\"
-  puts "    --finalize --actuals #{opts[:tab]}/parity-actuals.json#{opts[:extract_mode] ? ' \\\n    --extract-mode --extract-tol ' + opts[:extract_tol].to_s : ''}"
+  puts "    --finalize --actuals #{actuals_path}#{opts[:extract_mode] ? ' \\\n    --extract-mode --extract-tol ' + opts[:extract_tol].to_s : ''}"
   puts ""
-  plan['charts'].each_with_index do |c, i|
+  remaining.each_with_index do |c, i|
     cols = c['sigma_columns'] || []
     # KPIs are single-column (value only) — they MUST be queried too (bead
     # s6fo: the >=2 guard silently dropped every KPI from the actuals fetch).
-    next unless cols.length >= 1
     sel = cols.each_with_index.map { |col, j| %("#{col}" AS f#{j}) }.join(', ')
     sql = %(SELECT #{sel} FROM "workbook"."#{c['sigma_element_id']}" ORDER BY f0 NULLS FIRST)
-    puts "  [#{i + 1}/#{plan['charts'].length}] #{c['chart']}"
+    puts "  [#{i + 1}/#{remaining.length}] #{c['chart']}"
     puts "    mcp__sigma-mcp-v2__query  type=workbook  workbookId=#{opts[:wb]}"
     puts "    sql=#{sql.inspect}"
     puts ""

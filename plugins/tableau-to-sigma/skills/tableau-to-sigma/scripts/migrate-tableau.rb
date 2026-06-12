@@ -556,7 +556,7 @@ if mechanical
   # blank chart. Metrics that aren't plotted by any view are ignored.
   conv_fact = MechanicalSpecs.pick_fact(conv['model'])
   conv_base = conv_fact ? MechanicalSpecs.base_of(conv['model'], conv_fact) : nil
-  pre = conv_fact ? MechanicalSpecs.derive_master(conv_fact, (conv_fact['name'] || 'Order Fact'), conv_base) : { 'untranslated_metrics' => [] }
+  pre = conv_fact ? MechanicalSpecs.derive_master(conv_fact, (conv_fact['name'] || 'Order Fact'), conv_base, nil, conv['model']) : { 'untranslated_metrics' => [] }
   pre_untranslated = pre['untranslated_metrics'] || []
   # plotted_untranslated (the CSV-header match) is computed after the lane join
   # — it needs the view CSVs.
@@ -1122,7 +1122,7 @@ if mechanical
   abort 'FATAL: mechanical path could not identify a fact element in the converter output' unless conv_fact
   conv_base = MechanicalSpecs.base_of(conv['model'], conv_fact)
   real_labels = fact['columnLabels'] # from post-and-readback /columns (may be nil)
-  derived = MechanicalSpecs.derive_master(conv_fact, fact['name'], conv_base, real_labels)
+  derived = MechanicalSpecs.derive_master(conv_fact, fact['name'], conv_base, real_labels, conv['model'])
   master_columns = derived['master_columns']
   mmap = derived['mmap']
   # Human-supplied master-calc overrides (--master-col): appended verbatim so a
@@ -1160,6 +1160,21 @@ if mechanical
   chart_pages = raw_charts.is_a?(Hash) ? (raw_charts['pages'] || []) : nil
   data_elements = raw_charts.is_a?(Hash) ? (raw_charts['data_elements'] || []) : []
   chart_elements = chart_pages ? chart_pages.flat_map { |p| p['elements'] || [] } : raw_charts
+  # Dim-grain helper placeholder resolution: build-charts runs before it knows
+  # the live DM element ids, so grain helpers carry source.elementId =
+  # "__DM_ELEMENT__:<name>". Resolve against the readback (dm_els) NOW — an
+  # unresolvable grain element means the two-stage chart would silently misbind,
+  # so fail loudly (same contract as the relationship guard).
+  data_elements.each do |de|
+    ph = de.dig('source', 'elementId').to_s
+    next unless ph.start_with?('__DM_ELEMENT__:')
+    want = ph.split(':', 2).last
+    hit = dm_els.find { |e| e['name'].to_s.strip.casecmp?(want) }
+    abort "FATAL: grain helper '#{de['name']}' needs DM element '#{want}' but the posted data model has no element " \
+          "by that name (have: #{dm_els.map { |e| e['name'] }.join(', ')})" unless hit
+    de['source'] = { 'kind' => 'data-model', 'dataModelId' => dm_id, 'elementId' => hit['id'] }
+    line "grain helper '#{de['name']}' → DM element '#{want}' (#{hit['id']})"
+  end
   if chart_elements.empty?
     line 'WARN: build-charts produced 0 elements (no usable view CSVs / zones); emitting an empty dashboard page'
   else
@@ -1317,8 +1332,9 @@ puts '================ RESULT (pass 1 — parity PENDING) ================'
 puts "dataModelId : #{dm_id}#{reuse_dm_id ? '  (REUSED existing DM)' : ''}"
 puts "workbookId  : #{wb_id}"
 puts "structural  : PASS (#{total_cols} cols resolve, #{chart_els.size} charts compile)"
-puts 'PARITY      : PENDING — run the mcp-v2 queries printed above, save the'
-puts "              results to #{File.join(WORK, 'parity-actuals.json')}, then:"
+puts 'PARITY      : PENDING — the pooled collector filled parity-actuals.json for every'
+puts '              exportable chart; run the REMAINING mcp-v2 queries printed above'
+puts "              (if any), merge into #{File.join(WORK, 'parity-actuals.json')}, then:"
 finalize_cmd = "  ruby scripts/migrate-tableau.rb #{opts[:wb_id] ? "--workbook-id #{opts[:wb_id]}" : "--workbook \"#{opts[:wb_name]}\""}" \
                "#{opts[:out] ? " --out #{WORK}" : ''} \\\n    --finalize --actuals #{File.join(WORK, 'parity-actuals.json')}"
 puts finalize_cmd
