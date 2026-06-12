@@ -54,9 +54,12 @@ any type not in this table as custom and flag it.
 of these; converter coverage noted): selectors 51% of dossiers, chapter
 filters 49%, multi-dataset 42%, free-form `fields` — text 65% / image 54% /
 shape 33% / **html 11%** — and nested panelStacks 23%. Free-form text →
-Sigma `text` elements; images/shapes/html are flagged; selectors/filters →
-Sigma controls (roadmap); multi-dataset chapters → one Sigma element per
-dataset-backed viz (each viz names its dataset).
+Sigma `text` elements; images/shapes/html are flagged; **attribute selectors
++ chapter filters → Sigma controls** (CONVERTED — wired to the selectors'
+declared `targets` viz lists, `control-scope.json` sidecar, gate 7 +
+flip-test; panel selectors and metric-condition selectors are flagged MANUAL
+in the sidecar); multi-dataset chapters → one Sigma element per dataset-backed
+viz (each viz names its dataset).
 
 `fixtures/BUILD_SPEC.md` is the drag-and-drop spec for an "every viz type"
 fixture dossier (REST cannot author visualizations — Library UI only); use it

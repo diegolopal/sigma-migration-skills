@@ -31,8 +31,10 @@ logic.
 > dossier flows), `ae-row-collapse.md` (the one MSTR behavior no clean SQL
 > reproduces, and the pinning workflow), `viz-type-mapping.md` (dossier viz →
 > Sigma element lookup), `design-notes.md` (architecture + modeling gotchas +
-> roadmap). For canonical Sigma spec shapes, defer to the companion
-> `sigma-data-models` / `sigma-workbooks` skills.
+> roadmap), `control-parity.md` (shared control-targeting contract: the
+> control lint, the control-scope.json sidecar, and the flip test). For
+> canonical Sigma spec shapes, defer to the companion `sigma-data-models` /
+> `sigma-workbooks` skills.
 
 ---
 
@@ -50,7 +52,9 @@ logic.
   only means something when the Sigma connection reaches the database
   MicroStrategy queries.
 - **Python 3** (stdlib only; `resolve_ae_winners.py` and parity readback also
-  want `PyYAML` for Sigma's YAML spec responses).
+  want `PyYAML` for Sigma's YAML spec responses) and **Ruby** (the shared
+  gate stack: `put-layout.rb`, `assert-phase6-ran.rb`, `probe-controls.rb`,
+  `scripts/lib/*.rb` — vendored byte-identical across the sibling plugins).
 
 ## Phase 0 — Discover
 
@@ -86,9 +90,26 @@ python3 scripts/convert.py --bundle bundle.json \
 Emits `sigma_dm_spec.json` (one table element per logical table, derived
 left-outer joins, a consumable join element, token-parsed metrics with derived
 display formats) + `sigma_workbook_spec.json` (one page per dossier chapter,
-grouped tables mirroring each report template) + `parity_keys.json`. The
-workbook spec carries `{{DATA_MODEL_ID}}` / element-id placeholders until
-Phase 4 re-runs with real ids.
+grouped tables mirroring each report template, **controls** from the dossier's
+filter signals, banded-layout container elements) + `parity_keys.json` +
+`layout.xml` + `control-scope.json`. The workbook spec carries
+`{{DATA_MODEL_ID}}` / element-id placeholders until Phase 4 re-runs with real
+ids.
+
+**Controls** (`refs/control-parity.md` is the contract): MSTR dossiers DECLARE
+selector targets (`selectors[].targets` = viz keys) — the strongest
+source-scope signal of any BI tool — so each selector becomes a Sigma control
+whose `filters` wire to exactly the table elements built from the declared
+vizzes; chapter filter panels cover every element on their chapter's page.
+Verified shapes baked in: filter targets only on TABLE elements; controls
+AFTER their targets in spec order; date attributes → `date-range` with flat
+`mode: between` (list-on-datetime targets are silently stripped); **numeric
+attributes bind through a hidden `Text()` cast column** (a list-control filter
+target on a NUMERIC column also posts 200 and reads back `filters: null` —
+live-verified 2026-06-12). Panel selectors are navigation, not filters —
+flagged MANUAL in the sidecar, never silently dropped. `control-scope.json`
+carries `sourceFilterSignals` + per-control declared scope/`mustReach` for
+gate 7.
 
 Conversion patterns to know (details in `refs/`): grids group by the
 attribute's KEY form and label with `Max([DESC])`; dim-keyed groupings get an
@@ -113,6 +134,9 @@ It re-executes the affected reports in MSTR, computes the clean warehouse
 groups via a throwaway Sigma probe workbook, pins each winner empirically, and
 the converter emits a deterministic SQL element reproducing the grid. Read
 `refs/ae-row-collapse.md` — this is the single biggest parity trap.
+(Fixture path: `fixtures/ae_winners.json` carries the winners pinned during
+the live validation, so the bundled fixture runs end-to-end without a
+Strategy One instance.)
 
 ## Phase 3 — POST the data model + read back ids (hard gate)
 
@@ -140,11 +164,15 @@ python3 scripts/convert.py ... --data-model-id <dataModelId> \
 curl -s -X POST "$SIGMA_BASE_URL/v2/workbooks/spec" \
   -H "Authorization: Bearer $SIGMA_API_TOKEN" -H "Content-Type: application/json" \
   -d @sigma_workbook_spec.json      # -> workbookId
+ruby scripts/put-layout.rb --workbook <workbookId> --layout layout.xml
 ```
 
-Read the workbook spec back the same way and confirm no `type: error` columns.
-(Workbook DELETE, if you need to retry, is `DELETE /v2/files/<id>` — not
-`/v2/workbooks/<id>`.)
+The layout PUT applies the banded layout (header band titled from the
+chapter/dossier name, controls band, full-width tables) the converter emitted
+— without it the workbook renders as Sigma's single-column stack and gates
+4/6 fail. Read the workbook spec back the same way and confirm no
+`type: error` columns. (Workbook DELETE, if you need to retry, is
+`DELETE /v2/files/<id>` — not `/v2/workbooks/<id>`.)
 
 ## Phase 5 — Verify parity (hard gate — the real proof)
 
@@ -162,7 +190,32 @@ Exports every workbook element to CSV via the Sigma export API and compares
 row-by-row (money/counts exact; ratio metrics rel 1e-6). **GREEN only when
 every report PASSes** — never on a 200 POST alone. Mind freshness: Sigma reads
 the live warehouse; if rows landed since the MSTR numbers were captured,
-re-capture before calling a delta a failure.
+re-capture before calling a delta a failure (reconcile the delta against the
+post-snapshot rows — the fixture's shared demo tables drift daily).
+
+It also writes the gate sentinels `parity-final.json` + `wb-ids.json` next to
+the report — the contract Phase 6 reads.
+
+## Phase 6 — Finalize (hard gate before declaring GREEN)
+
+```bash
+ruby scripts/assert-phase6-ran.rb --workdir <dir> --workbook-id <workbookId>
+```
+
+Seven independent gates (shared, vendored byte-identical): parity ran + PASS,
+no orphan workbooks, no live `type=error` columns, layout applied, tile
+census (skipped — this converter does not emit one), **layout lint** (gate 6:
+no raw-id titles, no orphan controls, no dead zones, no generic "Page N"
+header, no under-filled bands), and **control lint** (gate 7: no dead
+controls, no ghost targets, full declared reach, `control-scope.json`
+coverage — an interactive dossier converting to zero controls FAILS).
+Exit 0 = GREEN. Optional runtime proof after the lint passes:
+
+```bash
+ruby scripts/probe-controls.rb --workbook-id <workbookId> --check-out-of-closure
+# numeric selectors bind via a hidden "<Name> (Filter)" Text() column the
+# auto-picker can't see — pass --value, e.g. --value YearFilter=2024
+```
 
 ---
 
@@ -174,11 +227,15 @@ key columns; facts + token-parsed metrics incl. `Count<Distinct=True>` →
 `CountDistinct` and compound metrics; semantic display formats) · dossier
 chapters → workbook pages with grouped tables (KEY-form grouping + `Max(DESC)`
 labels + null-exclude filters) · AE row-collapse reports → deterministic
-pinned-winner SQL elements.
+pinned-winner SQL elements · **chapter filters + attribute selectors → Sigma
+controls** wired to the selectors' DECLARED viz targets (gate-7-verified +
+flip-tested) with banded layout.
 
 **Flagged / roadmap:** unmapped viz types → flagged table fallback
 (`refs/viz-type-mapping.md`); chart emission (kpi/bar/line/combo) extraction-
-validated but build roadmap; filters/selectors/page-by/prompts; the newer
+validated but build roadmap; metric-condition selectors / page-by / prompts
+(metric qualification selectors land in `control-scope.json` `unbound` as
+MANUAL); panel selectors (navigation — flagged MANUAL); the newer
 REST-authorable "Data Model" object incl. `securityFilters` (the future RLS
 port surface — until then, **ask the customer about security filters
 explicitly**; never assume an estate has none just because the classic extract
@@ -192,5 +249,9 @@ doesn't carry them).
 - Attribute-count metrics (`Count(Customer)`) → cartesian governance aborts —
   count a fact/key column instead; compound denominators need `ZeroToNull()`
   or Snowflake kills the report — `refs/design-notes.md`.
+- A list-control filter target on a DATETIME **or NUMERIC** column posts 200
+  and is SILENTLY STRIPPED (`filters: null` on readback) — dates → date-range
+  controls, numbers → hidden `Text()` cast column (`convert.py` handles both;
+  gate 7 catches escapes).
 - Python 3.13+ rejects some MSTR cloud CA certs (`VERIFY_X509_STRICT`) —
   `mstr.py` handles it.

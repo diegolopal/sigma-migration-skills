@@ -104,5 +104,9 @@ Duration: 3
 
 - Parity gate: `verify_parity.py` green — all rows, exact (ratios 1e-6).
 - Readback gate: no `type: "error"` columns in the DM or workbook spec.
-- Anything flagged (unmapped viz types, prompts, selectors) is listed in the
-  conversion notes for human follow-up — loud and explicit, never silent.
+- Finalize gate: `assert-phase6-ran.rb` — seven shared gates including the
+  layout lint and the control-wiring lint (dossier selectors/chapter filters
+  convert to Sigma controls wired to their declared viz targets).
+- Anything flagged (unmapped viz types, prompts, panel selectors) is listed
+  in the conversion notes and `control-scope.json` for human follow-up —
+  loud and explicit, never silent.

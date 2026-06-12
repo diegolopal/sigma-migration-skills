@@ -60,6 +60,15 @@ MSTR REST ──extract.py──> bundle.json ──convert.py──> sigma_dm_s
    source for customers who've adopted it; (b) `securityFilters` is the
    surface for an RLS detect→ask→port flow (same principles as the sibling
    converters: never silently dropped, never silently ported).
-3. **Filters, selectors targeting vizzes, page-by, prompts** — extracted
-   structurally (the assessment counts selectors/panel stacks) but not yet
-   converted.
+3. **Page-by, prompts, metric-condition selectors** — extracted structurally
+   but not converted (metric-condition selectors land in
+   `control-scope.json` `unbound` as MANUAL). Chapter filters + attribute
+   selectors ARE converted (2026-06-12): selectors' declared `targets` viz
+   lists drive the Sigma control filter wiring, `control-scope.json` is the
+   intended-scope contract, and gate 7 (`scripts/lib/control_lint.rb`) +
+   `scripts/probe-controls.rb` enforce/prove it. Verified strip gotcha: a
+   list-control filter target on a DATETIME or NUMERIC column posts 200 and
+   reads back `filters: null` — dates become date-range controls, numbers
+   bind through a hidden `Text()` cast column. (The numeric variant is NOT
+   yet in the shared `refs/control-parity.md` — candidate for the next
+   cross-plugin sync.)

@@ -12,6 +12,16 @@ Everything is derived programmatically from the bundle:
     metric object references + Distinct=True parameter -> CountDistinct).
   - Workbook pages: one page per dossier chapter; each chapter's dataset report's
     dataTemplate units give the grouping attributes + metric columns.
+  - Controls: dossier chapter filters + page/panel selectors -> Sigma controls.
+    MSTR selectors DECLARE their targets (targets: [{key}] viz refs) — the
+    strongest source-scope signal of any BI tool — so each control's filter
+    targets are wired to exactly the table elements built from the declared
+    vizzes (chapter filters reach every viz in their chapter). The intended
+    scope is emitted as control-scope.json (contract:
+    scripts/lib/control_lint.rb header + refs/control-parity.md).
+  - Layout: container-banded pages (header band titled from the chapter /
+    dossier name, controls band, full-width tables) -> layout.xml, applied
+    after the workbook POST via scripts/put-layout.rb.
 
 Usage:
   python3 convert.py --connection-id <uuid> --database CSA --folder-id <uuid> \
@@ -369,6 +379,96 @@ class Bundle:
             return {"kind": "number", "formatString": ",.0f"}
         return None
 
+    # ---- dossier filter signals (chapter filters + selectors)
+    @staticmethod
+    def _walk_selectors(node):
+        """Selectors on a dossier page/panel, panelStacks walked recursively
+        (panels nest further panelStacks — same walk as the assessment)."""
+        out = list(node.get("selectors") or [])
+        for ps in node.get("panelStacks") or []:
+            for p in ps.get("panels") or []:
+                out.extend(Bundle._walk_selectors(p))
+        return out
+
+    @staticmethod
+    def _walk_viz_keys(node):
+        out = [v["key"] for v in node.get("visualizations") or [] if v.get("key")]
+        for ps in node.get("panelStacks") or []:
+            for p in ps.get("panels") or []:
+                out.extend(Bundle._walk_viz_keys(p))
+        return out
+
+    def filter_signals(self):
+        """Every filter-like signal in the dossier, normalized:
+        {kind: chapter-filter|selector, chapter, name, selectorType,
+         source_id, targets: [viz keys] or None (None = whole chapter)}.
+        Panel selectors are navigation, not data filters — returned with
+        kind=panel-selector so the caller can flag them MANUAL without
+        counting them as filter signals."""
+        signals = []
+        for ch in self.dossier.get("chapters", []):
+            for f in ch.get("filters") or []:
+                signals.append({
+                    "kind": "chapter-filter", "chapter": ch["name"],
+                    "name": f.get("name"), "key": f.get("key"),
+                    "source_id": (f.get("source") or {}).get("id"),
+                    "targets": None,
+                })
+            for pg in ch.get("pages") or []:
+                for sel in self._walk_selectors(pg):
+                    st = sel.get("selectorType", "")
+                    kind = ("panel-selector" if st.startswith("panel_selector")
+                            else "selector")
+                    signals.append({
+                        "kind": kind, "chapter": ch["name"],
+                        "name": sel.get("name"), "key": sel.get("key"),
+                        "selectorType": st,
+                        "source_id": (sel.get("source") or {}).get("id"),
+                        "targets": [t["key"] for t in sel.get("targets") or []]
+                                   or None,
+                    })
+        return signals
+
+    def viz_chapter(self):
+        """visualization key -> chapter name (declared selector targets are
+        viz keys; the converter builds one table element per chapter)."""
+        out = {}
+        for ch in self.dossier.get("chapters", []):
+            for pg in ch.get("pages") or []:
+                for k in self._walk_viz_keys(pg):
+                    out[k] = ch["name"]
+        return out
+
+    def resolve_attribute(self, source_id=None, name=None):
+        if source_id and source_id in self.attributes:
+            return source_id
+        if name:
+            for aid, a in self.attributes.items():
+                if a["information"]["name"] == name:
+                    return aid
+        return None
+
+    def attribute_ctl_type(self, aid):
+        """'date' | 'number' | 'text' for the column the control binds (the
+        rendered DESC form, falling back to the key). Drives the control
+        shape: a Sigma `list` control whose filter target is a DATETIME *or
+        NUMERIC* column posts 200 but Sigma SILENTLY STRIPS the target
+        (datetime: cross-plugin estate gotcha in refs/control-parity.md;
+        numeric: live-verified on this converter 2026-06-12 — re-PUTting the
+        filter returns 200 and reads back `filters: null`). Dates become
+        date-range controls; numbers bind through a hidden Text() cast."""
+        a = self.attributes[aid]
+        forms = a["forms"]
+        key = next((f for f in forms if f.get("category") == "ID"), forms[0])
+        desc = next((f for f in forms if f.get("category") == "DESC"), None)
+        f = desc or key  # the control filters the rendered (DESC) column
+        dt = ((f.get("dataType") or {}).get("type") or "").lower()
+        if dt in ("date", "time", "timestamp") or f.get("displayFormat") == "date":
+            return "date"
+        if dt and not any(t in dt for t in ("char", "text", "string", "binary")):
+            return "number"
+        return "text"
+
     # ---- attribute key + display columns for a report unit
     def attribute_unit_cols(self, aid):
         """Returns (key_col, desc_col_or_None) physical column names.
@@ -390,6 +490,269 @@ class Bundle:
 # ------------------------------------------------------------------- emitters
 def ae_element_name(report_name):
     return f"{report_name} (MSTR AE)"
+
+
+def join_column_names(b: "Bundle"):
+    """Display names available on the consumable join element (mirrors
+    build_dm_spec's add_join_col walk)."""
+    names = {friendly(c) for c in b.table_columns(b.fact_tid)}
+    join_key_lookup = {(j["lookup_tid"], j["lookup_col"]) for j in b.derive_joins()}
+    for j in b.derive_joins():
+        for c in b.table_columns(j["lookup_tid"]):
+            if (j["lookup_tid"], c) in join_key_lookup:
+                continue
+            names.add(friendly(c))
+    return names
+
+
+# ---- dossier selectors / chapter filters -> Sigma controls ------------------
+def emit_controls(b: "Bundle", pages, page_ctx, warnings):
+    """Wire every dossier filter signal to Sigma controls (verified shapes:
+    refs/control-parity.md). MSTR selectors carry DECLARED viz targets, so
+    filter targets go to exactly the table elements built from those vizzes;
+    chapter filters cover every element on their chapter's page. Controls are
+    appended AFTER their target tables in spec order (POST requirement).
+    Returns (n_signals, scope_entries, unbound) for control-scope.json."""
+    viz_ch = b.viz_chapter()
+    scope_entries, unbound, used_ctl_ids = [], [], set()
+    n_signals = 0
+
+    def ctl_id_for(name):
+        base = re.sub(r"[^A-Za-z0-9]", "", str(name).title()) + "Filter"
+        cid, n = base, 2
+        while cid in used_ctl_ids:
+            cid, n = f"{base}{n}", n + 1
+        used_ctl_ids.add(cid)
+        return cid
+
+    def find_or_add_col(ctx, col, as_text=False):
+        """Column for `friendly(col)` on the target element — reuse the
+        grouping passthrough when present, else add a hidden passthrough.
+        as_text wraps the reference in Text() (always a fresh hidden column):
+        a list-control filter target on a NUMERIC column is silently stripped
+        by Sigma (200 on POST/PUT, `filters: null` on readback — live-
+        verified 2026-06-12), so numeric attribute selectors bind through a
+        text cast. Returns columnId or None when the element can't carry the
+        column."""
+        fr = friendly(col)
+        if fr not in ctx["available"]:
+            # the grouping column may still exist (e.g. AE alias) — check
+            if not any(c.get("formula") == ctx["ref"](fr)
+                       for c in ctx["element"]["columns"]):
+                return None
+        if as_text:
+            formula = f"Text({ctx['ref'](fr)})"
+            for c in ctx["element"]["columns"]:
+                if c.get("formula") == formula:
+                    return c["id"]
+            cid = f"ctlt-{slug(ctx['element']['id'])}-{slug(col)}"
+            ctx["element"]["columns"].append(
+                {"id": cid, "name": f"{fr} (Filter)", "formula": formula,
+                 "hidden": True})
+            return cid
+        formula = ctx["ref"](fr)
+        for c in ctx["element"]["columns"]:
+            if c.get("formula") == formula:
+                return c["id"]
+        cid = f"ctlc-{slug(ctx['element']['id'])}-{slug(col)}"
+        ctx["element"]["columns"].append(
+            {"id": cid, "name": fr, "formula": formula, "hidden": True})
+        return cid
+
+    for sig in b.filter_signals():
+        label = sig.get("name") or "Selector"
+        src = f"{sig['kind']} '{label}' (chapter '{sig['chapter']}')"
+        if sig["kind"] == "panel-selector":
+            # navigation between panels, not a data filter — flagged MANUAL,
+            # not counted as a filter signal
+            unbound.append({"sourceName": src, "status": "manual",
+                            "reason": "panel selector switches panels (navigation), "
+                                      "not a data filter — no Sigma control emitted; "
+                                      "panels land as separate elements"})
+            continue
+        n_signals += 1
+        st = sig.get("selectorType", "")
+        aid = b.resolve_attribute(sig.get("source_id"), sig.get("name"))
+        if aid is None:
+            reason = ("metric qualification selector — Sigma has no direct "
+                      "equivalent; port by hand (e.g. a number-range control "
+                      "wired to the metric's base column)"
+                      if "metric" in st else
+                      "source attribute not resolvable in the bundle — wire "
+                      "manually rather than guessing a column")
+            warnings.append(f"control {src}: {reason}")
+            unbound.append({"sourceName": src, "status": "unbound",
+                            "reason": reason})
+            continue
+
+        # targets: declared viz keys -> chapter tables; none -> own chapter
+        if sig["targets"]:
+            tgt_chapters, dropped = [], []
+            for k in sig["targets"]:
+                (tgt_chapters if k in viz_ch else dropped).append(
+                    viz_ch.get(k, k))
+            if dropped:
+                warnings.append(f"control {src}: declared target viz key(s) "
+                                f"{dropped} not found in the dossier — skipped")
+            tgt_chapters = list(dict.fromkeys(tgt_chapters))
+        else:
+            tgt_chapters = [sig["chapter"]]
+        ctxs = [page_ctx[c] for c in tgt_chapters if c in page_ctx]
+        if not ctxs:
+            warnings.append(f"control {src}: no target elements resolvable — "
+                            "not emitted")
+            unbound.append({"sourceName": src, "status": "unbound",
+                            "reason": "declared targets resolve to no built element"})
+            continue
+
+        key_col, desc_col = b.attribute_unit_cols(aid)
+        ctl_col = desc_col or key_col   # what MSTR renders in the selector
+        ctl_type = b.attribute_ctl_type(aid)
+        filters, wired = [], []
+        for ctx in ctxs:
+            cid = find_or_add_col(ctx, ctl_col, as_text=(ctl_type == "number"))
+            if cid is None:
+                warnings.append(
+                    f"control {src}: column {friendly(ctl_col)!r} not available "
+                    f"on element '{ctx['element']['name']}' — target skipped")
+                continue
+            filters.append({"source": {"kind": "table",
+                                       "elementId": ctx["element"]["id"]},
+                            "columnId": cid})
+            wired.append({"elementId": ctx["element"]["id"], "columnId": cid})
+        if not filters:
+            unbound.append({"sourceName": src, "status": "unbound",
+                            "reason": f"column {friendly(ctl_col)!r} not on any "
+                                      "target element — dropped loudly rather "
+                                      "than wired to a wrong column"})
+            continue
+
+        ctl = {"id": f"ctl-{slug(sig['chapter'])}-{slug(label)}",
+               "kind": "control", "controlId": ctl_id_for(label),
+               "name": label,
+               "filters": filters}
+        if ctl_type == "date":
+            # date-range needs no `source` but DOES require a flat `mode` —
+            # without it the POST fails with the misleading "Invalid kind:
+            # control" (live-verified cross-plugin; see control-parity.md)
+            ctl.update({"controlType": "date-range", "mode": "between",
+                        "includeNulls": "when-no-value-is-selected"})
+        else:
+            ctl.update({"controlType": "list", "mode": "include",
+                        "selectionMode": "multiple", "values": [],
+                        "source": {"kind": "source",
+                                   "source": filters[0]["source"],
+                                   "columnId": filters[0]["columnId"]}})
+
+        # the control lives on its own chapter's page, AFTER the tables
+        home = page_ctx[sig["chapter"]]["page"]
+        home["elements"].append(ctl)
+
+        # CONTRACT entry (lib/control_lint.rb header): declared targets that
+        # cover every queryable element on the control's page = scope "page";
+        # a narrower declared set = the scope allowlist (selector-scoped-by-
+        # design). mustReach always asserts the DECLARED targets.
+        target_ids = [c["element"]["id"] for c in ctxs]
+        page_tables = [e["id"] for e in home["elements"]
+                       if e.get("kind") == "table"]
+        full_page = set(page_tables) <= set(target_ids)
+        scope_entries.append({
+            "controlId": ctl["controlId"], "sourceName": src,
+            "status": "wired", "controlType": ctl["controlType"],
+            "scope": "page" if full_page else target_ids,
+            "mustReach": target_ids, "wired": wired,
+        })
+    return n_signals, scope_entries, unbound
+
+
+# ---- container-banded layout (layout-playbook.md shapes, shared across
+# plugins; python port of the qlik builder's banded_page) ---------------------
+HEADER_STYLE = {"backgroundColor": "#0F172A", "borderRadius": "round"}
+HEADER_ROWS = 3
+GENERIC_TITLE = re.compile(r"^(?:page|sheet|dashboard)\s*\d+$", re.I)
+
+
+def _le(eid, c0, c1, r0, r1):
+    return (f'  <LayoutElement elementId="{eid}" gridColumn="{c0} / {c1}" '
+            f'gridRow="{r0} / {r1}"/>')
+
+
+def _gc(cid, c0, c1, r0, r1, inner):
+    return (f'<GridContainer elementId="{cid}" type="grid" '
+            f'gridColumn="{c0} / {c1}" gridRow="{r0} / {r1}" '
+            f'gridTemplateColumns="repeat(24, 1fr)" '
+            f'gridTemplateRows="auto">\n{inner}\n</GridContainer>')
+
+
+def _cluster_bands(items):
+    bands = []
+    for it in sorted(items, key=lambda i: (i[3], i[1])):
+        if bands and it[3] < bands[-1]["r1"]:
+            bands[-1]["items"].append(it)
+            bands[-1]["r1"] = max(bands[-1]["r1"], it[4])
+        else:
+            bands.append({"r0": it[3], "r1": it[4], "items": [it]})
+    return [bb["items"] for bb in bands]
+
+
+def banded_page(page_id, items, title, id_prefix=None):
+    """Header band + one full-width GridContainer per row band, children
+    container-relative. Returns (page_xml, extra_spec_elements)."""
+    pfx = id_prefix or f"band-{page_id}"
+    extra, children = [], []
+    offset = 0
+    if title:
+        hdr, txt = f"{pfx}-hdr", f"{pfx}-hdrtext"
+        extra.append({"id": hdr, "kind": "container",
+                      "style": dict(HEADER_STYLE)})
+        extra.append({"id": txt, "kind": "text",
+                      "body": f'# <span style="color: #FFFFFF">{title}</span>'})
+        children.append(_gc(hdr, 1, 25, 1, 1 + HEADER_ROWS,
+                            _le(txt, 1, 25, 1, 1 + HEADER_ROWS)))
+        offset = HEADER_ROWS
+    if items:
+        offset += 1 - min(i[3] for i in items)
+    for n, band in enumerate(_cluster_bands(items), 1):
+        cid = f"{pfx}-{n}"
+        extra.append({"id": cid, "kind": "container"})
+        r0 = min(i[3] for i in band)
+        r1 = max(i[4] for i in band)
+        inner = "\n".join(_le(i[0], i[1], i[2], i[3] - r0 + 1, i[4] - r0 + 1)
+                          for i in band)
+        children.append(_gc(cid, 1, 25, r0 + offset, r1 + offset, inner))
+    body = "\n".join(children)
+    return (f'<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" '
+            f'gridTemplateRows="auto" id="{page_id}">\n{body}\n</Page>', extra)
+
+
+def build_layout(pages, dossier_name):
+    """Banded layout for every workbook page: controls band (split evenly),
+    then full-width tables. Header title = the chapter name (never a generic
+    "Page N" auto-name — those fall back to the dossier name). Mutates each
+    page's elements to add the container/header placeholders and returns the
+    layout XML for scripts/put-layout.rb."""
+    xml_pages = []
+    for pg in pages:
+        ctls = [e for e in pg["elements"] if e.get("kind") == "control"]
+        tables = [e for e in pg["elements"] if e.get("kind") != "control"]
+        items, row = [], 1
+        if ctls:
+            w = 24 // len(ctls)
+            for i, e in enumerate(ctls):
+                c0 = 1 + i * w
+                c1 = c0 + w if i < len(ctls) - 1 else 25
+                items.append([e["id"], c0, c1, row, row + 3])
+            row += 3
+        for e in tables:
+            items.append([e["id"], 1, 25, row, row + 12])
+            row += 12
+        title = pg["name"]
+        if not title or GENERIC_TITLE.match(title.strip()):
+            title = dossier_name
+        xml, extra = banded_page(pg["id"], items, title)
+        pg["elements"] = pg["elements"] + extra
+        xml_pages.append(xml)
+    return ('<?xml version="1.0" encoding="utf-8"?>\n' + "\n".join(xml_pages))
 
 
 def build_dm_spec(b: Bundle, args, inode_map, ae_winners=None):
@@ -600,6 +963,8 @@ def build_workbook_spec(b: Bundle, args, ae_winners=None, dm_element_ids=None):
 
     pages = []
     report_keys = {}  # report name -> ordered display column names of its keys
+    page_ctx = {}     # chapter name -> {page, element, ref, available}
+    avail_join = join_column_names(b)
     # chapter -> dataset/report mapping comes from the dossier datasets by name
     report_by_name = {r["information"]["name"]: (rid, r)
                       for rid, r in b.reports.items()}
@@ -610,9 +975,22 @@ def build_workbook_spec(b: Bundle, args, ae_winners=None, dm_element_ids=None):
         units = report["dataSource"]["dataTemplate"]["units"]
 
         if ae_winners and rname in ae_winners:
-            pages.append(build_ae_page(b, args, ch_name, report,
-                                       ae_winners[rname], dm_id, el_ref,
-                                       report_keys))
+            page = build_ae_page(b, args, ch_name, report,
+                                 ae_winners[rname], dm_id, el_ref,
+                                 report_keys)
+            pages.append(page)
+            ae_name = ae_element_name(rname)
+            cfg = ae_winners[rname]
+            _au, metric_units = b.report_attr_units(report)
+            ae_avail = ({friendly(c) for c in cfg["parentKeyCols"]}
+                        | {friendly(cfg["quirkKeyCol"]),
+                           friendly(cfg["quirkDescCol"])}
+                        | {el["name"] for el in metric_units})
+            page_ctx[ch_name] = {
+                "page": page, "element": page["elements"][0],
+                "ref": (lambda n, _e=ae_name: f"[{_e}/{n}]"),
+                "available": ae_avail,
+            }
             continue
 
         columns, group_ids, calc_ids, key_names = [], [], [], []
@@ -688,18 +1066,31 @@ def build_workbook_spec(b: Bundle, args, ae_winners=None, dm_element_ids=None):
         }
         if filters:
             element["filters"] = filters
-        pages.append({
+        page = {
             "id": f"pg-{slug(ch_name)}",
             "name": ch_name,
             "elements": [element],
-        })
+        }
+        pages.append(page)
+        page_ctx[ch_name] = {"page": page, "element": element,
+                             "ref": wb_ref, "available": avail_join}
+
+    # dossier selectors / chapter filters -> Sigma controls (+ sidecar data),
+    # then the banded layout (mutates pages: containers + header text)
+    warnings = []
+    n_signals, scope_entries, unbound = emit_controls(b, pages, page_ctx,
+                                                      warnings)
+    layout_xml = build_layout(pages, b.dossier.get("name", "MicroStrategy"))
+    control_scope = {"version": 1, "source": "microstrategy",
+                     "sourceFilterSignals": n_signals,
+                     "controls": scope_entries, "unbound": unbound}
 
     return {
         "name": args.wb_name,
         "folderId": args.folder_id,
         "schemaVersion": 1,
         "pages": pages,
-    }, report_keys
+    }, report_keys, layout_xml, control_scope, warnings
 
 
 def main():
@@ -724,6 +1115,11 @@ def main():
                     help="ae_winners.json from resolve_ae_winners.py")
     ap.add_argument("--out-dm", default="sigma_dm_spec.json")
     ap.add_argument("--out-wb", default="sigma_workbook_spec.json")
+    ap.add_argument("--out-layout", default="layout.xml",
+                    help="banded layout XML for scripts/put-layout.rb")
+    ap.add_argument("--control-scope-out", default="control-scope.json",
+                    help="intended-scope contract for the control lint "
+                         "(scripts/lib/control_lint.rb CONTRACT)")
     args = ap.parse_args()
 
     b = Bundle(json.load(open(args.bundle)))
@@ -736,10 +1132,13 @@ def main():
                       if args.dm_element_ids else None)
 
     dm = build_dm_spec(b, args, inode_map, ae_winners)
-    wb, report_keys = build_workbook_spec(b, args, ae_winners, dm_element_ids)
+    wb, report_keys, layout_xml, control_scope, warnings = \
+        build_workbook_spec(b, args, ae_winners, dm_element_ids)
     json.dump(dm, open(args.out_dm, "w"), indent=1)
     json.dump(wb, open(args.out_wb, "w"), indent=1)
     json.dump(report_keys, open("parity_keys.json", "w"), indent=1)
+    open(args.out_layout, "w").write(layout_xml)
+    json.dump(control_scope, open(args.control_scope_out, "w"), indent=1)
 
     print(f"fact table: {b.table_info[b.fact_tid]['name']}")
     for j in b.derive_joins():
@@ -748,7 +1147,17 @@ def main():
     for el in dm["pages"][0]["elements"]:
         for m in el.get("metrics", []):
             print(f"metric: {m['name']} = {m['formula']}")
-    print(f"wrote {args.out_dm}, {args.out_wb}")
+    for c in control_scope["controls"]:
+        print(f"control: {c['controlId']} ({c['controlType']}) -> "
+              f"{[w['elementId'] for w in c['wired']]} scope={c['scope']}")
+    for u in control_scope["unbound"]:
+        print(f"control UNBOUND [{u['status']}]: {u['sourceName']} — {u['reason']}")
+    for w in warnings:
+        print(f"WARN: {w}")
+    print(f"signals: {control_scope['sourceFilterSignals']} filter signal(s), "
+          f"{len(control_scope['controls'])} control(s) emitted")
+    print(f"wrote {args.out_dm}, {args.out_wb}, {args.out_layout}, "
+          f"{args.control_scope_out}")
 
 
 if __name__ == "__main__":
