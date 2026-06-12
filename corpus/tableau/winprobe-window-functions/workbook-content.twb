@@ -1,0 +1,2477 @@
+<?xml version='1.0' encoding='utf-8' ?>
+
+<workbook locale='en_US' original-version='18.1' source-build='2026.1.5 (20261.26.0512.1609)' version='18.1' xml:base='http://localhost:9100' xmlns:user='http://www.tableausoftware.com/xml/user'>
+  <preferences />
+  <datasources>
+    <datasource caption='ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)' inline='true' name='federated.1smknst1gebfuh1bkttg60wqkb7v' version='18.1'>
+      <repository-location id='ORDER_FACTCSA_ORDER_FACTNewVirtualConnection' path='datasources' revision='1.0' />
+      <connection class='federated'>
+        <named-connections>
+          <named-connection caption='New Virtual Connection' name='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja'>
+            <connection class='publishedConnection' resourceId='2f78ae9a-7d26-4522-8426-27dab352dee5' resourceName='New Virtual Connection' workgroup-auth-mode='as-is' />
+          </named-connection>
+        </named-connections>
+        <relation type='collection'>
+          <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='ORDER_FACT (CSA.ORDER_FACT)' table='[d2633ac0-4c26-4cc1-b9e7-486b42493ea6].[ORDER_FACT (CSA.ORDER_FACT)]' type='table'>
+            <columns>
+              <column datatype='date' date-parse-format='yyyyMMdd' name='c2ec6b07-897e-39ab-9422-aa895d35a627' />
+            </columns>
+          </relation>
+          <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='CUSTOMER_DIM (CSA.CUSTOMER_DIM)' table='[c91c16a6-66d6-4232-b140-bdf71935f323].[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]' type='table' />
+          <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='DATE_DIM (CSA.DATE_DIM)' table='[bb7644a7-6b36-4cb0-a1c6-458af4f885b1].[DATE_DIM (CSA.DATE_DIM)]' type='table' />
+          <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='DATE_DIM (CSA.DATE_DIM)1' table='[bb7644a7-6b36-4cb0-a1c6-458af4f885b1].[DATE_DIM (CSA.DATE_DIM)]' type='table' />
+          <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='DIM_TIME (CSA.DIM_TIME)' table='[0f4c9837-f78a-4c65-a760-bdbced23e4b5].[DIM_TIME (CSA.DIM_TIME)]' type='table' />
+          <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='PRODUCT_DIM (CSA.PRODUCT_DIM)' table='[cfcac7f3-6d9b-4d6b-9fde-d31c9de4e64b].[PRODUCT_DIM (CSA.PRODUCT_DIM)]' type='table' />
+          <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='PROMO_DIM (CSA.PROMO_DIM)' table='[b38e7d0d-b4c9-45a8-ac8c-e0b356eaa4db].[PROMO_DIM (CSA.PROMO_DIM)]' type='table' />
+          <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='STORE_DIM (CSA.STORE_DIM)' table='[c45e024e-a6ed-412b-a95e-40c2a62cfbbb].[STORE_DIM (CSA.STORE_DIM)]' type='table' />
+        </relation>
+        <cols>
+          <map key='[02d363e4-6ad8-36c8-be7c-213e9fd9b1da]' value='[STORE_DIM (CSA.STORE_DIM)].[02d363e4-6ad8-36c8-be7c-213e9fd9b1da]' />
+          <map key='[02ed8132-c35b-3e68-97ec-3179ca0cfbde]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[02ed8132-c35b-3e68-97ec-3179ca0cfbde]' />
+          <map key='[05199259-e51e-3219-ab41-855bf1fa72f8]' value='[ORDER_FACT (CSA.ORDER_FACT)].[05199259-e51e-3219-ab41-855bf1fa72f8]' />
+          <map key='[06db681d-04be-3a38-b324-85dc4732a408]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[06db681d-04be-3a38-b324-85dc4732a408]' />
+          <map key='[07380494-7e6a-384f-95ea-149101e228ec]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[07380494-7e6a-384f-95ea-149101e228ec]' />
+          <map key='[0907cf08-f465-399d-99ad-7fc433c24ee4]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[0907cf08-f465-399d-99ad-7fc433c24ee4]' />
+          <map key='[1646ce10-b14d-3a88-8706-54af1a627322 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[1646ce10-b14d-3a88-8706-54af1a627322]' />
+          <map key='[1646ce10-b14d-3a88-8706-54af1a627322]' value='[DATE_DIM (CSA.DATE_DIM)].[1646ce10-b14d-3a88-8706-54af1a627322]' />
+          <map key='[1754c0c0-d2fc-3f9e-8b2b-59381ad90547]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[1754c0c0-d2fc-3f9e-8b2b-59381ad90547]' />
+          <map key='[178e4b43-183b-3d7c-a283-261a93e61949]' value='[STORE_DIM (CSA.STORE_DIM)].[178e4b43-183b-3d7c-a283-261a93e61949]' />
+          <map key='[18d11fc0-60b2-3cb1-a84f-c7028d5519e1]' value='[ORDER_FACT (CSA.ORDER_FACT)].[18d11fc0-60b2-3cb1-a84f-c7028d5519e1]' />
+          <map key='[18d1508b-bdf7-306c-9860-d935349533a6]' value='[PROMO_DIM (CSA.PROMO_DIM)].[18d1508b-bdf7-306c-9860-d935349533a6]' />
+          <map key='[1a09b7a9-f21a-3b76-b5db-bab99d153703]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[1a09b7a9-f21a-3b76-b5db-bab99d153703]' />
+          <map key='[1cf2a336-56c9-3e33-912c-56ab8b2d21d2]' value='[PROMO_DIM (CSA.PROMO_DIM)].[1cf2a336-56c9-3e33-912c-56ab8b2d21d2]' />
+          <map key='[1f7d8d19-ca35-3c3c-ad76-8060d74cb3de]' value='[DIM_TIME (CSA.DIM_TIME)].[1f7d8d19-ca35-3c3c-ad76-8060d74cb3de]' />
+          <map key='[20ddaf1b-c665-351e-8aa6-f590dc70321a]' value='[ORDER_FACT (CSA.ORDER_FACT)].[20ddaf1b-c665-351e-8aa6-f590dc70321a]' />
+          <map key='[212126f3-1b5d-35da-9eb7-5eacca3039b6]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[212126f3-1b5d-35da-9eb7-5eacca3039b6]' />
+          <map key='[2272cdfe-0d86-39fa-9aaf-a1c2717168d6]' value='[DIM_TIME (CSA.DIM_TIME)].[2272cdfe-0d86-39fa-9aaf-a1c2717168d6]' />
+          <map key='[24b65633-ee2f-3d8b-bad4-90949fb46739]' value='[ORDER_FACT (CSA.ORDER_FACT)].[24b65633-ee2f-3d8b-bad4-90949fb46739]' />
+          <map key='[24f617c5-4842-39b3-819e-e95c1ed5d00d]' value='[ORDER_FACT (CSA.ORDER_FACT)].[24f617c5-4842-39b3-819e-e95c1ed5d00d]' />
+          <map key='[2684c172-27c9-372f-90a3-561009835cef]' value='[PROMO_DIM (CSA.PROMO_DIM)].[2684c172-27c9-372f-90a3-561009835cef]' />
+          <map key='[273f4937-8b99-37c1-ab49-68fa1efcd376 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[273f4937-8b99-37c1-ab49-68fa1efcd376]' />
+          <map key='[273f4937-8b99-37c1-ab49-68fa1efcd376]' value='[DATE_DIM (CSA.DATE_DIM)].[273f4937-8b99-37c1-ab49-68fa1efcd376]' />
+          <map key='[295bc6d6-2c28-389d-8ece-0c4794f0a874]' value='[ORDER_FACT (CSA.ORDER_FACT)].[295bc6d6-2c28-389d-8ece-0c4794f0a874]' />
+          <map key='[2d3b6f44-73da-39a5-b0b8-8591c587ddd4]' value='[ORDER_FACT (CSA.ORDER_FACT)].[2d3b6f44-73da-39a5-b0b8-8591c587ddd4]' />
+          <map key='[33b6c718-9b55-3dc0-9698-d1d57fac0f90]' value='[ORDER_FACT (CSA.ORDER_FACT)].[33b6c718-9b55-3dc0-9698-d1d57fac0f90]' />
+          <map key='[33bf543d-6f8e-389e-8f8c-be6ba15af94e]' value='[STORE_DIM (CSA.STORE_DIM)].[33bf543d-6f8e-389e-8f8c-be6ba15af94e]' />
+          <map key='[3476e381-7cad-32c2-a6c0-13e1f369befb]' value='[PROMO_DIM (CSA.PROMO_DIM)].[3476e381-7cad-32c2-a6c0-13e1f369befb]' />
+          <map key='[390a3f4b-c43c-34bb-ad41-041be5ea5ede]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[390a3f4b-c43c-34bb-ad41-041be5ea5ede]' />
+          <map key='[39639630-e588-3f75-9e4b-ae0390ba9ac6]' value='[STORE_DIM (CSA.STORE_DIM)].[39639630-e588-3f75-9e4b-ae0390ba9ac6]' />
+          <map key='[39d74b7d-8614-35be-a07d-80b26b3fdb93]' value='[ORDER_FACT (CSA.ORDER_FACT)].[39d74b7d-8614-35be-a07d-80b26b3fdb93]' />
+          <map key='[3c4fbb09-a975-3126-96e1-2f64fae9ff89]' value='[STORE_DIM (CSA.STORE_DIM)].[3c4fbb09-a975-3126-96e1-2f64fae9ff89]' />
+          <map key='[40d8ab1e-e1c3-3111-97fd-ed3854cf65a1]' value='[PROMO_DIM (CSA.PROMO_DIM)].[40d8ab1e-e1c3-3111-97fd-ed3854cf65a1]' />
+          <map key='[429c9adb-def4-3075-abd4-875141500a26]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[429c9adb-def4-3075-abd4-875141500a26]' />
+          <map key='[42c2b2c4-28d4-3603-aa46-d5b137e5bc4a]' value='[PROMO_DIM (CSA.PROMO_DIM)].[42c2b2c4-28d4-3603-aa46-d5b137e5bc4a]' />
+          <map key='[43c4a763-8031-30f0-947a-a12c74b1091b]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[43c4a763-8031-30f0-947a-a12c74b1091b]' />
+          <map key='[43e3db83-1f40-3110-93a0-5dcb260aed8b]' value='[ORDER_FACT (CSA.ORDER_FACT)].[43e3db83-1f40-3110-93a0-5dcb260aed8b]' />
+          <map key='[49c438c6-924a-38d9-91a5-1c9dca786152]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[49c438c6-924a-38d9-91a5-1c9dca786152]' />
+          <map key='[4a0d1220-9028-3776-ad47-793117ad3977]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[4a0d1220-9028-3776-ad47-793117ad3977]' />
+          <map key='[4a2e583e-763a-3da7-9c54-8e9b229371f4]' value='[STORE_DIM (CSA.STORE_DIM)].[4a2e583e-763a-3da7-9c54-8e9b229371f4]' />
+          <map key='[4e3aa1fc-4be6-3b50-9688-3552824310be]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[4e3aa1fc-4be6-3b50-9688-3552824310be]' />
+          <map key='[5643fecf-c7be-3d03-b3ca-8c573b8721a4]' value='[ORDER_FACT (CSA.ORDER_FACT)].[5643fecf-c7be-3d03-b3ca-8c573b8721a4]' />
+          <map key='[59d34ef1-b41d-3656-bf9f-ca61e028d942]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[59d34ef1-b41d-3656-bf9f-ca61e028d942]' />
+          <map key='[5a01056a-c8bc-37f2-b406-515546b256fa]' value='[STORE_DIM (CSA.STORE_DIM)].[5a01056a-c8bc-37f2-b406-515546b256fa]' />
+          <map key='[5c131071-a71a-3710-aaed-5cca82b7ffc7 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[5c131071-a71a-3710-aaed-5cca82b7ffc7]' />
+          <map key='[5c131071-a71a-3710-aaed-5cca82b7ffc7]' value='[DATE_DIM (CSA.DATE_DIM)].[5c131071-a71a-3710-aaed-5cca82b7ffc7]' />
+          <map key='[5d72e9ed-f5f6-308d-98bd-25ee28119093]' value='[STORE_DIM (CSA.STORE_DIM)].[5d72e9ed-f5f6-308d-98bd-25ee28119093]' />
+          <map key='[6247d8bc-9486-3d2b-b68b-039e9dd0b178 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[6247d8bc-9486-3d2b-b68b-039e9dd0b178]' />
+          <map key='[6247d8bc-9486-3d2b-b68b-039e9dd0b178]' value='[DATE_DIM (CSA.DATE_DIM)].[6247d8bc-9486-3d2b-b68b-039e9dd0b178]' />
+          <map key='[66792cbd-306e-3a9b-882a-f08cd73bb433 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[66792cbd-306e-3a9b-882a-f08cd73bb433]' />
+          <map key='[66792cbd-306e-3a9b-882a-f08cd73bb433]' value='[DATE_DIM (CSA.DATE_DIM)].[66792cbd-306e-3a9b-882a-f08cd73bb433]' />
+          <map key='[6834cf39-5edf-389e-aa8e-e69f7af3cf2b]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[6834cf39-5edf-389e-aa8e-e69f7af3cf2b]' />
+          <map key='[6b5048ab-89fc-3cc1-b65d-c406cc73a4bf]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[6b5048ab-89fc-3cc1-b65d-c406cc73a4bf]' />
+          <map key='[6bdc2304-9587-326d-a1db-d495c1f8d19f]' value='[STORE_DIM (CSA.STORE_DIM)].[6bdc2304-9587-326d-a1db-d495c1f8d19f]' />
+          <map key='[70b1f3b8-0025-335a-a492-59f4c0078f71 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[70b1f3b8-0025-335a-a492-59f4c0078f71]' />
+          <map key='[70b1f3b8-0025-335a-a492-59f4c0078f71]' value='[DATE_DIM (CSA.DATE_DIM)].[70b1f3b8-0025-335a-a492-59f4c0078f71]' />
+          <map key='[737611ae-3a14-349a-8fa8-d92dd0bb0432 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[737611ae-3a14-349a-8fa8-d92dd0bb0432]' />
+          <map key='[737611ae-3a14-349a-8fa8-d92dd0bb0432]' value='[DATE_DIM (CSA.DATE_DIM)].[737611ae-3a14-349a-8fa8-d92dd0bb0432]' />
+          <map key='[764e01f9-927a-3cc8-a5ba-a8cc975dd093]' value='[STORE_DIM (CSA.STORE_DIM)].[764e01f9-927a-3cc8-a5ba-a8cc975dd093]' />
+          <map key='[784cf965-f359-3faf-8fec-767bf50157a5]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[784cf965-f359-3faf-8fec-767bf50157a5]' />
+          <map key='[79080c1c-9823-351c-b842-00082c83e5d8]' value='[PROMO_DIM (CSA.PROMO_DIM)].[79080c1c-9823-351c-b842-00082c83e5d8]' />
+          <map key='[7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a]' value='[ORDER_FACT (CSA.ORDER_FACT)].[7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a]' />
+          <map key='[7baf5ea5-4d43-3b80-a75f-330bfd674dac]' value='[DIM_TIME (CSA.DIM_TIME)].[7baf5ea5-4d43-3b80-a75f-330bfd674dac]' />
+          <map key='[7cd59a3c-e5ee-3ea0-9b01-e85233a70fe5]' value='[STORE_DIM (CSA.STORE_DIM)].[7cd59a3c-e5ee-3ea0-9b01-e85233a70fe5]' />
+          <map key='[801a2d74-680d-3a22-b61d-c4cb64ea73b4]' value='[ORDER_FACT (CSA.ORDER_FACT)].[801a2d74-680d-3a22-b61d-c4cb64ea73b4]' />
+          <map key='[82b9c13a-15e6-3f95-87fb-424dcdb90d57 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[82b9c13a-15e6-3f95-87fb-424dcdb90d57]' />
+          <map key='[82b9c13a-15e6-3f95-87fb-424dcdb90d57]' value='[DATE_DIM (CSA.DATE_DIM)].[82b9c13a-15e6-3f95-87fb-424dcdb90d57]' />
+          <map key='[8375d049-c0a9-32b1-9ca4-3676af45628f]' value='[DIM_TIME (CSA.DIM_TIME)].[8375d049-c0a9-32b1-9ca4-3676af45628f]' />
+          <map key='[83dea93f-80e0-3aa5-af27-1597d58746cd]' value='[ORDER_FACT (CSA.ORDER_FACT)].[83dea93f-80e0-3aa5-af27-1597d58746cd]' />
+          <map key='[865369da-a163-39c6-91dd-e0a2cef6c93a (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[865369da-a163-39c6-91dd-e0a2cef6c93a]' />
+          <map key='[865369da-a163-39c6-91dd-e0a2cef6c93a]' value='[DATE_DIM (CSA.DATE_DIM)].[865369da-a163-39c6-91dd-e0a2cef6c93a]' />
+          <map key='[86f8f640-d414-3ed2-bdcb-86ec75f0ddc1]' value='[STORE_DIM (CSA.STORE_DIM)].[86f8f640-d414-3ed2-bdcb-86ec75f0ddc1]' />
+          <map key='[872765e8-7d8b-3159-8b16-86838a6b1b55]' value='[ORDER_FACT (CSA.ORDER_FACT)].[872765e8-7d8b-3159-8b16-86838a6b1b55]' />
+          <map key='[87bbf835-f5fe-318c-b4ef-3165c34b4a9f]' value='[STORE_DIM (CSA.STORE_DIM)].[87bbf835-f5fe-318c-b4ef-3165c34b4a9f]' />
+          <map key='[88f70cee-f193-388d-ae2d-17d32d39a019]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[88f70cee-f193-388d-ae2d-17d32d39a019]' />
+          <map key='[890f7e36-18af-3796-93d8-1f3fc0c8878f]' value='[ORDER_FACT (CSA.ORDER_FACT)].[890f7e36-18af-3796-93d8-1f3fc0c8878f]' />
+          <map key='[8b9a712f-2902-3f3c-a8cf-6b9122f64494]' value='[STORE_DIM (CSA.STORE_DIM)].[8b9a712f-2902-3f3c-a8cf-6b9122f64494]' />
+          <map key='[8fdb1236-128b-3f06-824b-27151b98976b]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[8fdb1236-128b-3f06-824b-27151b98976b]' />
+          <map key='[92ca1ae5-c60c-3af3-816e-bec6e6537369]' value='[STORE_DIM (CSA.STORE_DIM)].[92ca1ae5-c60c-3af3-816e-bec6e6537369]' />
+          <map key='[934012fa-382f-341a-8e44-797e16eeaf1e (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[934012fa-382f-341a-8e44-797e16eeaf1e]' />
+          <map key='[934012fa-382f-341a-8e44-797e16eeaf1e]' value='[DATE_DIM (CSA.DATE_DIM)].[934012fa-382f-341a-8e44-797e16eeaf1e]' />
+          <map key='[93eeac1d-9977-3b57-9e58-3995615e1b2b]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[93eeac1d-9977-3b57-9e58-3995615e1b2b]' />
+          <map key='[9522c5a5-cf68-34df-815a-11f7a6979a1b]' value='[ORDER_FACT (CSA.ORDER_FACT)].[9522c5a5-cf68-34df-815a-11f7a6979a1b]' />
+          <map key='[9866ad41-dec7-3208-95ef-e713c3c57d33]' value='[PROMO_DIM (CSA.PROMO_DIM)].[9866ad41-dec7-3208-95ef-e713c3c57d33]' />
+          <map key='[9bfd2122-0253-3760-97f2-367e059bbbe5]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[9bfd2122-0253-3760-97f2-367e059bbbe5]' />
+          <map key='[a4568eab-9446-3ad4-acff-910d08db6960]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[a4568eab-9446-3ad4-acff-910d08db6960]' />
+          <map key='[ad7e2d4d-4cdd-38b3-854c-3cef935f920a]' value='[PROMO_DIM (CSA.PROMO_DIM)].[ad7e2d4d-4cdd-38b3-854c-3cef935f920a]' />
+          <map key='[b2400248-b5ed-3566-98da-f747b94da623]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[b2400248-b5ed-3566-98da-f747b94da623]' />
+          <map key='[b278b946-2b0f-322f-88c0-3d5ef23599cc]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[b278b946-2b0f-322f-88c0-3d5ef23599cc]' />
+          <map key='[b3f0b0a7-407b-3a84-9f36-baf80cffd304]' value='[ORDER_FACT (CSA.ORDER_FACT)].[b3f0b0a7-407b-3a84-9f36-baf80cffd304]' />
+          <map key='[b518310f-4944-3006-8c48-6226c11efccb]' value='[ORDER_FACT (CSA.ORDER_FACT)].[b518310f-4944-3006-8c48-6226c11efccb]' />
+          <map key='[b564ffc4-06fb-322a-aa1c-700b749741c4]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[b564ffc4-06fb-322a-aa1c-700b749741c4]' />
+          <map key='[b6d33443-4dca-3c41-9a2c-fae7ef9750db]' value='[DIM_TIME (CSA.DIM_TIME)].[b6d33443-4dca-3c41-9a2c-fae7ef9750db]' />
+          <map key='[b715aefd-a4f7-301a-b3a1-9955ce8781f6]' value='[STORE_DIM (CSA.STORE_DIM)].[b715aefd-a4f7-301a-b3a1-9955ce8781f6]' />
+          <map key='[b886f556-dc7b-3939-96b6-f29e519b6f82]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[b886f556-dc7b-3939-96b6-f29e519b6f82]' />
+          <map key='[be3d0e94-a6fc-3f3d-98f1-79d94f013eb9]' value='[PROMO_DIM (CSA.PROMO_DIM)].[be3d0e94-a6fc-3f3d-98f1-79d94f013eb9]' />
+          <map key='[c2ec6b07-897e-39ab-9422-aa895d35a627]' value='[ORDER_FACT (CSA.ORDER_FACT)].[c2ec6b07-897e-39ab-9422-aa895d35a627]' />
+          <map key='[c7281f06-2028-3164-be3d-25be6d085a5e]' value='[ORDER_FACT (CSA.ORDER_FACT)].[c7281f06-2028-3164-be3d-25be6d085a5e]' />
+          <map key='[c8f5bd1d-0c0f-3a58-8464-94a181eefef9]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[c8f5bd1d-0c0f-3a58-8464-94a181eefef9]' />
+          <map key='[cb2a7691-0325-343c-abc8-281586a8a015]' value='[PROMO_DIM (CSA.PROMO_DIM)].[cb2a7691-0325-343c-abc8-281586a8a015]' />
+          <map key='[cf9f009e-0936-3e56-a5db-3cc3bdd23a86]' value='[STORE_DIM (CSA.STORE_DIM)].[cf9f009e-0936-3e56-a5db-3cc3bdd23a86]' />
+          <map key='[d196fe31-5ee4-3c57-9c10-a868ed52ad04]' value='[PROMO_DIM (CSA.PROMO_DIM)].[d196fe31-5ee4-3c57-9c10-a868ed52ad04]' />
+          <map key='[d256bccf-7746-3b46-83f7-77abb1e4c35e]' value='[DIM_TIME (CSA.DIM_TIME)].[d256bccf-7746-3b46-83f7-77abb1e4c35e]' />
+          <map key='[d3b60b0e-f547-3d2c-8602-5d077eb3151a]' value='[ORDER_FACT (CSA.ORDER_FACT)].[d3b60b0e-f547-3d2c-8602-5d077eb3151a]' />
+          <map key='[d6e079a5-4ccc-3733-9661-e188bc7c58f6 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[d6e079a5-4ccc-3733-9661-e188bc7c58f6]' />
+          <map key='[d6e079a5-4ccc-3733-9661-e188bc7c58f6]' value='[DATE_DIM (CSA.DATE_DIM)].[d6e079a5-4ccc-3733-9661-e188bc7c58f6]' />
+          <map key='[d6e9e979-3be5-3740-b133-2f9f8220dfaf]' value='[DIM_TIME (CSA.DIM_TIME)].[d6e9e979-3be5-3740-b133-2f9f8220dfaf]' />
+          <map key='[d73055c0-9ed1-347d-8f8e-05a48ce2c8a8]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[d73055c0-9ed1-347d-8f8e-05a48ce2c8a8]' />
+          <map key='[d885a468-9e01-3697-bc72-79ed0750cd3c]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[d885a468-9e01-3697-bc72-79ed0750cd3c]' />
+          <map key='[dbb68d30-ed2b-33a7-b863-8b74c7ffcec1]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[dbb68d30-ed2b-33a7-b863-8b74c7ffcec1]' />
+          <map key='[dc000dc6-f630-3ce2-af1d-978da1d8292c]' value='[ORDER_FACT (CSA.ORDER_FACT)].[dc000dc6-f630-3ce2-af1d-978da1d8292c]' />
+          <map key='[e079b853-5ef2-3371-a4b6-cc79a4f64f06]' value='[ORDER_FACT (CSA.ORDER_FACT)].[e079b853-5ef2-3371-a4b6-cc79a4f64f06]' />
+          <map key='[e446b3ea-cd95-3fcf-b63b-a0efbdf81bea]' value='[ORDER_FACT (CSA.ORDER_FACT)].[e446b3ea-cd95-3fcf-b63b-a0efbdf81bea]' />
+          <map key='[e5ab1927-144b-30a9-8616-ccf69721d066]' value='[PRODUCT_DIM (CSA.PRODUCT_DIM)].[e5ab1927-144b-30a9-8616-ccf69721d066]' />
+          <map key='[e9a1d9e9-e9b3-3c75-b608-537d3078ced4]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[e9a1d9e9-e9b3-3c75-b608-537d3078ced4]' />
+          <map key='[ebc4daa3-51ce-398f-b6a1-13fd122f9d41]' value='[ORDER_FACT (CSA.ORDER_FACT)].[ebc4daa3-51ce-398f-b6a1-13fd122f9d41]' />
+          <map key='[ec42dff0-1ae0-361d-a00e-88024bec395b]' value='[DIM_TIME (CSA.DIM_TIME)].[ec42dff0-1ae0-361d-a00e-88024bec395b]' />
+          <map key='[f1f4cdf6-c95f-35d1-96b6-6bace95969c4]' value='[CUSTOMER_DIM (CSA.CUSTOMER_DIM)].[f1f4cdf6-c95f-35d1-96b6-6bace95969c4]' />
+          <map key='[f39416df-a452-37ef-9bdb-25f1314f2d11 (DATE_DIM (CSA.DATE_DIM)1)]' value='[DATE_DIM (CSA.DATE_DIM)1].[f39416df-a452-37ef-9bdb-25f1314f2d11]' />
+          <map key='[f39416df-a452-37ef-9bdb-25f1314f2d11]' value='[DATE_DIM (CSA.DATE_DIM)].[f39416df-a452-37ef-9bdb-25f1314f2d11]' />
+          <map key='[f9173dd6-0818-3f29-8634-ad8cad04ef1d]' value='[ORDER_FACT (CSA.ORDER_FACT)].[f9173dd6-0818-3f29-8634-ad8cad04ef1d]' />
+          <map key='[fc06cac7-d000-364c-ae40-b33516f27653]' value='[ORDER_FACT (CSA.ORDER_FACT)].[fc06cac7-d000-364c-ae40-b33516f27653]' />
+        </cols>
+        <metadata-records>
+          <metadata-record class='column'>
+            <remote-name>7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a</remote-alias>
+            <ordinal>0</ordinal>
+            <caption>Order Id</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>872765e8-7d8b-3159-8b16-86838a6b1b55</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[872765e8-7d8b-3159-8b16-86838a6b1b55]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>872765e8-7d8b-3159-8b16-86838a6b1b55</remote-alias>
+            <ordinal>1</ordinal>
+            <caption>Order Line</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>b3f0b0a7-407b-3a84-9f36-baf80cffd304</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[b3f0b0a7-407b-3a84-9f36-baf80cffd304]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>b3f0b0a7-407b-3a84-9f36-baf80cffd304</remote-alias>
+            <ordinal>2</ordinal>
+            <caption>Customer Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>24b65633-ee2f-3d8b-bad4-90949fb46739</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[24b65633-ee2f-3d8b-bad4-90949fb46739]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>24b65633-ee2f-3d8b-bad4-90949fb46739</remote-alias>
+            <ordinal>3</ordinal>
+            <caption>Product Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>83dea93f-80e0-3aa5-af27-1597d58746cd</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[83dea93f-80e0-3aa5-af27-1597d58746cd]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>83dea93f-80e0-3aa5-af27-1597d58746cd</remote-alias>
+            <ordinal>4</ordinal>
+            <caption>Order Store Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>39d74b7d-8614-35be-a07d-80b26b3fdb93</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[39d74b7d-8614-35be-a07d-80b26b3fdb93]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>39d74b7d-8614-35be-a07d-80b26b3fdb93</remote-alias>
+            <ordinal>5</ordinal>
+            <caption>Ship Store Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>e446b3ea-cd95-3fcf-b63b-a0efbdf81bea</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[e446b3ea-cd95-3fcf-b63b-a0efbdf81bea]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>e446b3ea-cd95-3fcf-b63b-a0efbdf81bea</remote-alias>
+            <ordinal>6</ordinal>
+            <caption>Promo Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>c2ec6b07-897e-39ab-9422-aa895d35a627</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[c2ec6b07-897e-39ab-9422-aa895d35a627]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>c2ec6b07-897e-39ab-9422-aa895d35a627</remote-alias>
+            <ordinal>7</ordinal>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>ebc4daa3-51ce-398f-b6a1-13fd122f9d41</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[ebc4daa3-51ce-398f-b6a1-13fd122f9d41]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>ebc4daa3-51ce-398f-b6a1-13fd122f9d41</remote-alias>
+            <ordinal>8</ordinal>
+            <caption>Ship Date Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>b518310f-4944-3006-8c48-6226c11efccb</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[b518310f-4944-3006-8c48-6226c11efccb]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>b518310f-4944-3006-8c48-6226c11efccb</remote-alias>
+            <ordinal>9</ordinal>
+            <caption>Return Date Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>05199259-e51e-3219-ab41-855bf1fa72f8</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[05199259-e51e-3219-ab41-855bf1fa72f8]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>05199259-e51e-3219-ab41-855bf1fa72f8</remote-alias>
+            <ordinal>10</ordinal>
+            <caption>Order Channel</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>e079b853-5ef2-3371-a4b6-cc79a4f64f06</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[e079b853-5ef2-3371-a4b6-cc79a4f64f06]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>e079b853-5ef2-3371-a4b6-cc79a4f64f06</remote-alias>
+            <ordinal>11</ordinal>
+            <caption>Ship Method</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>fc06cac7-d000-364c-ae40-b33516f27653</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[fc06cac7-d000-364c-ae40-b33516f27653]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>fc06cac7-d000-364c-ae40-b33516f27653</remote-alias>
+            <ordinal>12</ordinal>
+            <caption>Order Status</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>890f7e36-18af-3796-93d8-1f3fc0c8878f</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[890f7e36-18af-3796-93d8-1f3fc0c8878f]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>890f7e36-18af-3796-93d8-1f3fc0c8878f</remote-alias>
+            <ordinal>13</ordinal>
+            <caption>Quantity Ordered</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>dc000dc6-f630-3ce2-af1d-978da1d8292c</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[dc000dc6-f630-3ce2-af1d-978da1d8292c]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>dc000dc6-f630-3ce2-af1d-978da1d8292c</remote-alias>
+            <ordinal>14</ordinal>
+            <caption>Quantity Returned</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>295bc6d6-2c28-389d-8ece-0c4794f0a874</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[295bc6d6-2c28-389d-8ece-0c4794f0a874]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>295bc6d6-2c28-389d-8ece-0c4794f0a874</remote-alias>
+            <ordinal>15</ordinal>
+            <caption>Unit Price</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>5643fecf-c7be-3d03-b3ca-8c573b8721a4</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[5643fecf-c7be-3d03-b3ca-8c573b8721a4]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>5643fecf-c7be-3d03-b3ca-8c573b8721a4</remote-alias>
+            <ordinal>16</ordinal>
+            <caption>Unit Cost</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>f9173dd6-0818-3f29-8634-ad8cad04ef1d</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[f9173dd6-0818-3f29-8634-ad8cad04ef1d]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>f9173dd6-0818-3f29-8634-ad8cad04ef1d</remote-alias>
+            <ordinal>17</ordinal>
+            <caption>Discount Amount</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>18d11fc0-60b2-3cb1-a84f-c7028d5519e1</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[18d11fc0-60b2-3cb1-a84f-c7028d5519e1]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>18d11fc0-60b2-3cb1-a84f-c7028d5519e1</remote-alias>
+            <ordinal>18</ordinal>
+            <caption>Shipping Amount</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>2d3b6f44-73da-39a5-b0b8-8591c587ddd4</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[2d3b6f44-73da-39a5-b0b8-8591c587ddd4]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>2d3b6f44-73da-39a5-b0b8-8591c587ddd4</remote-alias>
+            <ordinal>19</ordinal>
+            <caption>Tax Amount</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>33b6c718-9b55-3dc0-9698-d1d57fac0f90</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[33b6c718-9b55-3dc0-9698-d1d57fac0f90]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>33b6c718-9b55-3dc0-9698-d1d57fac0f90</remote-alias>
+            <ordinal>20</ordinal>
+            <caption>Gross Revenue</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>20ddaf1b-c665-351e-8aa6-f590dc70321a</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[20ddaf1b-c665-351e-8aa6-f590dc70321a]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>20ddaf1b-c665-351e-8aa6-f590dc70321a</remote-alias>
+            <ordinal>21</ordinal>
+            <caption>Net Revenue</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>801a2d74-680d-3a22-b61d-c4cb64ea73b4</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[801a2d74-680d-3a22-b61d-c4cb64ea73b4]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>801a2d74-680d-3a22-b61d-c4cb64ea73b4</remote-alias>
+            <ordinal>22</ordinal>
+            <caption>Gross Profit</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>24f617c5-4842-39b3-819e-e95c1ed5d00d</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[24f617c5-4842-39b3-819e-e95c1ed5d00d]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>24f617c5-4842-39b3-819e-e95c1ed5d00d</remote-alias>
+            <ordinal>23</ordinal>
+            <caption>Net Profit</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>9522c5a5-cf68-34df-815a-11f7a6979a1b</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[9522c5a5-cf68-34df-815a-11f7a6979a1b]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>9522c5a5-cf68-34df-815a-11f7a6979a1b</remote-alias>
+            <ordinal>24</ordinal>
+            <caption>Is First Order</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>d3b60b0e-f547-3d2c-8602-5d077eb3151a</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[d3b60b0e-f547-3d2c-8602-5d077eb3151a]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>d3b60b0e-f547-3d2c-8602-5d077eb3151a</remote-alias>
+            <ordinal>25</ordinal>
+            <caption>Is Returned</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>43e3db83-1f40-3110-93a0-5dcb260aed8b</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[43e3db83-1f40-3110-93a0-5dcb260aed8b]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>43e3db83-1f40-3110-93a0-5dcb260aed8b</remote-alias>
+            <ordinal>26</ordinal>
+            <caption>Is Cancelled</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>c7281f06-2028-3164-be3d-25be6d085a5e</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[c7281f06-2028-3164-be3d-25be6d085a5e]</local-name>
+            <parent-name>[ORDER_FACT (CSA.ORDER_FACT)]</parent-name>
+            <remote-alias>c7281f06-2028-3164-be3d-25be6d085a5e</remote-alias>
+            <ordinal>27</ordinal>
+            <caption>Days To Ship</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>390a3f4b-c43c-34bb-ad41-041be5ea5ede</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[390a3f4b-c43c-34bb-ad41-041be5ea5ede]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>390a3f4b-c43c-34bb-ad41-041be5ea5ede</remote-alias>
+            <caption>Customer Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>d885a468-9e01-3697-bc72-79ed0750cd3c</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[d885a468-9e01-3697-bc72-79ed0750cd3c]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>d885a468-9e01-3697-bc72-79ed0750cd3c</remote-alias>
+            <caption>Customer Id</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>429c9adb-def4-3075-abd4-875141500a26</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[429c9adb-def4-3075-abd4-875141500a26]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>429c9adb-def4-3075-abd4-875141500a26</remote-alias>
+            <caption>First Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>6b5048ab-89fc-3cc1-b65d-c406cc73a4bf</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[6b5048ab-89fc-3cc1-b65d-c406cc73a4bf]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>6b5048ab-89fc-3cc1-b65d-c406cc73a4bf</remote-alias>
+            <caption>Last Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>1754c0c0-d2fc-3f9e-8b2b-59381ad90547</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[1754c0c0-d2fc-3f9e-8b2b-59381ad90547]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>1754c0c0-d2fc-3f9e-8b2b-59381ad90547</remote-alias>
+            <caption>Email</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>59d34ef1-b41d-3656-bf9f-ca61e028d942</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[59d34ef1-b41d-3656-bf9f-ca61e028d942]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>59d34ef1-b41d-3656-bf9f-ca61e028d942</remote-alias>
+            <caption>Phone</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>93eeac1d-9977-3b57-9e58-3995615e1b2b</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[93eeac1d-9977-3b57-9e58-3995615e1b2b]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>93eeac1d-9977-3b57-9e58-3995615e1b2b</remote-alias>
+            <caption>City</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>4e3aa1fc-4be6-3b50-9688-3552824310be</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[4e3aa1fc-4be6-3b50-9688-3552824310be]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>4e3aa1fc-4be6-3b50-9688-3552824310be</remote-alias>
+            <caption>State</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>8fdb1236-128b-3f06-824b-27151b98976b</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[8fdb1236-128b-3f06-824b-27151b98976b]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>8fdb1236-128b-3f06-824b-27151b98976b</remote-alias>
+            <caption>Zip Code</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>d73055c0-9ed1-347d-8f8e-05a48ce2c8a8</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[d73055c0-9ed1-347d-8f8e-05a48ce2c8a8]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>d73055c0-9ed1-347d-8f8e-05a48ce2c8a8</remote-alias>
+            <caption>Region</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>49c438c6-924a-38d9-91a5-1c9dca786152</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[49c438c6-924a-38d9-91a5-1c9dca786152]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>49c438c6-924a-38d9-91a5-1c9dca786152</remote-alias>
+            <caption>Customer Segment</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>e9a1d9e9-e9b3-3c75-b608-537d3078ced4</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[e9a1d9e9-e9b3-3c75-b608-537d3078ced4]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>e9a1d9e9-e9b3-3c75-b608-537d3078ced4</remote-alias>
+            <caption>Loyalty Tier</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>dbb68d30-ed2b-33a7-b863-8b74c7ffcec1</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[dbb68d30-ed2b-33a7-b863-8b74c7ffcec1]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>dbb68d30-ed2b-33a7-b863-8b74c7ffcec1</remote-alias>
+            <caption>Acquisition Channel</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>43c4a763-8031-30f0-947a-a12c74b1091b</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[43c4a763-8031-30f0-947a-a12c74b1091b]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>43c4a763-8031-30f0-947a-a12c74b1091b</remote-alias>
+            <caption>First Order Date</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>b886f556-dc7b-3939-96b6-f29e519b6f82</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[b886f556-dc7b-3939-96b6-f29e519b6f82]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>b886f556-dc7b-3939-96b6-f29e519b6f82</remote-alias>
+            <caption>Is Active</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>07380494-7e6a-384f-95ea-149101e228ec</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[07380494-7e6a-384f-95ea-149101e228ec]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>07380494-7e6a-384f-95ea-149101e228ec</remote-alias>
+            <caption>Is Email Opt In</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>f1f4cdf6-c95f-35d1-96b6-6bace95969c4</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[f1f4cdf6-c95f-35d1-96b6-6bace95969c4]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>f1f4cdf6-c95f-35d1-96b6-6bace95969c4</remote-alias>
+            <caption>Lifetime Order Count</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>06db681d-04be-3a38-b324-85dc4732a408</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[06db681d-04be-3a38-b324-85dc4732a408]</local-name>
+            <parent-name>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]</parent-name>
+            <remote-alias>06db681d-04be-3a38-b324-85dc4732a408</remote-alias>
+            <caption>Lifetime Revenue</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>737611ae-3a14-349a-8fa8-d92dd0bb0432</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[737611ae-3a14-349a-8fa8-d92dd0bb0432]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>737611ae-3a14-349a-8fa8-d92dd0bb0432</remote-alias>
+            <caption>Date Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>934012fa-382f-341a-8e44-797e16eeaf1e</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[934012fa-382f-341a-8e44-797e16eeaf1e]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>934012fa-382f-341a-8e44-797e16eeaf1e</remote-alias>
+            <caption>Full Date</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>865369da-a163-39c6-91dd-e0a2cef6c93a</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[865369da-a163-39c6-91dd-e0a2cef6c93a]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>865369da-a163-39c6-91dd-e0a2cef6c93a</remote-alias>
+            <caption>Day Of Week</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>d6e079a5-4ccc-3733-9661-e188bc7c58f6</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[d6e079a5-4ccc-3733-9661-e188bc7c58f6]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>d6e079a5-4ccc-3733-9661-e188bc7c58f6</remote-alias>
+            <caption>Day Of Month</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>82b9c13a-15e6-3f95-87fb-424dcdb90d57</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[82b9c13a-15e6-3f95-87fb-424dcdb90d57]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>82b9c13a-15e6-3f95-87fb-424dcdb90d57</remote-alias>
+            <caption>Week Of Year</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>70b1f3b8-0025-335a-a492-59f4c0078f71</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[70b1f3b8-0025-335a-a492-59f4c0078f71]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>70b1f3b8-0025-335a-a492-59f4c0078f71</remote-alias>
+            <caption>Month Number</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>273f4937-8b99-37c1-ab49-68fa1efcd376</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[273f4937-8b99-37c1-ab49-68fa1efcd376]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>273f4937-8b99-37c1-ab49-68fa1efcd376</remote-alias>
+            <caption>Month Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>5c131071-a71a-3710-aaed-5cca82b7ffc7</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[5c131071-a71a-3710-aaed-5cca82b7ffc7]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>5c131071-a71a-3710-aaed-5cca82b7ffc7</remote-alias>
+            <caption>Quarter</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>f39416df-a452-37ef-9bdb-25f1314f2d11</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[f39416df-a452-37ef-9bdb-25f1314f2d11]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>f39416df-a452-37ef-9bdb-25f1314f2d11</remote-alias>
+            <caption>Year</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>66792cbd-306e-3a9b-882a-f08cd73bb433</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[66792cbd-306e-3a9b-882a-f08cd73bb433]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>66792cbd-306e-3a9b-882a-f08cd73bb433</remote-alias>
+            <caption>Is Weekend</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>6247d8bc-9486-3d2b-b68b-039e9dd0b178</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[6247d8bc-9486-3d2b-b68b-039e9dd0b178]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>6247d8bc-9486-3d2b-b68b-039e9dd0b178</remote-alias>
+            <caption>Is Holiday</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>1646ce10-b14d-3a88-8706-54af1a627322</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[1646ce10-b14d-3a88-8706-54af1a627322]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)]</parent-name>
+            <remote-alias>1646ce10-b14d-3a88-8706-54af1a627322</remote-alias>
+            <caption>Fiscal Period</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>737611ae-3a14-349a-8fa8-d92dd0bb0432</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[737611ae-3a14-349a-8fa8-d92dd0bb0432 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>737611ae-3a14-349a-8fa8-d92dd0bb0432</remote-alias>
+            <caption>Date Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>934012fa-382f-341a-8e44-797e16eeaf1e</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[934012fa-382f-341a-8e44-797e16eeaf1e (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>934012fa-382f-341a-8e44-797e16eeaf1e</remote-alias>
+            <caption>Full Date</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>865369da-a163-39c6-91dd-e0a2cef6c93a</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[865369da-a163-39c6-91dd-e0a2cef6c93a (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>865369da-a163-39c6-91dd-e0a2cef6c93a</remote-alias>
+            <caption>Day Of Week</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>d6e079a5-4ccc-3733-9661-e188bc7c58f6</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[d6e079a5-4ccc-3733-9661-e188bc7c58f6 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>d6e079a5-4ccc-3733-9661-e188bc7c58f6</remote-alias>
+            <caption>Day Of Month</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>82b9c13a-15e6-3f95-87fb-424dcdb90d57</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[82b9c13a-15e6-3f95-87fb-424dcdb90d57 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>82b9c13a-15e6-3f95-87fb-424dcdb90d57</remote-alias>
+            <caption>Week Of Year</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>70b1f3b8-0025-335a-a492-59f4c0078f71</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[70b1f3b8-0025-335a-a492-59f4c0078f71 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>70b1f3b8-0025-335a-a492-59f4c0078f71</remote-alias>
+            <caption>Month Number</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>273f4937-8b99-37c1-ab49-68fa1efcd376</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[273f4937-8b99-37c1-ab49-68fa1efcd376 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>273f4937-8b99-37c1-ab49-68fa1efcd376</remote-alias>
+            <caption>Month Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>5c131071-a71a-3710-aaed-5cca82b7ffc7</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[5c131071-a71a-3710-aaed-5cca82b7ffc7 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>5c131071-a71a-3710-aaed-5cca82b7ffc7</remote-alias>
+            <caption>Quarter</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>f39416df-a452-37ef-9bdb-25f1314f2d11</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[f39416df-a452-37ef-9bdb-25f1314f2d11 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>f39416df-a452-37ef-9bdb-25f1314f2d11</remote-alias>
+            <caption>Year</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>66792cbd-306e-3a9b-882a-f08cd73bb433</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[66792cbd-306e-3a9b-882a-f08cd73bb433 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>66792cbd-306e-3a9b-882a-f08cd73bb433</remote-alias>
+            <caption>Is Weekend</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>6247d8bc-9486-3d2b-b68b-039e9dd0b178</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[6247d8bc-9486-3d2b-b68b-039e9dd0b178 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>6247d8bc-9486-3d2b-b68b-039e9dd0b178</remote-alias>
+            <caption>Is Holiday</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>1646ce10-b14d-3a88-8706-54af1a627322</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[1646ce10-b14d-3a88-8706-54af1a627322 (DATE_DIM (CSA.DATE_DIM)1)]</local-name>
+            <parent-name>[DATE_DIM (CSA.DATE_DIM)1]</parent-name>
+            <remote-alias>1646ce10-b14d-3a88-8706-54af1a627322</remote-alias>
+            <caption>Fiscal Period</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>d6e9e979-3be5-3740-b133-2f9f8220dfaf</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[d6e9e979-3be5-3740-b133-2f9f8220dfaf]</local-name>
+            <parent-name>[DIM_TIME (CSA.DIM_TIME)]</parent-name>
+            <remote-alias>d6e9e979-3be5-3740-b133-2f9f8220dfaf</remote-alias>
+            <caption>Date Key</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>b6d33443-4dca-3c41-9a2c-fae7ef9750db</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[b6d33443-4dca-3c41-9a2c-fae7ef9750db]</local-name>
+            <parent-name>[DIM_TIME (CSA.DIM_TIME)]</parent-name>
+            <remote-alias>b6d33443-4dca-3c41-9a2c-fae7ef9750db</remote-alias>
+            <caption>Year</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>8375d049-c0a9-32b1-9ca4-3676af45628f</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[8375d049-c0a9-32b1-9ca4-3676af45628f]</local-name>
+            <parent-name>[DIM_TIME (CSA.DIM_TIME)]</parent-name>
+            <remote-alias>8375d049-c0a9-32b1-9ca4-3676af45628f</remote-alias>
+            <caption>Quarter</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>1f7d8d19-ca35-3c3c-ad76-8060d74cb3de</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[1f7d8d19-ca35-3c3c-ad76-8060d74cb3de]</local-name>
+            <parent-name>[DIM_TIME (CSA.DIM_TIME)]</parent-name>
+            <remote-alias>1f7d8d19-ca35-3c3c-ad76-8060d74cb3de</remote-alias>
+            <caption>Quarter Label</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>2272cdfe-0d86-39fa-9aaf-a1c2717168d6</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[2272cdfe-0d86-39fa-9aaf-a1c2717168d6]</local-name>
+            <parent-name>[DIM_TIME (CSA.DIM_TIME)]</parent-name>
+            <remote-alias>2272cdfe-0d86-39fa-9aaf-a1c2717168d6</remote-alias>
+            <caption>Month</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>ec42dff0-1ae0-361d-a00e-88024bec395b</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[ec42dff0-1ae0-361d-a00e-88024bec395b]</local-name>
+            <parent-name>[DIM_TIME (CSA.DIM_TIME)]</parent-name>
+            <remote-alias>ec42dff0-1ae0-361d-a00e-88024bec395b</remote-alias>
+            <caption>Month Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>d256bccf-7746-3b46-83f7-77abb1e4c35e</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[d256bccf-7746-3b46-83f7-77abb1e4c35e]</local-name>
+            <parent-name>[DIM_TIME (CSA.DIM_TIME)]</parent-name>
+            <remote-alias>d256bccf-7746-3b46-83f7-77abb1e4c35e</remote-alias>
+            <caption>Fiscal Year</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>7baf5ea5-4d43-3b80-a75f-330bfd674dac</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[7baf5ea5-4d43-3b80-a75f-330bfd674dac]</local-name>
+            <parent-name>[DIM_TIME (CSA.DIM_TIME)]</parent-name>
+            <remote-alias>7baf5ea5-4d43-3b80-a75f-330bfd674dac</remote-alias>
+            <caption>Fiscal Quarter</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>e5ab1927-144b-30a9-8616-ccf69721d066</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[e5ab1927-144b-30a9-8616-ccf69721d066]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>e5ab1927-144b-30a9-8616-ccf69721d066</remote-alias>
+            <caption>Product Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>0907cf08-f465-399d-99ad-7fc433c24ee4</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[0907cf08-f465-399d-99ad-7fc433c24ee4]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>0907cf08-f465-399d-99ad-7fc433c24ee4</remote-alias>
+            <caption>Product Id</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>784cf965-f359-3faf-8fec-767bf50157a5</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[784cf965-f359-3faf-8fec-767bf50157a5]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>784cf965-f359-3faf-8fec-767bf50157a5</remote-alias>
+            <caption>Product Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>c8f5bd1d-0c0f-3a58-8464-94a181eefef9</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[c8f5bd1d-0c0f-3a58-8464-94a181eefef9]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>c8f5bd1d-0c0f-3a58-8464-94a181eefef9</remote-alias>
+            <caption>Category</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>b2400248-b5ed-3566-98da-f747b94da623</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[b2400248-b5ed-3566-98da-f747b94da623]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>b2400248-b5ed-3566-98da-f747b94da623</remote-alias>
+            <caption>Subcategory</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>b278b946-2b0f-322f-88c0-3d5ef23599cc</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[b278b946-2b0f-322f-88c0-3d5ef23599cc]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>b278b946-2b0f-322f-88c0-3d5ef23599cc</remote-alias>
+            <caption>Brand</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>b564ffc4-06fb-322a-aa1c-700b749741c4</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[b564ffc4-06fb-322a-aa1c-700b749741c4]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>b564ffc4-06fb-322a-aa1c-700b749741c4</remote-alias>
+            <caption>Unit Cost</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>212126f3-1b5d-35da-9eb7-5eacca3039b6</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[212126f3-1b5d-35da-9eb7-5eacca3039b6]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>212126f3-1b5d-35da-9eb7-5eacca3039b6</remote-alias>
+            <caption>Unit Price</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>9bfd2122-0253-3760-97f2-367e059bbbe5</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[9bfd2122-0253-3760-97f2-367e059bbbe5]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>9bfd2122-0253-3760-97f2-367e059bbbe5</remote-alias>
+            <caption>Weight Lbs</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>6834cf39-5edf-389e-aa8e-e69f7af3cf2b</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[6834cf39-5edf-389e-aa8e-e69f7af3cf2b]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>6834cf39-5edf-389e-aa8e-e69f7af3cf2b</remote-alias>
+            <caption>Is Active</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>88f70cee-f193-388d-ae2d-17d32d39a019</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[88f70cee-f193-388d-ae2d-17d32d39a019]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>88f70cee-f193-388d-ae2d-17d32d39a019</remote-alias>
+            <caption>Is Private Label</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>4a0d1220-9028-3776-ad47-793117ad3977</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[4a0d1220-9028-3776-ad47-793117ad3977]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>4a0d1220-9028-3776-ad47-793117ad3977</remote-alias>
+            <caption>Is Seasonal</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>a4568eab-9446-3ad4-acff-910d08db6960</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[a4568eab-9446-3ad4-acff-910d08db6960]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>a4568eab-9446-3ad4-acff-910d08db6960</remote-alias>
+            <caption>Launch Date</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>1a09b7a9-f21a-3b76-b5db-bab99d153703</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[1a09b7a9-f21a-3b76-b5db-bab99d153703]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>1a09b7a9-f21a-3b76-b5db-bab99d153703</remote-alias>
+            <caption>Discontinue Date</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>02ed8132-c35b-3e68-97ec-3179ca0cfbde</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[02ed8132-c35b-3e68-97ec-3179ca0cfbde]</local-name>
+            <parent-name>[PRODUCT_DIM (CSA.PRODUCT_DIM)]</parent-name>
+            <remote-alias>02ed8132-c35b-3e68-97ec-3179ca0cfbde</remote-alias>
+            <caption>Product Key/Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>40d8ab1e-e1c3-3111-97fd-ed3854cf65a1</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[40d8ab1e-e1c3-3111-97fd-ed3854cf65a1]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>40d8ab1e-e1c3-3111-97fd-ed3854cf65a1</remote-alias>
+            <caption>Promo Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>cb2a7691-0325-343c-abc8-281586a8a015</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[cb2a7691-0325-343c-abc8-281586a8a015]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>cb2a7691-0325-343c-abc8-281586a8a015</remote-alias>
+            <caption>Promo Id</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>be3d0e94-a6fc-3f3d-98f1-79d94f013eb9</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[be3d0e94-a6fc-3f3d-98f1-79d94f013eb9]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>be3d0e94-a6fc-3f3d-98f1-79d94f013eb9</remote-alias>
+            <caption>Promo Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>d196fe31-5ee4-3c57-9c10-a868ed52ad04</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[d196fe31-5ee4-3c57-9c10-a868ed52ad04]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>d196fe31-5ee4-3c57-9c10-a868ed52ad04</remote-alias>
+            <caption>Promo Type</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>79080c1c-9823-351c-b842-00082c83e5d8</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[79080c1c-9823-351c-b842-00082c83e5d8]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>79080c1c-9823-351c-b842-00082c83e5d8</remote-alias>
+            <caption>Channel</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>42c2b2c4-28d4-3603-aa46-d5b137e5bc4a</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[42c2b2c4-28d4-3603-aa46-d5b137e5bc4a]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>42c2b2c4-28d4-3603-aa46-d5b137e5bc4a</remote-alias>
+            <caption>Discount Pct</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>9866ad41-dec7-3208-95ef-e713c3c57d33</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[9866ad41-dec7-3208-95ef-e713c3c57d33]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>9866ad41-dec7-3208-95ef-e713c3c57d33</remote-alias>
+            <caption>Start Date</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>3476e381-7cad-32c2-a6c0-13e1f369befb</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[3476e381-7cad-32c2-a6c0-13e1f369befb]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>3476e381-7cad-32c2-a6c0-13e1f369befb</remote-alias>
+            <caption>End Date</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>18d1508b-bdf7-306c-9860-d935349533a6</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[18d1508b-bdf7-306c-9860-d935349533a6]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>18d1508b-bdf7-306c-9860-d935349533a6</remote-alias>
+            <caption>Min Order Amount</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>ad7e2d4d-4cdd-38b3-854c-3cef935f920a</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[ad7e2d4d-4cdd-38b3-854c-3cef935f920a]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>ad7e2d4d-4cdd-38b3-854c-3cef935f920a</remote-alias>
+            <caption>Is Stackable</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>2684c172-27c9-372f-90a3-561009835cef</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[2684c172-27c9-372f-90a3-561009835cef]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>2684c172-27c9-372f-90a3-561009835cef</remote-alias>
+            <caption>Target Segment</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>1cf2a336-56c9-3e33-912c-56ab8b2d21d2</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[1cf2a336-56c9-3e33-912c-56ab8b2d21d2]</local-name>
+            <parent-name>[PROMO_DIM (CSA.PROMO_DIM)]</parent-name>
+            <remote-alias>1cf2a336-56c9-3e33-912c-56ab8b2d21d2</remote-alias>
+            <caption>Promo Cost</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>5a01056a-c8bc-37f2-b406-515546b256fa</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[5a01056a-c8bc-37f2-b406-515546b256fa]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>5a01056a-c8bc-37f2-b406-515546b256fa</remote-alias>
+            <caption>Store Key</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>178e4b43-183b-3d7c-a283-261a93e61949</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[178e4b43-183b-3d7c-a283-261a93e61949]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>178e4b43-183b-3d7c-a283-261a93e61949</remote-alias>
+            <caption>Store Id</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>3c4fbb09-a975-3126-96e1-2f64fae9ff89</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[3c4fbb09-a975-3126-96e1-2f64fae9ff89]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>3c4fbb09-a975-3126-96e1-2f64fae9ff89</remote-alias>
+            <caption>Store Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>8b9a712f-2902-3f3c-a8cf-6b9122f64494</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[8b9a712f-2902-3f3c-a8cf-6b9122f64494]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>8b9a712f-2902-3f3c-a8cf-6b9122f64494</remote-alias>
+            <caption>Store Type</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>4a2e583e-763a-3da7-9c54-8e9b229371f4</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[4a2e583e-763a-3da7-9c54-8e9b229371f4]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>4a2e583e-763a-3da7-9c54-8e9b229371f4</remote-alias>
+            <caption>City</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>33bf543d-6f8e-389e-8f8c-be6ba15af94e</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[33bf543d-6f8e-389e-8f8c-be6ba15af94e]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>33bf543d-6f8e-389e-8f8c-be6ba15af94e</remote-alias>
+            <caption>State</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>7cd59a3c-e5ee-3ea0-9b01-e85233a70fe5</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[7cd59a3c-e5ee-3ea0-9b01-e85233a70fe5]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>7cd59a3c-e5ee-3ea0-9b01-e85233a70fe5</remote-alias>
+            <caption>Region</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>87bbf835-f5fe-318c-b4ef-3165c34b4a9f</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[87bbf835-f5fe-318c-b4ef-3165c34b4a9f]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>87bbf835-f5fe-318c-b4ef-3165c34b4a9f</remote-alias>
+            <caption>District</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>6bdc2304-9587-326d-a1db-d495c1f8d19f</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[6bdc2304-9587-326d-a1db-d495c1f8d19f]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>6bdc2304-9587-326d-a1db-d495c1f8d19f</remote-alias>
+            <caption>Square Footage</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>b715aefd-a4f7-301a-b3a1-9955ce8781f6</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[b715aefd-a4f7-301a-b3a1-9955ce8781f6]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>b715aefd-a4f7-301a-b3a1-9955ce8781f6</remote-alias>
+            <caption>Open Date</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>764e01f9-927a-3cc8-a5ba-a8cc975dd093</remote-name>
+            <remote-type>7</remote-type>
+            <local-name>[764e01f9-927a-3cc8-a5ba-a8cc975dd093]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>764e01f9-927a-3cc8-a5ba-a8cc975dd093</remote-alias>
+            <caption>Close Date</caption>
+            <local-type>date</local-type>
+            <aggregation>Year</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>92ca1ae5-c60c-3af3-816e-bec6e6537369</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[92ca1ae5-c60c-3af3-816e-bec6e6537369]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>92ca1ae5-c60c-3af3-816e-bec6e6537369</remote-alias>
+            <caption>Is Active</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>02d363e4-6ad8-36c8-be7c-213e9fd9b1da</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[02d363e4-6ad8-36c8-be7c-213e9fd9b1da]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>02d363e4-6ad8-36c8-be7c-213e9fd9b1da</remote-alias>
+            <caption>Has Cafe</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>5d72e9ed-f5f6-308d-98bd-25ee28119093</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[5d72e9ed-f5f6-308d-98bd-25ee28119093]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>5d72e9ed-f5f6-308d-98bd-25ee28119093</remote-alias>
+            <caption>Has Curbside</caption>
+            <local-type>integer</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>cf9f009e-0936-3e56-a5db-3cc3bdd23a86</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[cf9f009e-0936-3e56-a5db-3cc3bdd23a86]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>cf9f009e-0936-3e56-a5db-3cc3bdd23a86</remote-alias>
+            <caption>Manager Name</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>86f8f640-d414-3ed2-bdcb-86ec75f0ddc1</remote-name>
+            <remote-type>129</remote-type>
+            <local-name>[86f8f640-d414-3ed2-bdcb-86ec75f0ddc1]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>86f8f640-d414-3ed2-bdcb-86ec75f0ddc1</remote-alias>
+            <caption>Store Phone</caption>
+            <local-type>string</local-type>
+            <aggregation>Count</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='binary' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+          <metadata-record class='column'>
+            <remote-name>39639630-e588-3f75-9e4b-ae0390ba9ac6</remote-name>
+            <remote-type>131</remote-type>
+            <local-name>[39639630-e588-3f75-9e4b-ae0390ba9ac6]</local-name>
+            <parent-name>[STORE_DIM (CSA.STORE_DIM)]</parent-name>
+            <remote-alias>39639630-e588-3f75-9e4b-ae0390ba9ac6</remote-alias>
+            <caption>Annual Lease Cost</caption>
+            <local-type>real</local-type>
+            <aggregation>Sum</aggregation>
+            <contains-null>true</contains-null>
+            <collation flag='0' name='LROOT' />
+            <object-id>[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]</object-id>
+          </metadata-record>
+        </metadata-records>
+      </connection>
+      <aliases enabled='yes' />
+      <column caption='Has Cafe' datatype='integer' name='[02d363e4-6ad8-36c8-be7c-213e9fd9b1da]' role='measure' type='quantitative' />
+      <column caption='Product Key/Name' datatype='string' name='[02ed8132-c35b-3e68-97ec-3179ca0cfbde]' role='dimension' type='nominal' />
+      <column caption='Order Channel' datatype='string' name='[05199259-e51e-3219-ab41-855bf1fa72f8]' role='dimension' type='nominal' />
+      <column caption='Lifetime Revenue' datatype='real' name='[06db681d-04be-3a38-b324-85dc4732a408]' role='measure' type='quantitative' />
+      <column caption='Is Email Opt In' datatype='integer' name='[07380494-7e6a-384f-95ea-149101e228ec]' role='measure' type='quantitative' />
+      <column caption='Product Id' datatype='string' name='[0907cf08-f465-399d-99ad-7fc433c24ee4]' role='dimension' type='nominal' />
+      <column caption='Fiscal Period' datatype='string' name='[1646ce10-b14d-3a88-8706-54af1a627322 (DATE_DIM (CSA.DATE_DIM)1)]' role='dimension' type='nominal' />
+      <column caption='Fiscal Period' datatype='string' name='[1646ce10-b14d-3a88-8706-54af1a627322]' role='dimension' type='nominal' />
+      <column caption='Email' datatype='string' name='[1754c0c0-d2fc-3f9e-8b2b-59381ad90547]' role='dimension' type='nominal' />
+      <column caption='Store Id' datatype='string' name='[178e4b43-183b-3d7c-a283-261a93e61949]' role='dimension' type='nominal' />
+      <column caption='Shipping Amount' datatype='real' name='[18d11fc0-60b2-3cb1-a84f-c7028d5519e1]' role='measure' type='quantitative' />
+      <column caption='Min Order Amount' datatype='real' name='[18d1508b-bdf7-306c-9860-d935349533a6]' role='measure' type='quantitative' />
+      <column caption='Discontinue Date' datatype='date' name='[1a09b7a9-f21a-3b76-b5db-bab99d153703]' role='dimension' type='ordinal' />
+      <column caption='Promo Cost' datatype='real' name='[1cf2a336-56c9-3e33-912c-56ab8b2d21d2]' role='measure' type='quantitative' />
+      <column caption='Quarter Label' datatype='string' name='[1f7d8d19-ca35-3c3c-ad76-8060d74cb3de]' role='dimension' type='nominal' />
+      <column caption='Net Revenue' datatype='real' name='[20ddaf1b-c665-351e-8aa6-f590dc70321a]' role='measure' type='quantitative' />
+      <column caption='Unit Price (PRODUCT_DIM (CSA.PRODUCT_DIM))' datatype='real' name='[212126f3-1b5d-35da-9eb7-5eacca3039b6]' role='measure' type='quantitative' />
+      <column caption='Month' datatype='integer' name='[2272cdfe-0d86-39fa-9aaf-a1c2717168d6]' role='measure' type='quantitative' />
+      <column caption='Product Key' datatype='integer' name='[24b65633-ee2f-3d8b-bad4-90949fb46739]' role='measure' type='quantitative' />
+      <column caption='Net Profit' datatype='real' name='[24f617c5-4842-39b3-819e-e95c1ed5d00d]' role='measure' type='quantitative' />
+      <column caption='Target Segment' datatype='string' name='[2684c172-27c9-372f-90a3-561009835cef]' role='dimension' type='nominal' />
+      <column caption='Month Name' datatype='string' name='[273f4937-8b99-37c1-ab49-68fa1efcd376 (DATE_DIM (CSA.DATE_DIM)1)]' role='dimension' type='nominal' />
+      <column caption='Month Name' datatype='string' name='[273f4937-8b99-37c1-ab49-68fa1efcd376]' role='dimension' type='nominal' />
+      <column caption='Unit Price' datatype='real' name='[295bc6d6-2c28-389d-8ece-0c4794f0a874]' role='measure' type='quantitative' />
+      <column caption='Tax Amount' datatype='real' name='[2d3b6f44-73da-39a5-b0b8-8591c587ddd4]' role='measure' type='quantitative' />
+      <column caption='Gross Revenue' datatype='real' name='[33b6c718-9b55-3dc0-9698-d1d57fac0f90]' role='measure' type='quantitative' />
+      <column caption='State (STORE_DIM (CSA.STORE_DIM))' datatype='string' name='[33bf543d-6f8e-389e-8f8c-be6ba15af94e]' role='dimension' type='nominal' />
+      <column caption='End Date' datatype='date' name='[3476e381-7cad-32c2-a6c0-13e1f369befb]' role='dimension' type='ordinal' />
+      <column caption='Customer Key' datatype='integer' name='[390a3f4b-c43c-34bb-ad41-041be5ea5ede]' role='measure' type='quantitative' />
+      <column caption='Annual Lease Cost' datatype='real' name='[39639630-e588-3f75-9e4b-ae0390ba9ac6]' role='measure' type='quantitative' />
+      <column caption='Ship Store Key' datatype='integer' name='[39d74b7d-8614-35be-a07d-80b26b3fdb93]' role='measure' type='quantitative' />
+      <column caption='Store Name' datatype='string' name='[3c4fbb09-a975-3126-96e1-2f64fae9ff89]' role='dimension' type='nominal' />
+      <column caption='Promo Key (PROMO_DIM (CSA.PROMO_DIM))' datatype='integer' name='[40d8ab1e-e1c3-3111-97fd-ed3854cf65a1]' role='measure' type='quantitative' />
+      <column caption='First Name' datatype='string' name='[429c9adb-def4-3075-abd4-875141500a26]' role='dimension' type='nominal' />
+      <column caption='Discount Pct' datatype='real' name='[42c2b2c4-28d4-3603-aa46-d5b137e5bc4a]' role='measure' type='quantitative' />
+      <column caption='First Order Date' datatype='date' name='[43c4a763-8031-30f0-947a-a12c74b1091b]' role='dimension' type='ordinal' />
+      <column caption='Is Cancelled' datatype='integer' name='[43e3db83-1f40-3110-93a0-5dcb260aed8b]' role='measure' type='quantitative' />
+      <column caption='Customer Segment' datatype='string' name='[49c438c6-924a-38d9-91a5-1c9dca786152]' role='dimension' type='nominal' />
+      <column caption='Is Seasonal' datatype='integer' name='[4a0d1220-9028-3776-ad47-793117ad3977]' role='measure' type='quantitative' />
+      <column caption='City (STORE_DIM (CSA.STORE_DIM))' datatype='string' name='[4a2e583e-763a-3da7-9c54-8e9b229371f4]' role='dimension' type='nominal' />
+      <column caption='State' datatype='string' name='[4e3aa1fc-4be6-3b50-9688-3552824310be]' role='dimension' type='nominal' />
+      <column caption='Unit Cost' datatype='real' name='[5643fecf-c7be-3d03-b3ca-8c573b8721a4]' role='measure' type='quantitative' />
+      <column caption='Phone' datatype='string' name='[59d34ef1-b41d-3656-bf9f-ca61e028d942]' role='dimension' type='nominal' />
+      <column caption='Store Key' datatype='integer' name='[5a01056a-c8bc-37f2-b406-515546b256fa]' role='measure' type='quantitative' />
+      <column caption='Quarter' datatype='integer' name='[5c131071-a71a-3710-aaed-5cca82b7ffc7 (DATE_DIM (CSA.DATE_DIM)1)]' role='measure' type='quantitative' />
+      <column caption='Quarter' datatype='integer' name='[5c131071-a71a-3710-aaed-5cca82b7ffc7]' role='measure' type='quantitative' />
+      <column caption='Has Curbside' datatype='integer' name='[5d72e9ed-f5f6-308d-98bd-25ee28119093]' role='measure' type='quantitative' />
+      <column caption='Is Holiday' datatype='integer' name='[6247d8bc-9486-3d2b-b68b-039e9dd0b178 (DATE_DIM (CSA.DATE_DIM)1)]' role='measure' type='quantitative' />
+      <column caption='Is Holiday' datatype='integer' name='[6247d8bc-9486-3d2b-b68b-039e9dd0b178]' role='measure' type='quantitative' />
+      <column caption='Is Weekend' datatype='integer' name='[66792cbd-306e-3a9b-882a-f08cd73bb433 (DATE_DIM (CSA.DATE_DIM)1)]' role='measure' type='quantitative' />
+      <column caption='Is Weekend' datatype='integer' name='[66792cbd-306e-3a9b-882a-f08cd73bb433]' role='measure' type='quantitative' />
+      <column caption='Is Active (PRODUCT_DIM (CSA.PRODUCT_DIM))' datatype='integer' name='[6834cf39-5edf-389e-aa8e-e69f7af3cf2b]' role='measure' type='quantitative' />
+      <column caption='Last Name' datatype='string' name='[6b5048ab-89fc-3cc1-b65d-c406cc73a4bf]' role='dimension' type='nominal' />
+      <column caption='Square Footage' datatype='integer' name='[6bdc2304-9587-326d-a1db-d495c1f8d19f]' role='measure' type='quantitative' />
+      <column caption='Month Number' datatype='integer' name='[70b1f3b8-0025-335a-a492-59f4c0078f71 (DATE_DIM (CSA.DATE_DIM)1)]' role='measure' type='quantitative' />
+      <column caption='Month Number' datatype='integer' name='[70b1f3b8-0025-335a-a492-59f4c0078f71]' role='measure' type='quantitative' />
+      <column caption='Date Key' datatype='integer' name='[737611ae-3a14-349a-8fa8-d92dd0bb0432 (DATE_DIM (CSA.DATE_DIM)1)]' role='measure' type='quantitative' />
+      <column caption='Date Key' datatype='integer' name='[737611ae-3a14-349a-8fa8-d92dd0bb0432]' role='measure' type='quantitative' />
+      <column caption='Close Date' datatype='date' name='[764e01f9-927a-3cc8-a5ba-a8cc975dd093]' role='dimension' type='ordinal' />
+      <column caption='Product Name' datatype='string' name='[784cf965-f359-3faf-8fec-767bf50157a5]' role='dimension' type='nominal' />
+      <column caption='Channel' datatype='string' name='[79080c1c-9823-351c-b842-00082c83e5d8]' role='dimension' type='nominal' />
+      <column caption='Order Id' datatype='string' name='[7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a]' role='dimension' type='nominal' />
+      <column caption='Fiscal Quarter' datatype='integer' name='[7baf5ea5-4d43-3b80-a75f-330bfd674dac]' role='measure' type='quantitative' />
+      <column caption='Region (STORE_DIM (CSA.STORE_DIM))' datatype='string' name='[7cd59a3c-e5ee-3ea0-9b01-e85233a70fe5]' role='dimension' type='nominal' />
+      <column caption='Gross Profit' datatype='real' name='[801a2d74-680d-3a22-b61d-c4cb64ea73b4]' role='measure' type='quantitative' />
+      <column caption='Week Of Year' datatype='integer' name='[82b9c13a-15e6-3f95-87fb-424dcdb90d57 (DATE_DIM (CSA.DATE_DIM)1)]' role='measure' type='quantitative' />
+      <column caption='Week Of Year' datatype='integer' name='[82b9c13a-15e6-3f95-87fb-424dcdb90d57]' role='measure' type='quantitative' />
+      <column caption='Quarter' datatype='integer' name='[8375d049-c0a9-32b1-9ca4-3676af45628f]' role='measure' type='quantitative' />
+      <column caption='Order Store Key' datatype='integer' name='[83dea93f-80e0-3aa5-af27-1597d58746cd]' role='measure' type='quantitative' />
+      <column caption='Day Of Week' datatype='string' name='[865369da-a163-39c6-91dd-e0a2cef6c93a (DATE_DIM (CSA.DATE_DIM)1)]' role='dimension' type='nominal' />
+      <column caption='Day Of Week' datatype='string' name='[865369da-a163-39c6-91dd-e0a2cef6c93a]' role='dimension' type='nominal' />
+      <column caption='Store Phone' datatype='string' name='[86f8f640-d414-3ed2-bdcb-86ec75f0ddc1]' role='dimension' type='nominal' />
+      <column caption='Order Line' datatype='integer' name='[872765e8-7d8b-3159-8b16-86838a6b1b55]' role='measure' type='quantitative' />
+      <column caption='District' datatype='string' name='[87bbf835-f5fe-318c-b4ef-3165c34b4a9f]' role='dimension' type='nominal' />
+      <column caption='Is Private Label' datatype='integer' name='[88f70cee-f193-388d-ae2d-17d32d39a019]' role='measure' type='quantitative' />
+      <column caption='Quantity Ordered' datatype='integer' name='[890f7e36-18af-3796-93d8-1f3fc0c8878f]' role='measure' type='quantitative' />
+      <column caption='Store Type' datatype='string' name='[8b9a712f-2902-3f3c-a8cf-6b9122f64494]' role='dimension' type='nominal' />
+      <column caption='Zip Code' datatype='string' name='[8fdb1236-128b-3f06-824b-27151b98976b]' role='dimension' type='nominal' />
+      <column caption='Is Active (STORE_DIM (CSA.STORE_DIM))' datatype='integer' name='[92ca1ae5-c60c-3af3-816e-bec6e6537369]' role='measure' type='quantitative' />
+      <column caption='Full Date' datatype='date' name='[934012fa-382f-341a-8e44-797e16eeaf1e (DATE_DIM (CSA.DATE_DIM)1)]' role='dimension' type='ordinal' />
+      <column caption='Full Date' datatype='date' name='[934012fa-382f-341a-8e44-797e16eeaf1e]' role='dimension' type='ordinal' />
+      <column caption='City' datatype='string' name='[93eeac1d-9977-3b57-9e58-3995615e1b2b]' role='dimension' type='nominal' />
+      <column caption='Is First Order' datatype='integer' name='[9522c5a5-cf68-34df-815a-11f7a6979a1b]' role='measure' type='quantitative' />
+      <column caption='Start Date' datatype='date' name='[9866ad41-dec7-3208-95ef-e713c3c57d33]' role='dimension' type='ordinal' />
+      <column caption='Weight Lbs' datatype='real' name='[9bfd2122-0253-3760-97f2-367e059bbbe5]' role='measure' type='quantitative' />
+      <column datatype='string' name='[Customer Value Tier]' role='dimension' type='nominal'>
+        <calculation class='tableau' formula='IF [06db681d-04be-3a38-b324-85dc4732a408] &gt;= 5000 THEN &quot;Platinum&quot; ELSEIF [06db681d-04be-3a38-b324-85dc4732a408] &gt;= 2000 THEN &quot;Gold&quot; ELSEIF [06db681d-04be-3a38-b324-85dc4732a408] &gt;= 500 THEN &quot;Silver&quot; ELSE &quot;Bronze&quot; END' />
+      </column>
+      <column datatype='real' name='[Gross Margin Pct]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='IIF(SUM([33b6c718-9b55-3dc0-9698-d1d57fac0f90]) != 0, SUM([801a2d74-680d-3a22-b61d-c4cb64ea73b4]) / SUM([33b6c718-9b55-3dc0-9698-d1d57fac0f90]), 0)' />
+      </column>
+      <column datatype='real' name='[Promo ROI]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]) - SUM([1cf2a336-56c9-3e33-912c-56ab8b2d21d2])) / IIF(SUM([1cf2a336-56c9-3e33-912c-56ab8b2d21d2]) != 0, SUM([1cf2a336-56c9-3e33-912c-56ab8b2d21d2]), 1)' />
+      </column>
+      <column datatype='real' name='[Return Rate]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='SUM([d3b60b0e-f547-3d2c-8602-5d077eb3151a]) / COUNT([7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a])' />
+      </column>
+      <column datatype='real' name='[Revenue Per Order]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]) / COUNTD([7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a])' />
+      </column>
+      <column datatype='string' name='[Ship Speed Category]' role='dimension' type='nominal'>
+        <calculation class='tableau' formula='IF [c7281f06-2028-3164-be3d-25be6d085a5e] &lt;= 2 THEN &quot;Express (1-2 days)&quot; ELSEIF [c7281f06-2028-3164-be3d-25be6d085a5e] &lt;= 5 THEN &quot;Standard (3-5 days)&quot; ELSEIF [c7281f06-2028-3164-be3d-25be6d085a5e] &lt;= 10 THEN &quot;Economy (6-10 days)&quot; ELSE &quot;Slow (10+ days)&quot; END' />
+      </column>
+      <column datatype='real' name='[YTD Revenue]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='{FIXED [f39416df-a452-37ef-9bdb-25f1314f2d11] : SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a])}' />
+      </column>
+      <column datatype='integer' default-type='ordinal' name='[Year Filter]' param-domain-type='range' role='measure' type='quantitative' value='2023'>
+        <calculation class='tableau' formula='2023' />
+        <range granularity='1' max='2026' min='2020' />
+      </column>
+      <column caption='CUSTOMER_DIM (CSA.CUSTOMER_DIM)' datatype='table' name='[__tableau_internal_object_id__].[CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC]' role='measure' type='quantitative' />
+      <column caption='Return Date' datatype='table' name='[__tableau_internal_object_id__].[DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691]' role='measure' type='quantitative' />
+      <column caption='Ship Date' datatype='table' name='[__tableau_internal_object_id__].[DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459]' role='measure' type='quantitative' />
+      <column caption='Order Date' datatype='table' name='[__tableau_internal_object_id__].[DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92]' role='measure' type='quantitative' />
+      <column caption='ORDER_FACT (CSA.ORDER_FACT)' datatype='table' name='[__tableau_internal_object_id__].[ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B]' role='measure' type='quantitative' />
+      <column caption='PRODUCT_DIM (CSA.PRODUCT_DIM)' datatype='table' name='[__tableau_internal_object_id__].[PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257]' role='measure' type='quantitative' />
+      <column caption='PROMO_DIM (CSA.PROMO_DIM)' datatype='table' name='[__tableau_internal_object_id__].[PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E]' role='measure' type='quantitative' />
+      <column caption='STORE_DIM (CSA.STORE_DIM)' datatype='table' name='[__tableau_internal_object_id__].[STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9]' role='measure' type='quantitative' />
+      <column caption='Launch Date' datatype='date' name='[a4568eab-9446-3ad4-acff-910d08db6960]' role='dimension' type='ordinal' />
+      <column caption='Is Stackable' datatype='integer' name='[ad7e2d4d-4cdd-38b3-854c-3cef935f920a]' role='measure' type='quantitative' />
+      <column caption='Subcategory' datatype='string' name='[b2400248-b5ed-3566-98da-f747b94da623]' role='dimension' type='nominal' />
+      <column caption='Brand' datatype='string' name='[b278b946-2b0f-322f-88c0-3d5ef23599cc]' role='dimension' type='nominal' />
+      <column caption='Customer Key' datatype='integer' name='[b3f0b0a7-407b-3a84-9f36-baf80cffd304]' role='measure' type='quantitative' />
+      <column caption='Return Date Key' datatype='integer' name='[b518310f-4944-3006-8c48-6226c11efccb]' role='measure' type='quantitative' />
+      <column caption='Unit Cost (PRODUCT_DIM (CSA.PRODUCT_DIM))' datatype='real' name='[b564ffc4-06fb-322a-aa1c-700b749741c4]' role='measure' type='quantitative' />
+      <column caption='Year' datatype='integer' name='[b6d33443-4dca-3c41-9a2c-fae7ef9750db]' role='measure' type='quantitative' />
+      <column caption='Open Date' datatype='date' name='[b715aefd-a4f7-301a-b3a1-9955ce8781f6]' role='dimension' type='ordinal' />
+      <column caption='Is Active' datatype='integer' name='[b886f556-dc7b-3939-96b6-f29e519b6f82]' role='measure' type='quantitative' />
+      <column caption='Promo Name' datatype='string' name='[be3d0e94-a6fc-3f3d-98f1-79d94f013eb9]' role='dimension' type='nominal' />
+      <column caption='Order Date ' datatype='date' datatype-customized='true' name='[c2ec6b07-897e-39ab-9422-aa895d35a627]' role='dimension' type='ordinal' />
+      <column caption='Days To Ship' datatype='integer' name='[c7281f06-2028-3164-be3d-25be6d085a5e]' role='measure' type='quantitative' />
+      <column caption='Category' datatype='string' name='[c8f5bd1d-0c0f-3a58-8464-94a181eefef9]' role='dimension' type='nominal' />
+      <column caption='Promo Id' datatype='string' name='[cb2a7691-0325-343c-abc8-281586a8a015]' role='dimension' type='nominal' />
+      <column caption='Manager Name' datatype='string' name='[cf9f009e-0936-3e56-a5db-3cc3bdd23a86]' role='dimension' type='nominal' />
+      <column caption='Promo Type' datatype='string' name='[d196fe31-5ee4-3c57-9c10-a868ed52ad04]' role='dimension' type='nominal' />
+      <column caption='Fiscal Year' datatype='integer' name='[d256bccf-7746-3b46-83f7-77abb1e4c35e]' role='measure' type='quantitative' />
+      <column caption='Is Returned' datatype='integer' name='[d3b60b0e-f547-3d2c-8602-5d077eb3151a]' role='measure' type='quantitative' />
+      <column caption='Day Of Month' datatype='integer' name='[d6e079a5-4ccc-3733-9661-e188bc7c58f6 (DATE_DIM (CSA.DATE_DIM)1)]' role='measure' type='quantitative' />
+      <column caption='Day Of Month' datatype='integer' name='[d6e079a5-4ccc-3733-9661-e188bc7c58f6]' role='measure' type='quantitative' />
+      <column caption='Date Key' datatype='date' name='[d6e9e979-3be5-3740-b133-2f9f8220dfaf]' role='dimension' type='ordinal' />
+      <column caption='Region' datatype='string' name='[d73055c0-9ed1-347d-8f8e-05a48ce2c8a8]' role='dimension' type='nominal' />
+      <column caption='Customer Id' datatype='string' name='[d885a468-9e01-3697-bc72-79ed0750cd3c]' role='dimension' type='nominal' />
+      <column caption='Acquisition Channel' datatype='string' name='[dbb68d30-ed2b-33a7-b863-8b74c7ffcec1]' role='dimension' type='nominal' />
+      <column caption='Quantity Returned' datatype='integer' name='[dc000dc6-f630-3ce2-af1d-978da1d8292c]' role='measure' type='quantitative' />
+      <column caption='Ship Method' datatype='string' name='[e079b853-5ef2-3371-a4b6-cc79a4f64f06]' role='dimension' type='nominal' />
+      <column caption='Promo Key' datatype='integer' name='[e446b3ea-cd95-3fcf-b63b-a0efbdf81bea]' role='measure' type='quantitative' />
+      <column caption='Product Key (PRODUCT_DIM (CSA.PRODUCT_DIM))' datatype='integer' name='[e5ab1927-144b-30a9-8616-ccf69721d066]' role='measure' type='quantitative' />
+      <column caption='Loyalty Tier' datatype='string' name='[e9a1d9e9-e9b3-3c75-b608-537d3078ced4]' role='dimension' type='nominal' />
+      <column caption='Ship Date Key' datatype='integer' name='[ebc4daa3-51ce-398f-b6a1-13fd122f9d41]' role='measure' type='quantitative' />
+      <column caption='Month Name' datatype='string' name='[ec42dff0-1ae0-361d-a00e-88024bec395b]' role='dimension' type='nominal' />
+      <column caption='Lifetime Order Count' datatype='integer' name='[f1f4cdf6-c95f-35d1-96b6-6bace95969c4]' role='measure' type='quantitative' />
+      <column caption='Year' datatype='integer' name='[f39416df-a452-37ef-9bdb-25f1314f2d11 (DATE_DIM (CSA.DATE_DIM)1)]' role='measure' type='quantitative' />
+      <column caption='Year' datatype='integer' name='[f39416df-a452-37ef-9bdb-25f1314f2d11]' role='measure' type='quantitative' />
+      <column caption='Discount Amount' datatype='real' name='[f9173dd6-0818-3f29-8634-ad8cad04ef1d]' role='measure' type='quantitative' />
+      <column caption='Order Status' datatype='string' name='[fc06cac7-d000-364c-ae40-b33516f27653]' role='dimension' type='nominal' />
+      <column-instance column='[c8f5bd1d-0c0f-3a58-8464-94a181eefef9]' derivation='None' name='[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]' pivot='key' type='nominal' />
+      <group caption='Action (Region)' hidden='true' name='[Action (Region)]' name-style='unqualified' user:auto-column='sheet_link'>
+        <groupfilter function='crossjoin'>
+          <groupfilter function='level-members' level='[d73055c0-9ed1-347d-8f8e-05a48ce2c8a8]' />
+        </groupfilter>
+      </group>
+      <layout dim-ordering='alphabetic' measure-ordering='alphabetic' show-structure='true' />
+      <style>
+        <style-rule element='mark'>
+          <encoding attr='color' field='[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]' type='palette'>
+            <map to='#4e79a7'>
+              <bucket>&quot;Apparel&quot;</bucket>
+            </map>
+            <map to='#59a14f'>
+              <bucket>&quot;Sports&quot;</bucket>
+            </map>
+            <map to='#76b7b2'>
+              <bucket>&quot;Home&quot;</bucket>
+            </map>
+            <map to='#e15759'>
+              <bucket>&quot;Electronics&quot;</bucket>
+            </map>
+            <map to='#f28e2b'>
+              <bucket>&quot;Beauty&quot;</bucket>
+            </map>
+          </encoding>
+        </style-rule>
+      </style>
+      <semantic-values>
+        <semantic-value key='[Country].[Name]' value='&quot;United States&quot;' />
+      </semantic-values>
+      <object-graph>
+        <objects>
+          <object caption='CUSTOMER_DIM (CSA.CUSTOMER_DIM)' id='CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC'>
+            <properties context=''>
+              <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='CUSTOMER_DIM (CSA.CUSTOMER_DIM)' table='[c91c16a6-66d6-4232-b140-bdf71935f323].[CUSTOMER_DIM (CSA.CUSTOMER_DIM)]' type='table' />
+            </properties>
+          </object>
+          <object caption='Return Date' id='DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691'>
+            <properties context=''>
+              <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='DATE_DIM (CSA.DATE_DIM)' table='[bb7644a7-6b36-4cb0-a1c6-458af4f885b1].[DATE_DIM (CSA.DATE_DIM)]' type='table' />
+            </properties>
+          </object>
+          <object caption='Ship Date' id='DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459'>
+            <properties context=''>
+              <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='DATE_DIM (CSA.DATE_DIM)1' table='[bb7644a7-6b36-4cb0-a1c6-458af4f885b1].[DATE_DIM (CSA.DATE_DIM)]' type='table' />
+            </properties>
+          </object>
+          <object caption='Order Date' id='DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92'>
+            <properties context=''>
+              <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='DIM_TIME (CSA.DIM_TIME)' table='[0f4c9837-f78a-4c65-a760-bdbced23e4b5].[DIM_TIME (CSA.DIM_TIME)]' type='table' />
+            </properties>
+          </object>
+          <object caption='ORDER_FACT (CSA.ORDER_FACT)' id='ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B'>
+            <properties context=''>
+              <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='ORDER_FACT (CSA.ORDER_FACT)' table='[d2633ac0-4c26-4cc1-b9e7-486b42493ea6].[ORDER_FACT (CSA.ORDER_FACT)]' type='table'>
+                <columns>
+                  <column datatype='date' date-parse-format='yyyyMMdd' name='c2ec6b07-897e-39ab-9422-aa895d35a627' />
+                </columns>
+              </relation>
+            </properties>
+          </object>
+          <object caption='PRODUCT_DIM (CSA.PRODUCT_DIM)' id='PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257'>
+            <properties context=''>
+              <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='PRODUCT_DIM (CSA.PRODUCT_DIM)' table='[cfcac7f3-6d9b-4d6b-9fde-d31c9de4e64b].[PRODUCT_DIM (CSA.PRODUCT_DIM)]' type='table' />
+            </properties>
+          </object>
+          <object caption='PROMO_DIM (CSA.PROMO_DIM)' id='PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E'>
+            <properties context=''>
+              <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='PROMO_DIM (CSA.PROMO_DIM)' table='[b38e7d0d-b4c9-45a8-ac8c-e0b356eaa4db].[PROMO_DIM (CSA.PROMO_DIM)]' type='table' />
+            </properties>
+          </object>
+          <object caption='STORE_DIM (CSA.STORE_DIM)' id='STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9'>
+            <properties context=''>
+              <relation connection='publishedConnection.14s8kri16sghz71a6bwyg1rpjvja' name='STORE_DIM (CSA.STORE_DIM)' table='[c45e024e-a6ed-412b-a95e-40c2a62cfbbb].[STORE_DIM (CSA.STORE_DIM)]' type='table' />
+            </properties>
+          </object>
+        </objects>
+        <relationships>
+          <relationship>
+            <expression op='='>
+              <expression op='[b3f0b0a7-407b-3a84-9f36-baf80cffd304]' />
+              <expression op='[390a3f4b-c43c-34bb-ad41-041be5ea5ede]' />
+            </expression>
+            <first-end-point object-id='ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B' />
+            <second-end-point is-db-set-unique-key='true' object-id='CUSTOMER_DIM (CSA.CUSTOMER_DIM)_A52C534FCB434F5BB44006C45FF512EC' unique-key='true' />
+          </relationship>
+          <relationship>
+            <expression op='='>
+              <expression op='[b518310f-4944-3006-8c48-6226c11efccb]' />
+              <expression op='[737611ae-3a14-349a-8fa8-d92dd0bb0432]' />
+            </expression>
+            <first-end-point object-id='ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B' />
+            <second-end-point is-db-set-unique-key='true' object-id='DATE_DIM (CSA.DATE_DIM)_4B5DE47E36B24763B888B6269A8EB691' unique-key='true' />
+          </relationship>
+          <relationship>
+            <expression op='='>
+              <expression op='[ebc4daa3-51ce-398f-b6a1-13fd122f9d41]' />
+              <expression op='[737611ae-3a14-349a-8fa8-d92dd0bb0432 (DATE_DIM (CSA.DATE_DIM)1)]' />
+            </expression>
+            <first-end-point object-id='ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B' />
+            <second-end-point is-db-set-unique-key='true' object-id='DATE_DIM (CSA.DATE_DIM)_D533B3BADF034861BC71821313F19459' unique-key='true' />
+          </relationship>
+          <relationship>
+            <expression op='='>
+              <expression op='DATE([c2ec6b07-897e-39ab-9422-aa895d35a627])' />
+              <expression op='[d6e9e979-3be5-3740-b133-2f9f8220dfaf]' />
+            </expression>
+            <first-end-point object-id='ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B' />
+            <second-end-point object-id='DIM_TIME (CSA.DIM_TIME)_FA5D581AFE7146EFA29315AD29429F92' />
+          </relationship>
+          <relationship>
+            <expression op='='>
+              <expression op='[24b65633-ee2f-3d8b-bad4-90949fb46739]' />
+              <expression op='[e5ab1927-144b-30a9-8616-ccf69721d066]' />
+            </expression>
+            <first-end-point object-id='ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B' />
+            <second-end-point is-db-set-unique-key='true' object-id='PRODUCT_DIM (CSA.PRODUCT_DIM)_347BD6F43ED5475A8406282438FB0257' unique-key='true' />
+          </relationship>
+          <relationship>
+            <expression op='='>
+              <expression op='[e446b3ea-cd95-3fcf-b63b-a0efbdf81bea]' />
+              <expression op='[40d8ab1e-e1c3-3111-97fd-ed3854cf65a1]' />
+            </expression>
+            <first-end-point object-id='ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B' />
+            <second-end-point is-db-set-unique-key='true' object-id='PROMO_DIM (CSA.PROMO_DIM)_F957D7588CF54146BDD4C1249489DD6E' unique-key='true' />
+          </relationship>
+          <relationship>
+            <expression op='='>
+              <expression op='[83dea93f-80e0-3aa5-af27-1597d58746cd]' />
+              <expression op='[5a01056a-c8bc-37f2-b406-515546b256fa]' />
+            </expression>
+            <first-end-point object-id='ORDER_FACT (CSA.ORDER_FACT)_1880086BC74E48EABAAB7671E5C3F68B' />
+            <second-end-point is-db-set-unique-key='true' object-id='STORE_DIM (CSA.STORE_DIM)_3D64F8CCDE724FE6A68F6731583A7BF9' unique-key='true' />
+          </relationship>
+        </relationships>
+      </object-graph>
+    </datasource>
+  </datasources>
+  <worksheets>
+    <worksheet name='WIN Running Revenue'>
+      <layout-options><title><formatted-text><run>Running Total of Weekly Net Revenue</run></formatted-text></title></layout-options>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)' name='federated.1smknst1gebfuh1bkttg60wqkb7v' />
+          </datasources>
+          <datasource-dependencies datasource='federated.1smknst1gebfuh1bkttg60wqkb7v'>
+            <column caption='Order Date' datatype='date' name='[c2ec6b07-897e-39ab-9422-aa895d35a627]' role='dimension' type='ordinal' datatype-customized='true' />
+            <column datatype='real' name='[Running Revenue]' role='measure' type='quantitative'><calculation class='tableau' formula='RUNNING_SUM(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]))' /></column>
+            <column-instance column='[c2ec6b07-897e-39ab-9422-aa895d35a627]' derivation='Week-Trunc' name='[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[Running Revenue]' derivation='User' name='[usr:Running Revenue:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+          
+          <slices>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Running Revenue:qk]</column>
+          </slices>
+          
+          <aggregation value='true' />
+        </view>
+        <style><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Running Revenue:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Running Revenue:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Running Revenue:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='gridline'><format attr='line-pattern' value='none' /></style-rule></style>
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view><breakdown value='auto' /></view>
+            <mark class='Line' />
+            
+            <style>
+              <style-rule element='mark'><format attr='mark-labels-show' value='false' /></style-rule>
+            </style>
+          </pane>
+        </panes>
+        <rows>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Running Revenue:qk]</rows>
+        <cols>[federated.1smknst1gebfuh1bkttg60wqkb7v].[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</cols>
+      </table>
+      <simple-id uuid='{B437BFA8-4F4E-4EF9-88F3-FC4FCA297227}' />
+    </worksheet>
+    <worksheet name='WIN Moving Avg'>
+      <layout-options><title><formatted-text><run>4-Week Trailing Avg Weekly Net Revenue</run></formatted-text></title></layout-options>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)' name='federated.1smknst1gebfuh1bkttg60wqkb7v' />
+          </datasources>
+          <datasource-dependencies datasource='federated.1smknst1gebfuh1bkttg60wqkb7v'>
+            <column caption='Order Date' datatype='date' name='[c2ec6b07-897e-39ab-9422-aa895d35a627]' role='dimension' type='ordinal' datatype-customized='true' />
+            <column datatype='real' name='[Moving Avg 4wk]' role='measure' type='quantitative'><calculation class='tableau' formula='WINDOW_AVG(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]), -3, 0)' /></column>
+            <column-instance column='[c2ec6b07-897e-39ab-9422-aa895d35a627]' derivation='Week-Trunc' name='[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[Moving Avg 4wk]' derivation='User' name='[usr:Moving Avg 4wk:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+          
+          <slices>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Moving Avg 4wk:qk]</column>
+          </slices>
+          
+          <aggregation value='true' />
+        </view>
+        <style><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Moving Avg 4wk:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Moving Avg 4wk:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Moving Avg 4wk:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='gridline'><format attr='line-pattern' value='none' /></style-rule></style>
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view><breakdown value='auto' /></view>
+            <mark class='Line' />
+            
+            <style>
+              <style-rule element='mark'><format attr='mark-labels-show' value='false' /></style-rule>
+            </style>
+          </pane>
+        </panes>
+        <rows>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Moving Avg 4wk:qk]</rows>
+        <cols>[federated.1smknst1gebfuh1bkttg60wqkb7v].[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</cols>
+      </table>
+      <simple-id uuid='{FDBB73CA-5012-4EEB-9E67-BA82CFABD828}' />
+    </worksheet>
+    <worksheet name='WIN Pct Of Total Region'>
+      <layout-options><title><formatted-text><run>Share of Net Revenue by Region</run></formatted-text></title></layout-options>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)' name='federated.1smknst1gebfuh1bkttg60wqkb7v' />
+          </datasources>
+          <datasource-dependencies datasource='federated.1smknst1gebfuh1bkttg60wqkb7v'>
+            <column caption='Region' datatype='string' name='[d73055c0-9ed1-347d-8f8e-05a48ce2c8a8]' role='dimension' type='nominal' />
+            <column datatype='real' name='[Pct Of Total Revenue]' role='measure' type='quantitative'><calculation class='tableau' formula='SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]) / WINDOW_SUM(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]))' /></column>
+            <column-instance column='[d73055c0-9ed1-347d-8f8e-05a48ce2c8a8]' derivation='None' name='[none:d73055c0-9ed1-347d-8f8e-05a48ce2c8a8:nk]' pivot='key' type='nominal' />
+            <column-instance column='[Pct Of Total Revenue]' derivation='User' name='[usr:Pct Of Total Revenue:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+          
+          <slices>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:d73055c0-9ed1-347d-8f8e-05a48ce2c8a8:nk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pct Of Total Revenue:qk]</column>
+          </slices>
+          
+          <aggregation value='true' />
+        </view>
+        <style><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pct Of Total Revenue:qk]' value='p0.00%' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pct Of Total Revenue:qk]' value='p0.00%' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pct Of Total Revenue:qk]' value='p0.00%' /></style-rule><style-rule element='gridline'><format attr='line-pattern' value='none' /></style-rule></style>
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view><breakdown value='auto' /></view>
+            <mark class='Bar' />
+            
+            <style>
+              <style-rule element='mark'><format attr='mark-labels-show' value='true' /><format attr='mark-labels-cull' value='true' /></style-rule>
+            </style>
+          </pane>
+        </panes>
+        <rows>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pct Of Total Revenue:qk]</rows>
+        <cols>[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:d73055c0-9ed1-347d-8f8e-05a48ce2c8a8:nk]</cols>
+      </table>
+      <simple-id uuid='{C541C5B8-4552-4A8C-A468-AC22D8C8E190}' />
+    </worksheet>
+    <worksheet name='WIN Rank Category'>
+      <layout-options><title><formatted-text><run>Net Revenue Rank by Category</run></formatted-text></title></layout-options>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)' name='federated.1smknst1gebfuh1bkttg60wqkb7v' />
+          </datasources>
+          <datasource-dependencies datasource='federated.1smknst1gebfuh1bkttg60wqkb7v'>
+            <column caption='Category' datatype='string' name='[c8f5bd1d-0c0f-3a58-8464-94a181eefef9]' role='dimension' type='nominal' />
+            <column datatype='real' name='[Revenue Rank]' role='measure' type='quantitative'><calculation class='tableau' formula='RANK(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]))' /></column>
+            <column caption='Net Revenue' datatype='real' name='[20ddaf1b-c665-351e-8aa6-f590dc70321a]' role='measure' type='quantitative' />
+            <column-instance column='[c8f5bd1d-0c0f-3a58-8464-94a181eefef9]' derivation='None' name='[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]' pivot='key' type='nominal' />
+            <column-instance column='[Revenue Rank]' derivation='User' name='[usr:Revenue Rank:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[20ddaf1b-c665-351e-8aa6-f590dc70321a]' derivation='Sum' name='[sum:20ddaf1b-c665-351e-8aa6-f590dc70321a:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+          
+          <slices>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Revenue Rank:qk]</column>
+          </slices>
+          <computed-sort column='[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]' direction='DESC' using='[federated.1smknst1gebfuh1bkttg60wqkb7v].[sum:20ddaf1b-c665-351e-8aa6-f590dc70321a:qk]' />
+          <aggregation value='true' />
+        </view>
+        <style><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Revenue Rank:qk]' value='n#,##0' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Revenue Rank:qk]' value='n#,##0' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Revenue Rank:qk]' value='n#,##0' /></style-rule><style-rule element='gridline'><format attr='line-pattern' value='none' /></style-rule></style>
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view><breakdown value='auto' /></view>
+            <mark class='Bar' />
+            
+            <style>
+              <style-rule element='mark'><format attr='mark-labels-show' value='true' /><format attr='mark-labels-cull' value='true' /></style-rule>
+            </style>
+          </pane>
+        </panes>
+        <rows>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Revenue Rank:qk]</rows>
+        <cols>[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]</cols>
+      </table>
+      <simple-id uuid='{0376E7DD-5AAB-4D5E-9293-188EF8F7ED16}' />
+    </worksheet>
+    <worksheet name='WIN Window MaxMin'>
+      <layout-options><title><formatted-text><run>Best/Worst Quarterly Revenue per Region (window max/min)</run></formatted-text></title></layout-options>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)' name='federated.1smknst1gebfuh1bkttg60wqkb7v' />
+          </datasources>
+          <datasource-dependencies datasource='federated.1smknst1gebfuh1bkttg60wqkb7v'>
+            <column caption='Region' datatype='string' name='[d73055c0-9ed1-347d-8f8e-05a48ce2c8a8]' role='dimension' type='nominal' />
+            <column caption='Order Date' datatype='date' name='[c2ec6b07-897e-39ab-9422-aa895d35a627]' role='dimension' type='ordinal' datatype-customized='true' />
+            <column datatype='real' name='[Window Max Revenue]' role='measure' type='quantitative'><calculation class='tableau' formula='WINDOW_MAX(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]))' /></column>
+            <column datatype='real' name='[Window Min Revenue]' role='measure' type='quantitative'><calculation class='tableau' formula='WINDOW_MIN(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]))' /></column>
+            <column-instance column='[d73055c0-9ed1-347d-8f8e-05a48ce2c8a8]' derivation='None' name='[none:d73055c0-9ed1-347d-8f8e-05a48ce2c8a8:nk]' pivot='key' type='nominal' />
+            <column-instance column='[c2ec6b07-897e-39ab-9422-aa895d35a627]' derivation='Quarter-Trunc' name='[tqr:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[Window Max Revenue]' derivation='User' name='[usr:Window Max Revenue:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[Window Min Revenue]' derivation='User' name='[usr:Window Min Revenue:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+          
+          <slices>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:d73055c0-9ed1-347d-8f8e-05a48ce2c8a8:nk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[tqr:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Max Revenue:qk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Min Revenue:qk]</column>
+          </slices>
+          
+          <aggregation value='true' />
+        </view>
+        <style><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Max Revenue:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Max Revenue:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Max Revenue:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Min Revenue:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Min Revenue:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Min Revenue:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='gridline'><format attr='line-pattern' value='none' /></style-rule></style>
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view><breakdown value='auto' /></view>
+            <mark class='Text' />
+            <encodings><text column='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Max Revenue:qk]' /><text column='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Window Min Revenue:qk]' /></encodings>
+            <style>
+              <style-rule element='mark'><format attr='mark-labels-show' value='false' /></style-rule>
+            </style>
+          </pane>
+        </panes>
+        <rows>[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:d73055c0-9ed1-347d-8f8e-05a48ce2c8a8:nk]</rows>
+        <cols>[federated.1smknst1gebfuh1bkttg60wqkb7v].[tqr:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</cols>
+      </table>
+      <simple-id uuid='{ADEF8C1C-1B39-4E01-B60B-C603C36A787F}' />
+    </worksheet>
+    <worksheet name='WIN WoW Delta'>
+      <layout-options><title><formatted-text><run>Week-over-Week Net Revenue Delta</run></formatted-text></title></layout-options>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)' name='federated.1smknst1gebfuh1bkttg60wqkb7v' />
+          </datasources>
+          <datasource-dependencies datasource='federated.1smknst1gebfuh1bkttg60wqkb7v'>
+            <column caption='Order Date' datatype='date' name='[c2ec6b07-897e-39ab-9422-aa895d35a627]' role='dimension' type='ordinal' datatype-customized='true' />
+            <column datatype='real' name='[WoW Revenue Delta]' role='measure' type='quantitative'><calculation class='tableau' formula='ZN(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]) - LOOKUP(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]), -1))' /></column>
+            <column-instance column='[c2ec6b07-897e-39ab-9422-aa895d35a627]' derivation='Week-Trunc' name='[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[WoW Revenue Delta]' derivation='User' name='[usr:WoW Revenue Delta:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+          
+          <slices>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:WoW Revenue Delta:qk]</column>
+          </slices>
+          
+          <aggregation value='true' />
+        </view>
+        <style><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:WoW Revenue Delta:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:WoW Revenue Delta:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:WoW Revenue Delta:qk]' value='n&quot;$&quot;#,##0' /></style-rule><style-rule element='gridline'><format attr='line-pattern' value='none' /></style-rule></style>
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view><breakdown value='auto' /></view>
+            <mark class='Line' />
+            
+            <style>
+              <style-rule element='mark'><format attr='mark-labels-show' value='false' /></style-rule>
+            </style>
+          </pane>
+        </panes>
+        <rows>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:WoW Revenue Delta:qk]</rows>
+        <cols>[federated.1smknst1gebfuh1bkttg60wqkb7v].[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</cols>
+      </table>
+      <simple-id uuid='{1A305D4F-38EA-4ED4-A46B-E9998C88550A}' />
+    </worksheet>
+    <worksheet name='WIN Weekly Funnel'>
+      <layout-options><title><formatted-text><run>Weekly Orders / Returns / Return Rate</run></formatted-text></title></layout-options>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)' name='federated.1smknst1gebfuh1bkttg60wqkb7v' />
+          </datasources>
+          <datasource-dependencies datasource='federated.1smknst1gebfuh1bkttg60wqkb7v'>
+            <column datatype='string' name='[:Measure Names]' role='dimension' type='nominal' />
+            <column caption='Order Date' datatype='date' name='[c2ec6b07-897e-39ab-9422-aa895d35a627]' role='dimension' type='ordinal' datatype-customized='true' />
+            <column caption='Order Id' datatype='real' name='[7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a]' role='measure' type='quantitative' />
+            <column caption='Is Returned' datatype='integer' name='[d3b60b0e-f547-3d2c-8602-5d077eb3151a]' role='measure' type='quantitative' />
+            <column datatype='real' name='[Return Rate]' role='measure' type='quantitative'><calculation class='tableau' formula='SUM([d3b60b0e-f547-3d2c-8602-5d077eb3151a]) / COUNTD([7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a])' /></column>
+            <column-instance column='[c2ec6b07-897e-39ab-9422-aa895d35a627]' derivation='Week-Trunc' name='[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a]' derivation='CountD' name='[ctd:7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[d3b60b0e-f547-3d2c-8602-5d077eb3151a]' derivation='Sum' name='[sum:d3b60b0e-f547-3d2c-8602-5d077eb3151a:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[Return Rate]' derivation='User' name='[usr:Return Rate:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+          <filter class='categorical' column='[federated.1smknst1gebfuh1bkttg60wqkb7v].[:Measure Names]'><groupfilter function='union' user:op='manual'><groupfilter function='member' level='[:Measure Names]' member='&quot;[federated.1smknst1gebfuh1bkttg60wqkb7v].[ctd:7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a:qk]&quot;' /><groupfilter function='member' level='[:Measure Names]' member='&quot;[federated.1smknst1gebfuh1bkttg60wqkb7v].[sum:d3b60b0e-f547-3d2c-8602-5d077eb3151a:qk]&quot;' /><groupfilter function='member' level='[:Measure Names]' member='&quot;[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Return Rate:qk]&quot;' /></groupfilter></filter>
+          <slices>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[ctd:7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a:qk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[sum:d3b60b0e-f547-3d2c-8602-5d077eb3151a:qk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Return Rate:qk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[:Measure Names]</column>
+          </slices>
+          
+          <aggregation value='true' />
+        </view>
+        <style><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[ctd:7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a:qk]' value='n#,##0' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[ctd:7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a:qk]' value='n#,##0' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[ctd:7b7dc9c3-09e2-3bb1-ad44-754f9c95f56a:qk]' value='n#,##0' /></style-rule><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[sum:d3b60b0e-f547-3d2c-8602-5d077eb3151a:qk]' value='n#,##0' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[sum:d3b60b0e-f547-3d2c-8602-5d077eb3151a:qk]' value='n#,##0' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[sum:d3b60b0e-f547-3d2c-8602-5d077eb3151a:qk]' value='n#,##0' /></style-rule><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Return Rate:qk]' value='p0.00%' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Return Rate:qk]' value='p0.00%' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Return Rate:qk]' value='p0.00%' /></style-rule><style-rule element='gridline'><format attr='line-pattern' value='none' /></style-rule></style>
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view><breakdown value='auto' /></view>
+            <mark class='Line' />
+            <encodings><color column='[federated.1smknst1gebfuh1bkttg60wqkb7v].[:Measure Names]' /></encodings>
+            <style>
+              <style-rule element='mark'><format attr='mark-labels-show' value='false' /></style-rule>
+            </style>
+          </pane>
+        </panes>
+        <rows>[federated.1smknst1gebfuh1bkttg60wqkb7v].[Multiple Values]</rows>
+        <cols>[federated.1smknst1gebfuh1bkttg60wqkb7v].[twk:c2ec6b07-897e-39ab-9422-aa895d35a627:qk]</cols>
+      </table>
+      <simple-id uuid='{52AB830A-D049-4C4E-A64E-D115AB6E191C}' />
+    </worksheet>
+    <worksheet name='WIN Pareto Category'>
+      <layout-options><title><formatted-text><run>Cumulative Share of Revenue by Category (pareto)</run></formatted-text></title></layout-options>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='ORDER_FACT (CSA.ORDER_FACT)+ (New Virtual Connection)' name='federated.1smknst1gebfuh1bkttg60wqkb7v' />
+          </datasources>
+          <datasource-dependencies datasource='federated.1smknst1gebfuh1bkttg60wqkb7v'>
+            <column caption='Category' datatype='string' name='[c8f5bd1d-0c0f-3a58-8464-94a181eefef9]' role='dimension' type='nominal' />
+            <column datatype='real' name='[Pareto Pct]' role='measure' type='quantitative'><calculation class='tableau' formula='RUNNING_SUM(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a])) / TOTAL(SUM([20ddaf1b-c665-351e-8aa6-f590dc70321a]))' /></column>
+            <column caption='Net Revenue' datatype='real' name='[20ddaf1b-c665-351e-8aa6-f590dc70321a]' role='measure' type='quantitative' />
+            <column-instance column='[c8f5bd1d-0c0f-3a58-8464-94a181eefef9]' derivation='None' name='[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]' pivot='key' type='nominal' />
+            <column-instance column='[Pareto Pct]' derivation='User' name='[usr:Pareto Pct:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[20ddaf1b-c665-351e-8aa6-f590dc70321a]' derivation='Sum' name='[sum:20ddaf1b-c665-351e-8aa6-f590dc70321a:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+          
+          <slices>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]</column>
+            <column>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pareto Pct:qk]</column>
+          </slices>
+          <computed-sort column='[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]' direction='DESC' using='[federated.1smknst1gebfuh1bkttg60wqkb7v].[sum:20ddaf1b-c665-351e-8aa6-f590dc70321a:qk]' />
+          <aggregation value='true' />
+        </view>
+        <style><style-rule element='cell'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pareto Pct:qk]' value='p0.00%' /></style-rule><style-rule element='label'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pareto Pct:qk]' value='p0.00%' /></style-rule><style-rule element='text'><format attr='text-format' field='[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pareto Pct:qk]' value='p0.00%' /></style-rule><style-rule element='gridline'><format attr='line-pattern' value='none' /></style-rule></style>
+        <panes>
+          <pane selection-relaxation-option='selection-relaxation-allow'>
+            <view><breakdown value='auto' /></view>
+            <mark class='Bar' />
+            
+            <style>
+              <style-rule element='mark'><format attr='mark-labels-show' value='true' /><format attr='mark-labels-cull' value='true' /></style-rule>
+            </style>
+          </pane>
+        </panes>
+        <rows>[federated.1smknst1gebfuh1bkttg60wqkb7v].[usr:Pareto Pct:qk]</rows>
+        <cols>[federated.1smknst1gebfuh1bkttg60wqkb7v].[none:c8f5bd1d-0c0f-3a58-8464-94a181eefef9:nk]</cols>
+      </table>
+      <simple-id uuid='{333FC30F-E16D-412C-AAB0-969F658D9A0A}' />
+    </worksheet>
+  </worksheets>
+  <windows source-height='30'>
+    <window class='worksheet' name='WIN Running Revenue'>
+      <cards>
+        <edge name='left'><strip size='160'><card type='pages' /><card type='filters' /><card type='marks' /></strip></edge>
+        <edge name='top'>
+          <strip size='2147483647'><card type='columns' /></strip>
+          <strip size='2147483647'><card type='rows' /></strip>
+          <strip size='31'><card type='title' /></strip>
+        </edge>
+      </cards>
+      <viewpoint><zoom type='entire-view' /></viewpoint>
+      <simple-id uuid='{B52BDF1D-BABA-448C-93B6-F991DC2870D1}' />
+    </window>
+    <window class='worksheet' name='WIN Moving Avg'>
+      <cards>
+        <edge name='left'><strip size='160'><card type='pages' /><card type='filters' /><card type='marks' /></strip></edge>
+        <edge name='top'>
+          <strip size='2147483647'><card type='columns' /></strip>
+          <strip size='2147483647'><card type='rows' /></strip>
+          <strip size='31'><card type='title' /></strip>
+        </edge>
+      </cards>
+      <viewpoint><zoom type='entire-view' /></viewpoint>
+      <simple-id uuid='{A84BBDF0-794D-427C-8F65-211BD4794035}' />
+    </window>
+    <window class='worksheet' name='WIN Pct Of Total Region'>
+      <cards>
+        <edge name='left'><strip size='160'><card type='pages' /><card type='filters' /><card type='marks' /></strip></edge>
+        <edge name='top'>
+          <strip size='2147483647'><card type='columns' /></strip>
+          <strip size='2147483647'><card type='rows' /></strip>
+          <strip size='31'><card type='title' /></strip>
+        </edge>
+      </cards>
+      <viewpoint><zoom type='entire-view' /></viewpoint>
+      <simple-id uuid='{9D08F613-EB3C-464F-BEAA-9339028AAFD2}' />
+    </window>
+    <window class='worksheet' name='WIN Rank Category'>
+      <cards>
+        <edge name='left'><strip size='160'><card type='pages' /><card type='filters' /><card type='marks' /></strip></edge>
+        <edge name='top'>
+          <strip size='2147483647'><card type='columns' /></strip>
+          <strip size='2147483647'><card type='rows' /></strip>
+          <strip size='31'><card type='title' /></strip>
+        </edge>
+      </cards>
+      <viewpoint><zoom type='entire-view' /></viewpoint>
+      <simple-id uuid='{C7766163-88EB-4C29-8A37-4AAF26F407DE}' />
+    </window>
+    <window class='worksheet' name='WIN Window MaxMin'>
+      <cards>
+        <edge name='left'><strip size='160'><card type='pages' /><card type='filters' /><card type='marks' /></strip></edge>
+        <edge name='top'>
+          <strip size='2147483647'><card type='columns' /></strip>
+          <strip size='2147483647'><card type='rows' /></strip>
+          <strip size='31'><card type='title' /></strip>
+        </edge>
+      </cards>
+      <viewpoint><zoom type='entire-view' /></viewpoint>
+      <simple-id uuid='{29A50465-C96A-4EDC-BBF2-3EE05D16FC35}' />
+    </window>
+    <window class='worksheet' name='WIN WoW Delta'>
+      <cards>
+        <edge name='left'><strip size='160'><card type='pages' /><card type='filters' /><card type='marks' /></strip></edge>
+        <edge name='top'>
+          <strip size='2147483647'><card type='columns' /></strip>
+          <strip size='2147483647'><card type='rows' /></strip>
+          <strip size='31'><card type='title' /></strip>
+        </edge>
+      </cards>
+      <viewpoint><zoom type='entire-view' /></viewpoint>
+      <simple-id uuid='{DD848EC7-B430-4E89-9186-2096E83E84C7}' />
+    </window>
+    <window class='worksheet' name='WIN Weekly Funnel'>
+      <cards>
+        <edge name='left'><strip size='160'><card type='pages' /><card type='filters' /><card type='marks' /></strip></edge>
+        <edge name='top'>
+          <strip size='2147483647'><card type='columns' /></strip>
+          <strip size='2147483647'><card type='rows' /></strip>
+          <strip size='31'><card type='title' /></strip>
+        </edge>
+      </cards>
+      <viewpoint><zoom type='entire-view' /></viewpoint>
+      <simple-id uuid='{95A75E25-7262-4E19-AA68-865A4E63E325}' />
+    </window>
+    <window class='worksheet' name='WIN Pareto Category'>
+      <cards>
+        <edge name='left'><strip size='160'><card type='pages' /><card type='filters' /><card type='marks' /></strip></edge>
+        <edge name='top'>
+          <strip size='2147483647'><card type='columns' /></strip>
+          <strip size='2147483647'><card type='rows' /></strip>
+          <strip size='31'><card type='title' /></strip>
+        </edge>
+      </cards>
+      <viewpoint><zoom type='entire-view' /></viewpoint>
+      <simple-id uuid='{E2391731-8160-4946-8B3D-7B3A9414D7B6}' />
+    </window>
+  </windows>
+</workbook>

@@ -20,6 +20,7 @@ that mirrors the Tableau dashboard layout as closely as possible.
 - `refs/workbook-layout.md` — Ruby layout generation (mandatory), multi-series chart patterns
 - `refs/story-points.md` — Tableau stories → one Sigma page per story point (`build-story-pages.rb`)
 - `refs/blending.md` — data-blend detection + routing decision tree (same-warehouse repoint / VDS materialize / flag)
+- `refs/window-functions.md` — Tableau window/table calcs → Sigma-native window math (WINPROBE-validated mapping table, two-level helper shape, sort/partition/week-anchor rules, manual residues)
 
 **For canonical workbook spec shape** (element kinds, source kinds, controls, formulas, formatting), defer to the companion **`sigma-workbooks`** skill (install it if you haven't — it's the canonical Sigma workbook spec reference). This skill restates only the Tableau-conversion-specific patterns; everything else (KPI fields, color channel, pivot-table shape, manual sources, container styling, YAML default, etc.) lives there. Read its `reference/specification/` whenever you need the current spec surface.
 
@@ -582,18 +583,24 @@ Each calc record carries:
 - `name`, `formula`, `role`, `data_type`, `aggregation`, `is_hidden` — direct from Tableau
 - `is_lod` — `true` for `{FIXED/INCLUDE/EXCLUDE}` expressions
 - `depends_on` — referenced field names (metadata-api path only)
-- `requires_custom_sql` — `true` for Tableau table calcs (`WINDOW_*`,
-  `RUNNING_*`, `RANK*`, `INDEX`, `FIRST`, `LAST`, `SIZE`, `TOTAL`, `LOOKUP`,
-  `PREVIOUS_VALUE`) and LODs. These CANNOT be Sigma DM calc columns —
-  Sigma's `CountOver` / `SumOver` / `RankOver` / `CumulativeSum` etc.
-  **silently produce `error` type columns** in a DM calc column or grouping-
-  table master calc. They MUST be implemented as a Sigma Custom SQL data-
-  model element (`kind: "sql"`). See Phase 3 below for the spec shape.
+- `requires_custom_sql` — `true` ONLY for the **manual window residues**
+  (`WINDOW_MEDIAN/PERCENTILE/CORR/COVAR(P)/VAR(P)/STDEVP`, `PREVIOUS_VALUE`,
+  `SIZE`, `FIRST`, `LAST`, `RANK_UNIQUE/MODIFIED`) and `{INCLUDE/EXCLUDE}`
+  LODs. The mainstream window/table-calc family (`WINDOW_SUM/AVG/MIN/MAX/
+  COUNT/STDEV`, `RUNNING_*`, `RANK`/`RANK_DENSE`/`RANK_PERCENTILE`, `INDEX`,
+  `LOOKUP`, `TOTAL`) is **AUTO-TRANSLATED** by `build-charts-from-signals.rb`
+  into Sigma-NATIVE window math emitted as CHART-element viz formulas on the
+  yAxis — single DM base element, zero Custom SQL (WINPROBE-validated
+  930/930 cells; full mapping table in `refs/window-functions.md`). The
+  functions still CANNOT be Sigma DM calc columns (silent `error` type) and
+  the `*Over` family is `Unknown function` everywhere — the chart yAxis is
+  the only valid placement.
 - `translation_notes` — common Tableau→Sigma gotchas to apply during the
   Phase 3 DM build: `IIF`→`If`, `COUNTD`→`CountDistinct`, IF/ELSEIF chains
   ending in literal need `Coalesce` wraps on nullable inputs (Tableau
-  collapses NULL into ELSE; Sigma `If(NULL >= …, …)` returns NULL), and the
-  full Custom-SQL escalation for window/LOD calcs.
+  collapses NULL into ELSE; Sigma `If(NULL >= …, …)` returns NULL), the
+  per-function window mapping (`refs/window-functions.md`), and the
+  Custom-SQL escalation for the manual window residues only.
 
 If the workbook has > 1000 calcs on a single page or the GraphQL response
 exceeds ~5 MB, the API may truncate. In that case re-run with
@@ -910,7 +917,7 @@ Write the spec to `/tmp/<name>/dm-spec.json`. Full schema is in
 
 ### When to use a Custom SQL element instead of a calc column
 
-> **Sigma window functions silently fail in DM calc columns and in workbook master (grouping-table) calc columns.** `CountOver`, `SumOver`, `RankOver`, `RowNumberOver`, `MaxOver`, `MinOver`, `AvgOver`, `FirstOver`, `LastOver`, `MedianOver`, `StdDevOver`, `CumulativeSum`, `CumulativeAvg`, etc. all POST/PUT successfully and return `success: true`, but the column resolves as `error` on GET and the chart that references it renders blank. The validator now hard-fails on these (see `scripts/validate-spec.rb`), but the right fix at design time is to NOT write them as calc columns in the first place.
+> **Sigma window functions silently fail in DM calc columns and in workbook master (grouping-table) calc columns** — `CumulativeSum`, `Rank`, `Lag`, etc. POST successfully but resolve as `error` on GET, and the `*Over` family (`SumOver`/`RankOver`/`MaxOver`/...) is `Unknown function` in every spec context. **But they are FIRST-CLASS as CHART-element viz formulas on the yAxis** (WINPROBE-validated 2026-06-12, 930/930 cells): `build-charts-from-signals.rb` auto-emits the whole mainstream window/table-calc family that way — `RUNNING_*`→`Cumulative*`, bounded `WINDOW_*`→`Moving*`, share→`PercentOfTotal(agg, "grand_total")`, pareto→`CumulativeSum(PercentOfTotal(...))`, `RANK*`→`Rank/RankDense/RankPercentile(agg, "desc")`, `INDEX()`→`RowNumber()`, `LOOKUP(±n)`→`Lag/Lead`, unbounded `WINDOW_MAX/MIN/SUM`/`TOTAL`→hidden two-level grouped helper. Cumulative/rank formulas follow the chart's `xAxis.sort` (Tableau `<computed-sort>` is carried via a hidden companion measure) and auto-partition by the chart color dim. **Full mapping table + the broadcast-down/week-anchor gotchas: `refs/window-functions.md`.** The design rule stands: never write window functions as DM or master calc columns.
 
 > **`{FIXED ...}` LODs are AUTO-TRANSLATED — no Custom SQL needed.** When a
 > `{FIXED [dims] : AGG([m])}` calc is plotted as a chart/KPI measure,
@@ -929,7 +936,7 @@ Write the spec to `/tmp/<name>/dm-spec.json`. Full schema is in
 > NEVER write these as `SumOver`/`CountOver` master or DM calc columns — they
 > silently error.
 
-Any Tableau calc whose `requires_custom_sql: true` (from Phase 1e) — that is, any `WINDOW_*` / `RUNNING_*` / `RANK*` / `INDEX` / `FIRST` / `LAST` / `SIZE` / `TOTAL` / `LOOKUP` / `PREVIOUS_VALUE` table calc, or an `{INCLUDE/EXCLUDE}` LOD (those need the chart-grouping context) — must be implemented as a **Sigma Custom SQL data-model element**:
+Any Tableau calc whose `requires_custom_sql: true` (from Phase 1e) — that is, a **manual window residue** (`WINDOW_MEDIAN/PERCENTILE/CORR/COVAR(P)/VAR(P)/STDEVP`, `PREVIOUS_VALUE`, `SIZE`, `FIRST`, `LAST`, `RANK_UNIQUE/MODIFIED`, or a compute-using/addressing variant beyond Table(Across)/simple partitions) or an `{INCLUDE/EXCLUDE}` LOD (those need the chart-grouping context) — must be implemented as a **Sigma Custom SQL data-model element**. (The mainstream `WINDOW_*`/`RUNNING_*`/`RANK*`/`INDEX`/`LOOKUP`/`TOTAL` family no longer routes here — it is auto-emitted as Sigma-native chart formulas, `refs/window-functions.md`.)
 
 ```json
 {
@@ -958,12 +965,9 @@ Key points:
 - Column formula prefix is `[Custom SQL/<ALIAS_FROM_SELECT_LIST>]`. The alias is whatever you wrote in the `SELECT ... AS NAME` clause. **Use UPPERCASE aliases** (matches Snowflake's default identifier casing); Sigma's column lookup is case-sensitive against the SQL output.
 - Every column you want to expose in the DM needs both a SELECT-list entry in the SQL AND a corresponding `columns[]` entry on the DM element.
 - Translation hints from `extract-calc-fields.rb`:
-  - `RUNNING_SUM(SUM([X]))` → `SUM(X) OVER (ORDER BY <time> ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`
-  - `WINDOW_SUM(SUM([X]))` → `SUM(X) OVER (<partition / order>)`
-  - `RANK(SUM([X]))` → `RANK() OVER (PARTITION BY <p> ORDER BY <X> DESC)`
+  - `RUNNING_*` / bounded `WINDOW_*` / `RANK*` / `INDEX` / `LOOKUP` / `TOTAL` — **do NOT route here anymore**: auto-emitted as Sigma-native chart viz formulas (`refs/window-functions.md`). The ANSI `OVER(...)` forms below are the fallback ONLY for the manual residues (`WINDOW_MEDIAN`/`WINDOW_PERCENTILE`/`PREVIOUS_VALUE`/`SIZE`/non-default addressing): e.g. `WINDOW_MEDIAN(SUM([X]))` → `MEDIAN(X) OVER (<partition>)`, `PREVIOUS_VALUE` → recursive logic in SQL.
   - `{FIXED [Dim] : SUM([X])}` → `SUM(X) OVER (PARTITION BY Dim)` or a pre-aggregated subquery joined back — **fallback only**: when the LOD is plotted as a chart/KPI measure it is AUTO-TRANSLATED via the hidden two-level helper element (see the callout above), no Custom SQL needed
   - **Nested LODs** (`{FIXED A : AVG({FIXED A, B : SUM([X])})}`) → a helper-element CHAIN, not one formula: innermost LOD = helper element 1 (grouped by its dims, aggregate as `Value`), each outer level consumes `[LOD Helper k/Value]` via a relationship on the shared dims. `build-charts-from-signals.rb` decomposes these automatically into `<out>-lod-chains.json` (innermost first) — build one grouped element (or Custom SQL `GROUP BY` subquery) per level. **Each outer level's source MUST carry `groupingId` pointing at the inner element's grouping** — a plain `{kind: table, elementId}` source reads BASE-grain rows with the aggregate repeated per row, so outer Avg/Median/Count silently come out row-weighted (caught live: 969.82 row-weighted vs 687.81 correct on CSA.TJ.ORDER_FACT). Live-verified pattern (exact parity vs warehouse SQL), 2026-06-11.
-  - `LOOKUP(SUM([X]), -1)` → `LAG(X) OVER (ORDER BY <time>)`
 
 When a workbook mixes plain calcs with window calcs, you can have BOTH kinds of DM elements in the same data model: one `warehouse-table` element for everything plain, plus one or more `sql` elements for the window/LOD calcs, related by key. Charts source from whichever element has the columns they need.
 

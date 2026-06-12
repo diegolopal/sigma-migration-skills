@@ -1,0 +1,78 @@
+{
+  "views": {
+    "view": [
+      {
+        "tags": {},
+        "id": "939579b7-3a5e-4eef-8d4e-7be678adefeb",
+        "name": "WIN Running Revenue",
+        "contentUrl": "WINPROBEWindowFunctions/sheets/WINRunningRevenue",
+        "createdAt": "2026-06-12T12:01:33Z",
+        "updatedAt": "2026-06-12T12:01:33Z",
+        "viewUrlName": "WINRunningRevenue"
+      },
+      {
+        "tags": {},
+        "id": "446cd366-7aba-4c64-8dd0-75633d0c4b92",
+        "name": "WIN Moving Avg",
+        "contentUrl": "WINPROBEWindowFunctions/sheets/WINMovingAvg",
+        "createdAt": "2026-06-12T12:01:33Z",
+        "updatedAt": "2026-06-12T12:01:33Z",
+        "viewUrlName": "WINMovingAvg"
+      },
+      {
+        "tags": {},
+        "id": "20340dc0-4194-4530-8317-d72a24a1bcaa",
+        "name": "WIN Pct Of Total Region",
+        "contentUrl": "WINPROBEWindowFunctions/sheets/WINPctOfTotalRegion",
+        "createdAt": "2026-06-12T12:01:33Z",
+        "updatedAt": "2026-06-12T12:01:33Z",
+        "viewUrlName": "WINPctOfTotalRegion"
+      },
+      {
+        "tags": {},
+        "id": "57f05682-b35f-41cc-bc96-7217d06efb80",
+        "name": "WIN Rank Category",
+        "contentUrl": "WINPROBEWindowFunctions/sheets/WINRankCategory",
+        "createdAt": "2026-06-12T12:01:33Z",
+        "updatedAt": "2026-06-12T12:01:33Z",
+        "viewUrlName": "WINRankCategory"
+      },
+      {
+        "tags": {},
+        "id": "30fc3fc8-1e65-4cb7-8010-6365d489fe67",
+        "name": "WIN Window MaxMin",
+        "contentUrl": "WINPROBEWindowFunctions/sheets/WINWindowMaxMin",
+        "createdAt": "2026-06-12T12:01:33Z",
+        "updatedAt": "2026-06-12T12:01:33Z",
+        "viewUrlName": "WINWindowMaxMin"
+      },
+      {
+        "tags": {},
+        "id": "aa6ae7ea-580f-43f7-b135-d983e518f0f0",
+        "name": "WIN WoW Delta",
+        "contentUrl": "WINPROBEWindowFunctions/sheets/WINWoWDelta",
+        "createdAt": "2026-06-12T12:01:33Z",
+        "updatedAt": "2026-06-12T12:01:33Z",
+        "viewUrlName": "WINWoWDelta"
+      },
+      {
+        "tags": {},
+        "id": "9517fa12-b3ae-4dec-aa4b-2cf5a10ab971",
+        "name": "WIN Weekly Funnel",
+        "contentUrl": "WINPROBEWindowFunctions/sheets/WINWeeklyFunnel",
+        "createdAt": "2026-06-12T12:01:33Z",
+        "updatedAt": "2026-06-12T12:01:33Z",
+        "viewUrlName": "WINWeeklyFunnel"
+      },
+      {
+        "tags": {},
+        "id": "105f0388-d1c3-4a83-9e9d-5d1d2e820b57",
+        "name": "WIN Pareto Category",
+        "contentUrl": "WINPROBEWindowFunctions/sheets/WINParetoCategory",
+        "createdAt": "2026-06-12T12:01:33Z",
+        "updatedAt": "2026-06-12T12:01:33Z",
+        "viewUrlName": "WINParetoCategory"
+      }
+    ]
+  }
+}

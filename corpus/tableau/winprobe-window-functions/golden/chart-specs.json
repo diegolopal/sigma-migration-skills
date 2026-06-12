@@ -1,0 +1,582 @@
+{
+  "pages": [
+    {
+      "name": "[synthetic] WIN Running Revenue",
+      "elements": [
+        {
+          "id": "title--synthetic-win-running-revenue",
+          "kind": "text",
+          "body": "# <span style=\"color: #FFFFFF\">[synthetic] WIN Running Revenue</span>"
+        },
+        {
+          "id": "el-win-running-revenue",
+          "kind": "line-chart",
+          "name": "WIN Running Revenue",
+          "source": {
+            "kind": "table",
+            "elementId": "master"
+          },
+          "columns": [
+            {
+              "id": "x-el-win-running-revenue",
+              "name": "Order Date",
+              "formula": "DateAdd(\"day\", 1 - Weekday([Master/Order Date]), DateTrunc(\"day\", [Master/Order Date]))",
+              "format": {
+                "kind": "datetime",
+                "formatString": "%b %d, %Y"
+              }
+            },
+            {
+              "id": "y-el-win-running-revenue",
+              "name": "Running Revenue",
+              "formula": "CumulativeSum(Sum([Master/Net Revenue]))",
+              "format": {
+                "kind": "number",
+                "formatString": "$,.0f",
+                "currencySymbol": "$"
+              }
+            },
+            {
+              "id": "nn-x-el-win-running-revenue",
+              "name": "Order Date Not Null",
+              "formula": "IsNotNull(DateAdd(\"day\", 1 - Weekday([Master/Order Date]), DateTrunc(\"day\", [Master/Order Date])))"
+            }
+          ],
+          "xAxis": {
+            "columnId": "x-el-win-running-revenue"
+          },
+          "yAxis": {
+            "columnIds": [
+              "y-el-win-running-revenue"
+            ]
+          },
+          "filters": [
+            {
+              "columnId": "nn-x-el-win-running-revenue",
+              "kind": "list",
+              "mode": "include",
+              "selectionMode": "multiple",
+              "values": [
+                true
+              ],
+              "id": "flt-el-win-running-revenue-0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "[synthetic] WIN Moving Avg",
+      "elements": [
+        {
+          "id": "title--synthetic-win-moving-avg",
+          "kind": "text",
+          "body": "# <span style=\"color: #FFFFFF\">[synthetic] WIN Moving Avg</span>"
+        },
+        {
+          "id": "el-win-moving-avg",
+          "kind": "line-chart",
+          "name": "WIN Moving Avg",
+          "source": {
+            "kind": "table",
+            "elementId": "master"
+          },
+          "columns": [
+            {
+              "id": "x-el-win-moving-avg",
+              "name": "Order Date",
+              "formula": "DateAdd(\"day\", 1 - Weekday([Master/Order Date]), DateTrunc(\"day\", [Master/Order Date]))",
+              "format": {
+                "kind": "datetime",
+                "formatString": "%b %d, %Y"
+              }
+            },
+            {
+              "id": "y-el-win-moving-avg",
+              "name": "Moving Avg 4wk",
+              "formula": "MovingAvg(Sum([Master/Net Revenue]), 3)",
+              "format": {
+                "kind": "number",
+                "formatString": ",.0f"
+              }
+            },
+            {
+              "id": "nn-x-el-win-moving-avg",
+              "name": "Order Date Not Null",
+              "formula": "IsNotNull(DateAdd(\"day\", 1 - Weekday([Master/Order Date]), DateTrunc(\"day\", [Master/Order Date])))"
+            }
+          ],
+          "xAxis": {
+            "columnId": "x-el-win-moving-avg"
+          },
+          "yAxis": {
+            "columnIds": [
+              "y-el-win-moving-avg"
+            ]
+          },
+          "filters": [
+            {
+              "columnId": "nn-x-el-win-moving-avg",
+              "kind": "list",
+              "mode": "include",
+              "selectionMode": "multiple",
+              "values": [
+                true
+              ],
+              "id": "flt-el-win-moving-avg-0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "[synthetic] WIN Pct Of Total Region",
+      "elements": [
+        {
+          "id": "title--synthetic-win-pct-of-total-reg",
+          "kind": "text",
+          "body": "# <span style=\"color: #FFFFFF\">[synthetic] WIN Pct Of Total Region</span>"
+        },
+        {
+          "id": "el-win-pct-of-total-region",
+          "kind": "bar-chart",
+          "name": "WIN Pct Of Total Region",
+          "source": {
+            "kind": "table",
+            "elementId": "master"
+          },
+          "columns": [
+            {
+              "id": "x-el-win-pct-of-total-region",
+              "name": "Region",
+              "formula": "[Master/Region]"
+            },
+            {
+              "id": "y-el-win-pct-of-total-region",
+              "name": "Pct Of Total Revenue",
+              "formula": "PercentOfTotal(Sum([Master/Net Revenue]), \"grand_total\")",
+              "format": {
+                "kind": "number",
+                "formatString": ",.2%"
+              }
+            }
+          ],
+          "xAxis": {
+            "columnId": "x-el-win-pct-of-total-region"
+          },
+          "yAxis": {
+            "columnIds": [
+              "y-el-win-pct-of-total-region"
+            ]
+          },
+          "dataLabel": {
+            "labels": "shown"
+          }
+        }
+      ]
+    },
+    {
+      "name": "[synthetic] WIN Rank Category",
+      "elements": [
+        {
+          "id": "title--synthetic-win-rank-category",
+          "kind": "text",
+          "body": "# <span style=\"color: #FFFFFF\">[synthetic] WIN Rank Category</span>"
+        },
+        {
+          "id": "el-win-rank-category",
+          "kind": "bar-chart",
+          "name": "WIN Rank Category",
+          "source": {
+            "kind": "table",
+            "elementId": "master"
+          },
+          "columns": [
+            {
+              "id": "x-el-win-rank-category",
+              "name": "Category",
+              "formula": "[Master/Category]"
+            },
+            {
+              "id": "y-el-win-rank-category",
+              "name": "Revenue Rank",
+              "formula": "Rank(Sum([Master/Net Revenue]), \"desc\")",
+              "format": {
+                "kind": "number",
+                "formatString": ",.0f"
+              }
+            },
+            {
+              "id": "nn-x-el-win-rank-category",
+              "name": "Category Not Null",
+              "formula": "IsNotNull([Master/Category])"
+            },
+            {
+              "id": "srt-el-win-rank-category",
+              "name": "Net Revenue",
+              "formula": "Sum([Master/Net Revenue])"
+            }
+          ],
+          "xAxis": {
+            "columnId": "x-el-win-rank-category",
+            "sort": {
+              "by": "srt-el-win-rank-category",
+              "direction": "descending"
+            }
+          },
+          "yAxis": {
+            "columnIds": [
+              "y-el-win-rank-category"
+            ]
+          },
+          "dataLabel": {
+            "labels": "shown"
+          },
+          "filters": [
+            {
+              "columnId": "nn-x-el-win-rank-category",
+              "kind": "list",
+              "mode": "include",
+              "selectionMode": "multiple",
+              "values": [
+                true
+              ],
+              "id": "flt-el-win-rank-category-0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "[synthetic] WIN Window MaxMin",
+      "elements": [
+        {
+          "id": "title--synthetic-win-window-maxmin",
+          "kind": "text",
+          "body": "# <span style=\"color: #FFFFFF\">[synthetic] WIN Window MaxMin</span>"
+        },
+        {
+          "id": "el-win-window-maxmin",
+          "kind": "pivot-table",
+          "name": "WIN Window MaxMin",
+          "source": {
+            "kind": "table",
+            "elementId": "el-win-window-maxmin-win-src"
+          },
+          "columns": [
+            {
+              "id": "p-el-win-window-maxmin-row-region",
+              "name": "Region",
+              "formula": "[Net Revenue Window Source (win-window-maxmin)/Region]"
+            },
+            {
+              "id": "p-el-win-window-maxmin-col-order-date",
+              "name": "Order Date",
+              "formula": "[Net Revenue Window Source (win-window-maxmin)/Order Date]",
+              "format": {
+                "kind": "datetime",
+                "formatString": "%b %Y"
+              }
+            },
+            {
+              "id": "p-el-win-window-maxmin-value-window-max-revenue",
+              "name": "Window Max Revenue",
+              "formula": "Max([Net Revenue Window Source (win-window-maxmin)/Window Max Revenue])",
+              "format": {
+                "kind": "number",
+                "formatString": ",.0f"
+              }
+            },
+            {
+              "id": "p-el-win-window-maxmin-value-window-min-revenue",
+              "name": "Window Min Revenue",
+              "formula": "Min([Net Revenue Window Source (win-window-maxmin)/Window Min Revenue])",
+              "format": {
+                "kind": "number",
+                "formatString": ",.0f"
+              }
+            }
+          ],
+          "values": [
+            "p-el-win-window-maxmin-value-window-max-revenue",
+            "p-el-win-window-maxmin-value-window-min-revenue"
+          ],
+          "rowsBy": [
+            {
+              "id": "p-el-win-window-maxmin-row-region"
+            }
+          ],
+          "columnsBy": [
+            {
+              "id": "p-el-win-window-maxmin-col-order-date"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "[synthetic] WIN WoW Delta",
+      "elements": [
+        {
+          "id": "title--synthetic-win-wow-delta",
+          "kind": "text",
+          "body": "# <span style=\"color: #FFFFFF\">[synthetic] WIN WoW Delta</span>"
+        },
+        {
+          "id": "el-win-wow-delta",
+          "kind": "line-chart",
+          "name": "WIN WoW Delta",
+          "source": {
+            "kind": "table",
+            "elementId": "master"
+          },
+          "columns": [
+            {
+              "id": "x-el-win-wow-delta",
+              "name": "Order Date",
+              "formula": "DateAdd(\"day\", 1 - Weekday([Master/Order Date]), DateTrunc(\"day\", [Master/Order Date]))",
+              "format": {
+                "kind": "datetime",
+                "formatString": "%b %d, %Y"
+              }
+            },
+            {
+              "id": "y-el-win-wow-delta",
+              "name": "WoW Revenue Delta",
+              "formula": "Coalesce(Sum([Master/Net Revenue]) - Lag(Sum([Master/Net Revenue]), 1), 0)",
+              "format": {
+                "kind": "number",
+                "formatString": "$,.0f",
+                "currencySymbol": "$"
+              }
+            },
+            {
+              "id": "nn-x-el-win-wow-delta",
+              "name": "Order Date Not Null",
+              "formula": "IsNotNull(DateAdd(\"day\", 1 - Weekday([Master/Order Date]), DateTrunc(\"day\", [Master/Order Date])))"
+            }
+          ],
+          "xAxis": {
+            "columnId": "x-el-win-wow-delta"
+          },
+          "yAxis": {
+            "columnIds": [
+              "y-el-win-wow-delta"
+            ]
+          },
+          "filters": [
+            {
+              "columnId": "nn-x-el-win-wow-delta",
+              "kind": "list",
+              "mode": "include",
+              "selectionMode": "multiple",
+              "values": [
+                true
+              ],
+              "id": "flt-el-win-wow-delta-0"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "[synthetic] WIN Weekly Funnel",
+      "elements": [
+        {
+          "id": "title--synthetic-win-weekly-funnel",
+          "kind": "text",
+          "body": "# <span style=\"color: #FFFFFF\">[synthetic] WIN Weekly Funnel</span>"
+        },
+        {
+          "id": "el-win-weekly-funnel",
+          "kind": "line-chart",
+          "name": "WIN Weekly Funnel",
+          "source": {
+            "kind": "table",
+            "elementId": "master"
+          },
+          "columns": [
+            {
+              "id": "x-el-win-weekly-funnel",
+              "name": "Order Date",
+              "formula": "DateAdd(\"day\", 1 - Weekday([Master/Order Date]), DateTrunc(\"day\", [Master/Order Date]))",
+              "format": {
+                "kind": "datetime",
+                "formatString": "%b %d, %Y"
+              }
+            },
+            {
+              "id": "y0-el-win-weekly-funnel",
+              "name": "Distinct count of Order Id",
+              "formula": "CountDistinct([Master/Order Id])",
+              "format": {
+                "kind": "number",
+                "formatString": ",.0f"
+              }
+            },
+            {
+              "id": "y1-el-win-weekly-funnel",
+              "name": "Is Returned",
+              "formula": "Sum([Master/Is Returned])",
+              "format": {
+                "kind": "number",
+                "formatString": ",.0f"
+              }
+            },
+            {
+              "id": "y2-el-win-weekly-funnel",
+              "name": "Return Rate",
+              "formula": "Sum([Master/Is Returned]) / CountIf(IsNotNull([Master/Order Id]))",
+              "format": {
+                "kind": "number",
+                "formatString": ",.1%"
+              }
+            }
+          ],
+          "xAxis": {
+            "columnId": "x-el-win-weekly-funnel"
+          },
+          "yAxis": {
+            "columnIds": [
+              "y0-el-win-weekly-funnel",
+              "y1-el-win-weekly-funnel",
+              "y2-el-win-weekly-funnel"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "[synthetic] WIN Pareto Category",
+      "elements": [
+        {
+          "id": "title--synthetic-win-pareto-category",
+          "kind": "text",
+          "body": "# <span style=\"color: #FFFFFF\">[synthetic] WIN Pareto Category</span>"
+        },
+        {
+          "id": "el-win-pareto-category",
+          "kind": "bar-chart",
+          "name": "WIN Pareto Category",
+          "source": {
+            "kind": "table",
+            "elementId": "master"
+          },
+          "columns": [
+            {
+              "id": "x-el-win-pareto-category",
+              "name": "Category",
+              "formula": "[Master/Category]"
+            },
+            {
+              "id": "y-el-win-pareto-category",
+              "name": "Pareto Pct",
+              "formula": "CumulativeSum(PercentOfTotal(Sum([Master/Net Revenue]), \"grand_total\"))",
+              "format": {
+                "kind": "number",
+                "formatString": ",.2%"
+              }
+            },
+            {
+              "id": "nn-x-el-win-pareto-category",
+              "name": "Category Not Null",
+              "formula": "IsNotNull([Master/Category])"
+            },
+            {
+              "id": "srt-el-win-pareto-category",
+              "name": "Net Revenue",
+              "formula": "Sum([Master/Net Revenue])"
+            }
+          ],
+          "xAxis": {
+            "columnId": "x-el-win-pareto-category",
+            "sort": {
+              "by": "srt-el-win-pareto-category",
+              "direction": "descending"
+            }
+          },
+          "yAxis": {
+            "columnIds": [
+              "y-el-win-pareto-category"
+            ]
+          },
+          "dataLabel": {
+            "labels": "shown"
+          },
+          "filters": [
+            {
+              "columnId": "nn-x-el-win-pareto-category",
+              "kind": "list",
+              "mode": "include",
+              "selectionMode": "multiple",
+              "values": [
+                true
+              ],
+              "id": "flt-el-win-pareto-category-0"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "data_elements": [
+    {
+      "id": "el-win-window-maxmin-win-src",
+      "kind": "table",
+      "name": "Net Revenue Window Source (win-window-maxmin)",
+      "source": {
+        "kind": "table",
+        "elementId": "master"
+      },
+      "columns": [
+        {
+          "id": "el-win-window-maxmin-win-src-p0",
+          "name": "Region",
+          "formula": "[Master/Region]"
+        },
+        {
+          "id": "el-win-window-maxmin-win-src-a0",
+          "name": "Order Date",
+          "formula": "DateTrunc(\"quarter\", [Master/Order Date])"
+        },
+        {
+          "id": "el-win-window-maxmin-win-src-v",
+          "name": "Net Revenue Window Base",
+          "formula": "Sum([Master/Net Revenue])"
+        },
+        {
+          "id": "el-win-window-maxmin-win-src-s0",
+          "name": "Window Max Revenue",
+          "formula": "Max([Net Revenue Window Base])"
+        },
+        {
+          "id": "el-win-window-maxmin-win-src-s1",
+          "name": "Window Min Revenue",
+          "formula": "Min([Net Revenue Window Base])"
+        }
+      ],
+      "groupings": [
+        {
+          "id": "el-win-window-maxmin-win-src-g1",
+          "groupBy": [
+            "el-win-window-maxmin-win-src-p0"
+          ],
+          "calculations": [
+            "el-win-window-maxmin-win-src-s0",
+            "el-win-window-maxmin-win-src-s1"
+          ]
+        },
+        {
+          "id": "el-win-window-maxmin-win-src-g2",
+          "groupBy": [
+            "el-win-window-maxmin-win-src-a0"
+          ],
+          "calculations": [
+            "el-win-window-maxmin-win-src-v"
+          ]
+        }
+      ],
+      "visibleAsSource": false
+    }
+  ]
+}

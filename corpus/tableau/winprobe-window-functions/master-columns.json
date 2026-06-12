@@ -1,0 +1,26 @@
+{
+  "(?i)^(?:(?:sum|avg|average|min|max|median|distinct count|count) of |(?:avg|sum|min|max|med|cnt|ctd)\\.\\s*|(?:second|minute|hour|day|week|month|quarter|year) of )?Order\\ Id$": {
+    "id": "m-order-id",
+    "name": "Order Id"
+  },
+  "(?i)^(?:(?:sum|avg|average|min|max|median|distinct count|count) of |(?:avg|sum|min|max|med|cnt|ctd)\\.\\s*|(?:second|minute|hour|day|week|month|quarter|year) of )?Order\\ Date$": {
+    "id": "m-order-date",
+    "name": "Order Date"
+  },
+  "(?i)^(?:(?:sum|avg|average|min|max|median|distinct count|count) of |(?:avg|sum|min|max|med|cnt|ctd)\\.\\s*|(?:second|minute|hour|day|week|month|quarter|year) of )?Net\\ Revenue$": {
+    "id": "m-net-revenue",
+    "name": "Net Revenue"
+  },
+  "(?i)^(?:(?:sum|avg|average|min|max|median|distinct count|count) of |(?:avg|sum|min|max|med|cnt|ctd)\\.\\s*|(?:second|minute|hour|day|week|month|quarter|year) of )?Is\\ Returned$": {
+    "id": "m-is-returned",
+    "name": "Is Returned"
+  },
+  "(?i)^(?:(?:sum|avg|average|min|max|median|distinct count|count) of |(?:avg|sum|min|max|med|cnt|ctd)\\.\\s*|(?:second|minute|hour|day|week|month|quarter|year) of )?Region$": {
+    "id": "m-region",
+    "name": "Region"
+  },
+  "(?i)^(?:(?:sum|avg|average|min|max|median|distinct count|count) of |(?:avg|sum|min|max|med|cnt|ctd)\\.\\s*|(?:second|minute|hour|day|week|month|quarter|year) of )?Category$": {
+    "id": "m-category",
+    "name": "Category"
+  }
+}

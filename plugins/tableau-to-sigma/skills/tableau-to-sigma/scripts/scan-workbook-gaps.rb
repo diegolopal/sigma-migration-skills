@@ -56,7 +56,7 @@ INVENTORY = [
   { name: 'Cross-extract drift (live warehouse newer than extract)', pat: /<connection\s[^>]*\bclass='hyper'|<extract\s/,
     status: :manual, blurb: "Tableau extract data range typically lags the live warehouse by months/years (extract has 2023-2024, live warehouse has 2024-2027). Chart actuals WILL diverge on date axes — this is expected, not a converter bug. Tier as YELLOW with error_summary 'extract-vs-live drift'; document the extract refresh date alongside the live warehouse range." },
   { name: 'Table-calc INDEX/LOOKUP/TOTAL/RANK/ZN/IIF', pat: /\b(INDEX\(\)|LOOKUP\(|TOTAL\(|RANK\b|RANK_DENSE|RANK_PERCENTILE|\bZN\(|\bIIF\(|\bCOUNTD\()/,
-    status: :auto, blurb: 'Auto-translated to Sigma RowNumber/Lag/Lead/Rank/Coalesce/If/CountDistinct.' },
+    status: :auto, blurb: 'Auto-translated when plotted (WINPROBE-validated, bead 427; refs/window-functions.md): RANK family → Rank/RankDense/RankPercentile(agg, "desc" — Tableau default direction); INDEX() → RowNumber(); LOOKUP(agg, ±n) → Lag/Lead(agg, n); standalone TOTAL(agg) → hidden two-level grouped helper; pareto RUNNING_SUM/TOTAL → CumulativeSum(PercentOfTotal(agg, "grand_total")); ZN/IIF/COUNTD → Coalesce/If/CountDistinct. Tableau <computed-sort> carries into xAxis.sort (cumulative/rank follow it).' },
   { name: 'Negative number format (parens)',           pat: /;\s*\([^)]*\)/,
     status: :auto, blurb: 'Parens-on-negative segment translates to Sigma d3-format with ( prefix.' },
   { name: 'Axis range / scale override (log, fixed min/max)', pat: /<encoding\s+attr='space'[^>]*(?:scale='log'|range-type='fixed')/,
@@ -91,10 +91,12 @@ INVENTORY = [
   # UNHANDLED — feature actively used in real workbooks but not surfaced yet
   # (numeric-range param moved to auto in commit 1d3445d — scout discovered the
   # number-range controlType is correct)
-  { name: 'WINDOW_* aggregates (WINDOW_SUM/AVG/MAX...)', pat: /\bWINDOW_(SUM|AVG|MIN|MAX|COUNT|MEDIAN|PERCENTILE|VAR|STDEV)\b/,
-    status: :unhandled, blurb: 'Skill warns; needs translation to Sigma Cumulative*/Moving* or Custom SQL (beads-sigma-427).' },
+  { name: 'WINDOW_* aggregates (SUM/AVG/MIN/MAX/COUNT/STDEV)', pat: /\bWINDOW_(SUM|AVG|MIN|MAX|COUNT|STDEV)\b(?!P)/,
+    status: :auto, blurb: 'Auto-translated when plotted (WINPROBE-validated, bead 427; refs/window-functions.md): bounded WINDOW_*(agg, -n[, m]) → Moving*(agg, n[, m]) as a chart yAxis viz formula; agg/WINDOW_SUM(agg) share → PercentOfTotal(agg, "grand_total"); unbounded WINDOW_MAX/MIN/SUM → hidden two-level grouped helper (consumer re-aggregates Max/Min, NEVER Sum). One DM base element, zero Custom SQL. Compute-using/addressing overrides beyond Table(Across)/simple partitions stay manual (flagged).' },
   { name: 'RUNNING_* totals',                          pat: /\bRUNNING_(SUM|AVG|COUNT|MIN|MAX)\b/,
-    status: :unhandled, blurb: 'Skill warns; translates to Sigma CumulativeSum/Avg in non-grouping context (beads-sigma-427).' },
+    status: :auto, blurb: 'Auto-translated when plotted: RUNNING_* → Sigma Cumulative* as a chart yAxis viz formula (follows the xAxis sort; auto-partitions by chart color/series). Pareto RUNNING_SUM/TOTAL → CumulativeSum(PercentOfTotal(agg, "grand_total")). WINPROBE-validated (bead 427).' },
+  { name: 'Window calcs with NO validated Sigma mapping', pat: /\b(WINDOW_(MEDIAN|PERCENTILE|CORR|COVARP?|VARP?|STDEVP)|PREVIOUS_VALUE|RANK_(UNIQUE|MODIFIED))\s*\(|\bSIZE\s*\(\s*\)/,
+    status: :manual, blurb: 'WINDOW_MEDIAN/PERCENTILE/CORR/COVAR(P)/VAR(P)/STDEVP, PREVIOUS_VALUE, SIZE(), RANK_UNIQUE/MODIFIED — no validated Sigma chart-formula equivalent; port via a Custom SQL DM element (ANSI OVER(...)) or re-author in Sigma. build-charts flags these, never guesses.' },
   { name: 'Tableau SCRIPT_* (R/Python)',               pat: /\bSCRIPT_(REAL|STR|INT|BOOL)\b/,
     status: :unhandled, blurb: 'No Sigma equivalent. Customer rewrites in SQL/Python via Custom SQL or external prep.' },
   { name: 'Phone / mobile-specific layout',            pat: /<device-layout\b|<phone-layout\b/,

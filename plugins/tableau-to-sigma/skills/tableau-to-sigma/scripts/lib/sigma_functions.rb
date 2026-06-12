@@ -119,12 +119,16 @@ module SigmaFunctions
     /\bIS\s+NULL\b/i     => 'x IS NULL → Sigma IsNull(x)',
     /\bIS\s+NOT\s+NULL\b/i => 'x IS NOT NULL → Sigma IsNotNull(x)',
     /\bDATEPART\s*\(\s*['"]/i => 'DATEPART("part", date) → Sigma DatePart("part", date) — capitalization matters',
-    /\bWINDOW_(SUM|AVG|MIN|MAX|COUNT|MEDIAN|PERCENTILE)\b/i =>
-      'WINDOW_* aggregates → use Sigma Cumulative*/Moving* OR a Custom SQL element with OVER(...)',
+    /\bWINDOW_(SUM|AVG|MIN|MAX|COUNT|STDEV)\b(?!P)/i =>
+      'WINDOW_*(agg, -n[, m]) → Sigma Moving*(agg, n[, m]); unbounded WINDOW_MAX/MIN/SUM → two-level grouped helper; agg/WINDOW_SUM(agg) → PercentOfTotal(agg, "grand_total") — all as CHART-element viz formulas on the yAxis (refs/window-functions.md), never DM calc columns',
+    /\bWINDOW_(MEDIAN|PERCENTILE|CORR|COVARP?|VARP?|STDEVP)\b/i =>
+      'WINDOW_MEDIAN/PERCENTILE/CORR/COVAR/VAR/STDEVP → no validated Sigma chart-formula mapping; Custom SQL element with OVER(...) or re-author',
     /\bRUNNING_(SUM|AVG|COUNT|MIN|MAX)\b/i =>
-      'RUNNING_* → Sigma CumulativeSum/CumulativeAvg/etc. inside a non-grouping context, OR Custom SQL with OVER(... ROWS UNBOUNDED PRECEDING)',
-    /\bRANK_(DENSE|MODIFIED|UNIQUE|PERCENTILE)\b/i =>
-      'RANK_* → Sigma RankDense / RankPercentile / RowNumber, OR Custom SQL with RANK()/DENSE_RANK()/ROW_NUMBER() OVER(...)',
+      'RUNNING_* → Sigma Cumulative* as a CHART-element viz formula on the yAxis (follows xAxis sort; auto-partitions by chart color) — never a DM calc column',
+    /\bRANK_(DENSE|PERCENTILE)\b/i =>
+      'RANK_DENSE/RANK_PERCENTILE → Sigma RankDense/RankPercentile(agg, "desc") as a chart viz formula (Tableau default direction = desc)',
+    /\bRANK_(MODIFIED|UNIQUE)\b/i =>
+      'RANK_MODIFIED/RANK_UNIQUE → no validated Sigma mapping; Custom SQL RANK()/ROW_NUMBER() OVER(...) or re-author',
     /\b\{\s*(FIXED|INCLUDE|EXCLUDE)\b/i =>
       'Tableau LOD → use Sigma window function family OR a Custom SQL data-model element',
     /\bIsIn\s*\(/        => 'IsIn() is not a Sigma function — use Sigma In(value, list...) OR an or chain',

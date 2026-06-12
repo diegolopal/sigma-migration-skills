@@ -169,7 +169,10 @@ USER_AGG_FN = {
   'MEDIAN' => 'Median'
 }.freeze
 
-def translate_user_agg_formula(formula, mmap, columns_by_guid = {})
+# extra_fns: additional Sigma function names the residue validator should
+# accept (the window-calc path passes WINDOW_SIGMA_FNS so Cumulative*/Moving*/
+# Rank/Lag/... formulas validate; plain ratio decomposition passes none).
+def translate_user_agg_formula(formula, mmap, columns_by_guid = {}, extra_fns: [])
   s = formula.to_s.gsub(/\s+/, ' ').strip
   return nil if s.empty?
   # Resolve Tableau-internal GUID refs ([d3b60b0e-…]) to their captions first —
@@ -200,8 +203,10 @@ def translate_user_agg_formula(formula, mmap, columns_by_guid = {})
   # Validate: after stripping translated calls + refs, only arithmetic glue may
   # remain — otherwise the formula has constructs we can't safely auto-emit.
   residue = out.dup
+  residue.gsub!(/"(?:\\.|[^"\\])*"/, '1') # string literals ("desc", "grand_total")
   residue.gsub!(/\[Master\/[^\]]+\]/, '1')
-  residue.gsub!(/\b(Sum|Avg|Min|Max|Median|CountDistinct|CountIf|IsNotNull|Coalesce|If)\b/, '')
+  allowed = %w[Sum Avg Min Max Median CountDistinct CountIf IsNotNull Coalesce If] + extra_fns
+  residue.gsub!(/\b(#{allowed.map { |f| Regexp.escape(f) }.join('|')})\b/, '')
   return nil unless residue =~ %r{\A[\s()+\-*/.,\d!=<>]*\z}
   out
 end
@@ -538,9 +543,10 @@ end
 
 # ---- Tableau table-calc translators ---------------------------------------
 # Translate Tableau table-calculation functions to their Sigma equivalents.
-# Returns the translated formula, plus a hint about Sigma-specific caveats
-# (e.g., "window functions silently error in grouping-table charts — add to a
-# non-grouping context or Custom SQL DM element").
+# Returns the translated formula, plus a placement hint. Sigma window
+# functions are FIRST-CLASS as chart-element viz formulas on the yAxis
+# (WINPROBE-validated 2026-06-12); they error only in DM-element calc columns
+# and grouping-table master calcs — see refs/window-functions.md.
 #
 # Function mappings (Sigma names):
 #   INDEX()                  → RowNumber()
@@ -578,15 +584,42 @@ def translate_tableau_tc(formula)
     s = s.sub($~[0], $1)
     hints << 'LOOKUP(x, 0)→x'; changed = true
   end
-  # LOOKUP(expr, -n) → Lead(expr, n)
+  # LOOKUP(expr, -n) → Lag(expr, n). Tableau's negative offset looks BACKWARD
+  # (LOOKUP(x, -1) = previous row), which is Sigma Lag — the earlier mapping
+  # had Lag/Lead reversed (caught by the WINPROBE WoW-delta live validation:
+  # Coalesce(Sum(x) - Lag(Sum(x), 1), 0) matches the warehouse, Lead diverges).
   while s =~ /\bLOOKUP\s*\(\s*((?:[^,()]|\([^()]*\)|\([^()]*\([^()]*\)[^()]*\))+?)\s*,\s*-(\d+)\s*\)/
-    s = s.sub($~[0], "Lead(#{$1}, #{$2})")
-    hints << 'LOOKUP(x, -n)→Lead(x, n)'; changed = true
-  end
-  # LOOKUP(expr, n) where n >= 1 → Lag(expr, n)
-  while s =~ /\bLOOKUP\s*\(\s*((?:[^,()]|\([^()]*\)|\([^()]*\([^()]*\)[^()]*\))+?)\s*,\s*(\d+)\s*\)/
     s = s.sub($~[0], "Lag(#{$1}, #{$2})")
-    hints << 'LOOKUP(x, n)→Lag(x, n)'; changed = true
+    hints << 'LOOKUP(x, -n)→Lag(x, n)'; changed = true
+  end
+  # LOOKUP(expr, n) where n >= 1 → Lead(expr, n) (forward offset = next rows)
+  while s =~ /\bLOOKUP\s*\(\s*((?:[^,()]|\([^()]*\)|\([^()]*\([^()]*\)[^()]*\))+?)\s*,\s*(\d+)\s*\)/
+    s = s.sub($~[0], "Lead(#{$1}, #{$2})")
+    hints << 'LOOKUP(x, n)→Lead(x, n)'; changed = true
+  end
+
+  # RUNNING_* → Cumulative* (WINPROBE-validated 930/930: cumulative functions
+  # follow the chart's xAxis sort and auto-partition by the chart color/series).
+  { 'SUM' => 'CumulativeSum', 'AVG' => 'CumulativeAvg', 'MAX' => 'CumulativeMax',
+    'MIN' => 'CumulativeMin', 'COUNT' => 'CumulativeCount' }.each do |tfn, sfn|
+    if s.gsub!(/\bRUNNING_#{tfn}\s*\(/, "#{sfn}(")
+      hints << "RUNNING_#{tfn}→#{sfn} (follows xAxis sort; valid as a chart viz formula on the yAxis)"
+      changed = true
+    end
+  end
+  # WINDOW_*(agg, -n, 0) → Moving*(agg, n); (-n, m) → Moving*(agg, n, m).
+  # Tableau bounds are (first, last) offsets; Sigma Moving* takes (back[, fwd])
+  # as POSITIVE counts. Forward-only / shifted windows (first > 0 or last < 0)
+  # and FIRST()/LAST() bounds have no validated mapping — leave untouched.
+  { 'AVG' => 'MovingAvg', 'SUM' => 'MovingSum', 'MAX' => 'MovingMax',
+    'MIN' => 'MovingMin', 'COUNT' => 'MovingCount', 'STDEV' => 'MovingStdDev' }.each do |tfn, sfn|
+    while (m = s.match(/\bWINDOW_#{tfn}\s*\(\s*((?:[^(),]|\([^()]*\)|\([^()]*\([^()]*\)[^()]*\))+?)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)/))
+      lo, hi = m[2].to_i, m[3].to_i
+      break if lo > 0 || hi < 0 # shifted window — unvalidated, keep Tableau form
+      s = s.sub(m[0], hi.zero? ? "#{sfn}(#{m[1]}, #{-lo})" : "#{sfn}(#{m[1]}, #{-lo}, #{hi})")
+      hints << "WINDOW_#{tfn}(x, -n, m)→#{sfn}(x, n[, m]) (valid as a chart viz formula on the yAxis)"
+      changed = true
+    end
   end
 
   # TOTAL(SUM(x)) → Sum(x); TOTAL(COUNTD(x)) → CountDistinct(x); TOTAL(AVG(x))
@@ -600,19 +633,28 @@ def translate_tableau_tc(formula)
     hints << 'TOTAL(AVG(x))→Avg(x) (non-grouping context)'; changed = true
   end
 
-  # RANK([col], 'desc') / RANK([col]) / RANK_DENSE / RANK_PERCENTILE
+  # RANK([col], 'desc') / RANK([col]) / RANK_DENSE / RANK_PERCENTILE.
+  # Tableau's RANK family defaults to DESCENDING; Sigma's defaults ascending —
+  # the no-direction form must emit an explicit "desc" (WINPROBE-validated:
+  # Rank(Sum(x), "desc") matches Tableau RANK(SUM(x)) exactly).
   if s.gsub!(/\bRANK\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*,\s*'(asc|desc)'\s*\)/, 'Rank(\1, "\2")')
     hints << "RANK→Rank"; changed = true
   end
-  if s.gsub!(/\bRANK\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*\)/, 'Rank(\1)')
-    hints << "RANK→Rank"
+  if s.gsub!(/\bRANK\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*\)/, 'Rank(\1, "desc")')
+    hints << "RANK→Rank (Tableau default direction = desc)"
     changed = true
   end
-  if s.gsub!(/\bRANK_DENSE\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*\)/, 'RankDense(\1)')
+  if s.gsub!(/\bRANK_DENSE\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*,\s*'(asc|desc)'\s*\)/, 'RankDense(\1, "\2")')
     hints << "RANK_DENSE→RankDense"; changed = true
   end
-  if s.gsub!(/\bRANK_PERCENTILE\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*\)/, 'RankPercentile(\1)')
+  if s.gsub!(/\bRANK_DENSE\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*\)/, 'RankDense(\1, "desc")')
+    hints << "RANK_DENSE→RankDense (Tableau default direction = desc)"; changed = true
+  end
+  if s.gsub!(/\bRANK_PERCENTILE\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*,\s*'(asc|desc)'\s*\)/, 'RankPercentile(\1, "\2")')
     hints << "RANK_PERCENTILE→RankPercentile"; changed = true
+  end
+  if s.gsub!(/\bRANK_PERCENTILE\s*\(\s*((?:[^,()]|\([^()]*\))+?)\s*\)/, 'RankPercentile(\1, "desc")')
+    hints << "RANK_PERCENTILE→RankPercentile (Tableau default direction = desc)"; changed = true
   end
 
   # Simple renames done AFTER table-calc rewrites so the table-calc patterns
@@ -744,8 +786,171 @@ def translate_tableau_tc(formula)
 
   return [nil, nil] unless changed
   hints.uniq!
-  hints << 'NOTE: Sigma window functions (Rank/Lag/Lead/Cumulative*) silently error in grouping-table charts and DM-element calc cols — add to a workbook-master non-grouping context OR a Custom SQL DM element' if hints.any? { |h| h =~ /Rank|Lag|Lead|RowNumber/ }
+  # WINPROBE-validated placement rule (2026-06-12, 930/930 cells): Sigma window
+  # functions (Rank/RankDense/RankPercentile/Lag/Lead/RowNumber/Cumulative*/
+  # Moving*/PercentOfTotal) work FIRST-CLASS as chart-element viz formulas on
+  # the yAxis — no Custom SQL needed. They still silently error in DM-element
+  # calc columns and grouping-table master calcs, and the *Over family
+  # (SumOver/MaxOver/...) is 'Unknown function' in spec contexts entirely.
+  hints << 'NOTE: emit as a CHART-element viz formula on the yAxis (valid there; WINPROBE-verified). Never a DM-element calc col / grouping-table master calc, and never the *Over functions — see refs/window-functions.md' if hints.any? { |h| h =~ /Rank|Lag|Lead|RowNumber|Cumulative|Moving/ }
   [s, hints.join('; ')]
+end
+
+# ---- Tableau window table-calcs → Sigma-native chart formulas --------------
+# WINPROBE-validated design (bead 427, 2026-06-12; 930/930 cells exact vs the
+# warehouse on ONE DM base element, ZERO Custom SQL):
+#
+#   RUNNING_SUM/AVG/MAX/MIN/COUNT(agg)        → Cumulative*(agg)
+#   WINDOW_AVG/SUM/MAX/MIN/COUNT(agg, -n, 0)  → Moving*(agg, n)
+#   WINDOW_*(agg, -n, m)                      → Moving*(agg, n, m)
+#   WINDOW_STDEV(agg, -n[, m])                → MovingStdDev(agg, n[, m])
+#   agg / WINDOW_SUM(agg)   (unbounded share) → PercentOfTotal(agg, "grand_total")
+#   RUNNING_SUM(agg) / TOTAL(agg)   (pareto)  → CumulativeSum(PercentOfTotal(agg, "grand_total"))
+#   RANK / RANK_DENSE / RANK_PERCENTILE(agg)  → Rank/RankDense/RankPercentile(agg, "desc")
+#   INDEX()                                   → RowNumber()
+#   LOOKUP(agg, -n) / LOOKUP(agg, n)          → Lag(agg, n) / Lead(agg, n)
+#   unbounded WINDOW_MAX/MIN/SUM, TOTAL(agg)  → TWO-LEVEL grouped helper element
+#     (outer grouping = partition dims, inner = addressing dims; the chart
+#     consumer re-aggregates Max/Min — NEVER Sum: group calcs broadcast to
+#     base-grain rows, so a Sum would multiply by the row count)
+#
+# Placement rule (the load-bearing discovery): these Sigma window functions are
+# FIRST-CLASS as chart-element viz formulas on the yAxis. Cumulative*/rank
+# functions follow the chart's xAxis sort and auto-partition by the chart's
+# color/series dim. They still silently error in DM-element calc columns and
+# grouping-table master calcs, and the *Over family (SumOver/MaxOver/...) is
+# 'Unknown function' in every spec context — never emit those.
+#
+# STAYS MANUAL (flagged, never guessed): WINDOW_MEDIAN / WINDOW_PERCENTILE /
+# WINDOW_CORR / WINDOW_COVAR(P) / WINDOW_VAR(P) / WINDOW_STDEVP,
+# PREVIOUS_VALUE, SIZE(), FIRST()/LAST(), RANK_UNIQUE / RANK_MODIFIED, and any
+# compute-using/addressing override beyond the default Table(Across) / simple
+# partition ("restart every", pane-relative, compute-along-non-axis-dim).
+WINDOW_SIGMA_FNS = %w[
+  CumulativeSum CumulativeAvg CumulativeMax CumulativeMin CumulativeCount
+  MovingAvg MovingSum MovingMax MovingMin MovingCount MovingStdDev
+  Rank RankDense RankPercentile RowNumber Lag Lead PercentOfTotal
+].freeze
+
+WINDOW_MANUAL_RE = /\b(?:WINDOW_(?:MEDIAN|PERCENTILE|CORR|COVARP?|VARP?|STDEVP)|PREVIOUS_VALUE|RANK_(?:UNIQUE|MODIFIED))\s*\(|\b(?:SIZE|FIRST|LAST)\s*\(\s*\)/i
+
+# Case-SENSITIVE on purpose: .twb formulas carry canonical UPPERCASE Tableau
+# function names, and the post-rewrite leftover check must not match the
+# translated Sigma names (Rank/Lookup-the-join-fn/...).
+WINDOW_TC_RE = /\b(?:RUNNING_[A-Z]+|WINDOW_[A-Z]+|RANK(?:_[A-Z]+)?|INDEX|LOOKUP|TOTAL|PREVIOUS_VALUE)\s*\(|\bSIZE\s*\(\s*\)/
+
+# Classify + translate a Tableau window table-calc into its Sigma-native form.
+# Returns nil when the formula has no window construct (caller proceeds on the
+# normal paths), otherwise a hash:
+#   { 'mode' => 'inline',    'formula' => <Sigma formula over [Master/...]>,
+#                            'follows_sort' => bool, 'note' => ... }
+#   { 'mode' => 'two-stage', 'stage_agg' => 'Max|Min|Sum', 'retrieve_agg' =>
+#                            'Max|Min', 'value_formula' => <inner agg>, 'note' => ... }
+#   { 'mode' => 'manual',    'note' => why }
+def translate_window_calc(formula, mmap, columns_by_guid = {})
+  s = formula.to_s.gsub(/\s+/, ' ').strip
+  return nil if s.empty? || s !~ WINDOW_TC_RE
+  s = s.gsub(/\[([0-9a-f\-]{36})\]/i) do
+    info = columns_by_guid[Regexp.last_match(1)]
+    info && info['caption'] ? "[#{info['caption'].strip}]" : Regexp.last_match(0)
+  end
+
+  if (mm = s.match(WINDOW_MANUAL_RE))
+    return { 'mode' => 'manual',
+             'note' => "uses #{mm[0].sub(/\s*\(\s*\)?\z/, '')}() — no validated Sigma chart-formula mapping (stays manual; port via Custom SQL or re-author in Sigma)" }
+  end
+
+  agg_src = '(?:SUM|AVG|MIN|MAX|MEDIAN|COUNTD|COUNT)\s*\(\s*\[[^\]]+\]\s*\)'
+  norm = ->(x) { x.to_s.gsub(/\s+/, '').downcase }
+  tx_agg = ->(a) { translate_user_agg_formula(a, mmap, {}) }
+
+  # Unbounded share-of-total: AGG / WINDOW_SUM(AGG) on the SAME aggregate.
+  if (m = s.match(%r{\A\s*(#{agg_src})\s*/\s*WINDOW_SUM\s*\(\s*(#{agg_src})\s*\)\s*\z}i)) &&
+     norm.call(m[1]) == norm.call(m[2])
+    inner = tx_agg.call(m[1])
+    return { 'mode' => 'manual', 'note' => 'share-of-total whose inner aggregate did not translate' } unless inner
+    return { 'mode' => 'inline', 'follows_sort' => false,
+             'formula' => %(PercentOfTotal(#{inner}, "grand_total")),
+             'note' => 'agg/WINDOW_SUM(agg) → PercentOfTotal(agg, "grand_total")' }
+  end
+
+  # Pareto: RUNNING_SUM(AGG) / TOTAL(AGG) on the SAME aggregate.
+  if (m = s.match(%r{\A\s*RUNNING_SUM\s*\(\s*(#{agg_src})\s*\)\s*/\s*TOTAL\s*\(\s*(#{agg_src})\s*\)\s*\z}i)) &&
+     norm.call(m[1]) == norm.call(m[2])
+    inner = tx_agg.call(m[1])
+    return { 'mode' => 'manual', 'note' => 'pareto whose inner aggregate did not translate' } unless inner
+    return { 'mode' => 'inline', 'follows_sort' => true,
+             'formula' => %(CumulativeSum(PercentOfTotal(#{inner}, "grand_total"))),
+             'note' => 'RUNNING_SUM(agg)/TOTAL(agg) pareto → CumulativeSum(PercentOfTotal(agg, "grand_total")) — accumulation follows the xAxis sort' }
+  end
+
+  # Standalone unbounded WINDOW_MAX/MIN/SUM or TOTAL → two-level grouped helper.
+  if (m = s.match(/\A\s*(?:WINDOW_(MAX|MIN|SUM)|(TOTAL))\s*\(\s*(#{agg_src})\s*\)\s*\z/i))
+    inner = tx_agg.call(m[3])
+    return { 'mode' => 'manual', 'note' => 'unbounded window aggregate whose inner aggregate did not translate' } unless inner
+    stage = (m[1] || 'SUM').upcase
+    return { 'mode' => 'two-stage',
+             'stage_agg' => { 'MAX' => 'Max', 'MIN' => 'Min', 'SUM' => 'Sum' }[stage],
+             'retrieve_agg' => stage == 'MIN' ? 'Min' : 'Max',
+             'value_formula' => inner,
+             'note' => "unbounded #{m[2] ? 'TOTAL' : "WINDOW_#{stage}"} → two-level grouped helper; consumer re-aggregates #{stage == 'MIN' ? 'Min' : 'Max'} (NEVER Sum — group calcs broadcast to base-grain rows)" }
+  end
+
+  # Generic inline path: rewrite the window tokens (translate_tableau_tc now
+  # carries the full validated mapping), then translate the inner aggregates.
+  rewritten, _hint = translate_tableau_tc(s)
+  rewritten ||= s
+  if (left = rewritten.match(WINDOW_TC_RE))
+    return { 'mode' => 'manual',
+             'note' => "window construct #{left[0].sub(/\s*\(\s*\)?\z/, '')}() has no validated mapping in this shape (stays manual)" }
+  end
+  final = translate_user_agg_formula(rewritten, mmap, {}, extra_fns: WINDOW_SIGMA_FNS)
+  return { 'mode' => 'manual', 'note' => 'window formula did not reduce to translated aggregates + arithmetic glue' } unless final
+  return nil unless WINDOW_SIGMA_FNS.any? { |f| final =~ /\b#{f}\s*\(/ }
+  { 'mode' => 'inline', 'formula' => final,
+    'follows_sort' => !!(final =~ /\b(?:Cumulative\w+|Moving\w+|RowNumber|Lag|Lead)\s*\(/),
+    'note' => 'window table-calc → Sigma viz formula on the chart yAxis' }
+end
+
+# Hidden two-level grouped helper for UNBOUNDED partitioned window aggregates
+# (WINDOW_MAX/MIN/SUM, TOTAL). Generalizes build_two_stage_helper to multiple
+# stage calcs sharing one inner value column (a pivot with both WINDOW_MAX and
+# WINDOW_MIN builds ONE helper):
+#   outer grouping (g1) = the PARTITION dims (chart color / pivot rowsBy;
+#                         a constant "All Rows" key when unpartitioned)
+#   inner grouping (g2) = the ADDRESSING dims (chart x / pivot columnsBy),
+#                         computing the inner aggregate (the window's operand)
+#   stage cols          = stage_agg over the inner GROUP values, broadcast to
+#                         base-grain rows when a chart re-aggregates the helper
+# The consumer references stages via Max()/Min() — NEVER Sum (broadcast-down).
+def build_window_helper(el_id:, master_id:, partition_dims:, addressing_dims:,
+                        value_name:, value_formula:, stages:)
+  src_id = "#{el_id}-win-src"
+  src_name = "#{value_name.sub(/ Window Base\z/, '')} Window Source (#{el_id.sub(/^el-(kpi-)?/, '')})"
+  outer = partition_dims.empty? ? [{ 'name' => 'All Rows', 'formula' => '1' }] : partition_dims
+  outer_cols = outer.each_with_index.map do |d, i|
+    { 'id' => "#{src_id}-p#{i}", 'name' => d['name'], 'formula' => d['formula'] }
+  end
+  inner_cols = addressing_dims.each_with_index.map do |d, i|
+    { 'id' => "#{src_id}-a#{i}", 'name' => d['name'], 'formula' => d['formula'] }
+  end
+  value_col = { 'id' => "#{src_id}-v", 'name' => value_name, 'formula' => value_formula }
+  stage_cols = stages.each_with_index.map do |st, i|
+    { 'id' => "#{src_id}-s#{i}", 'name' => st['name'], 'formula' => "#{st['agg']}([#{value_name}])" }
+  end
+  element = {
+    'id' => src_id, 'kind' => 'table', 'name' => src_name,
+    'source' => { 'kind' => 'table', 'elementId' => master_id },
+    'columns' => outer_cols + inner_cols + [value_col] + stage_cols,
+    'groupings' => [
+      { 'id' => "#{src_id}-g1", 'groupBy' => outer_cols.map { |c| c['id'] },
+        'calculations' => stage_cols.map { |c| c['id'] } },
+      { 'id' => "#{src_id}-g2", 'groupBy' => inner_cols.map { |c| c['id'] },
+        'calculations' => [value_col['id']] }
+    ],
+    'visibleAsSource' => false
+  }
+  [element, src_name]
 end
 
 # ---- Nested FIXED LOD decomposition (beads-sigma-t67b) ----------------------
@@ -910,7 +1115,13 @@ SHELF_AGG_FOR_PREFIX = {
 }.freeze
 SHELF_TRUNC_FOR_PREFIX = {
   'yr' => 'year', 'qr' => 'quarter', 'mn' => 'month',
-  'wk' => 'week', 'dy' => 'day', 'hr' => 'hour'
+  'wk' => 'week', 'dy' => 'day', 'hr' => 'hour',
+  # Tableau column-instance TRUNC derivations carry a 't' prefix ([tqr:GUID:qk]
+  # = Quarter-Trunc); the bare forms above are kept for back-compat. Without
+  # these, a date-trunc pivot shelf silently fell through to the RAW date
+  # column and the grid exploded to day grain (caught by WINPROBE MaxMin).
+  'tyr' => 'year', 'tqr' => 'quarter', 'tmn' => 'month',
+  'twk' => 'week', 'tdy' => 'day', 'thr' => 'hour'
 }.freeze
 
 def resolve_shelf_field(field, meta, mmap)
@@ -930,7 +1141,7 @@ def resolve_shelf_field(field, meta, mmap)
   [m, cap_for_field]
 end
 
-def build_pivot_element(z, meta, mmap, opts, warnings)
+def build_pivot_element(z, meta, mmap, opts, warnings, data_elements = [])
   cap = z['caption']
   el_id = "el-#{cap.downcase.gsub(/\W+/, '-')[0..40]}".sub(/-$/, '')
   rows_shelf = z['rows_shelf'] || {}
@@ -941,6 +1152,7 @@ def build_pivot_element(z, meta, mmap, opts, warnings)
   cols_by    = []
   values_arr = []
   seen_ids   = {}
+  user_vals  = [] # User-derivation measures (window / ratio calcs) — resolved below
 
   add_col = lambda do |field, target|
     m, _cap = resolve_shelf_field(field, meta, mmap)
@@ -962,6 +1174,11 @@ def build_pivot_element(z, meta, mmap, opts, warnings)
         else
           "#{agg}([Master/#{m['name']}])"
         end
+      elsif field['role'] == 'dim' && SHELF_TRUNC_FOR_PREFIX[deriv] == 'week'
+        # Tableau weeks are Sunday-anchored; Sigma DateTrunc("week") follows
+        # the warehouse week start (Monday on Snowflake) — use the verified
+        # Sunday-anchored arithmetic instead (Weekday() is 1=Sunday).
+        %(DateAdd("day", 1 - Weekday([Master/#{m['name']}]), DateTrunc("day", [Master/#{m['name']}])))
       elsif field['role'] == 'dim' && SHELF_TRUNC_FOR_PREFIX[deriv]
         %(DateTrunc("#{SHELF_TRUNC_FOR_PREFIX[deriv]}", [Master/#{m['name']}]))
       else
@@ -978,6 +1195,7 @@ def build_pivot_element(z, meta, mmap, opts, warnings)
       col_obj['format'] = { 'kind' => 'datetime', 'formatString' => '%b %Y' }
     end
     cols_array << col_obj
+    user_vals << { 'col' => col_obj, 'name' => m['name'].to_s.strip } if target == :value && %w[usr user].include?(deriv)
     case target
     when :row   then rows_by    << { 'id' => col_id }
     when :col   then cols_by    << { 'id' => col_id }
@@ -995,12 +1213,16 @@ def build_pivot_element(z, meta, mmap, opts, warnings)
   end
 
   # Measure-Names pattern: shelves carry the placeholder but the actual
-  # measures live in z['measures']. Materialize them here.
+  # measures live in z['measures']. Materialize them here — SKIPPING entries
+  # that are really shelf DIMS (date-trunc / None derivations land in
+  # z['measures'] too; emitting Sum() over a date silently corrupted the grid).
   if values_arr.empty? && (z['measures'] || []).any?
     z['measures'].each do |m|
+      deriv = (m['derivation'] || 'Sum').to_s
+      next if deriv == 'None' || DATE_TRUNC.key?(deriv)
       add_col.call({
         'role'       => 'measure',
-        'derivation' => (m['derivation'] || 'Sum').to_s.downcase,
+        'derivation' => deriv.downcase,
         'raw'        => m['column'],
         'guid'       => guid_from_text(m['column'].to_s)
       }, :value)
@@ -1012,11 +1234,82 @@ def build_pivot_element(z, meta, mmap, opts, warnings)
     return nil
   end
 
+  # User-derivation values: a pivot value with derivation=User is a Tableau
+  # calc — the SHELF_AGG fallback above emitted an unresolvable
+  # `Sum([Master/<calc name>])`. Resolve each against the worksheet calcs:
+  #   - plain aggregated ratio → decomposed Sigma formula (inline)
+  #   - UNBOUNDED window aggregate (WINDOW_MAX/MIN/SUM, TOTAL) → the pivot is
+  #     rewired onto ONE hidden two-level grouped helper (outer grouping =
+  #     rowsBy dims = the partition; inner = columnsBy dims = the addressing;
+  #     Tableau's default Table(Across) windows across the pivot columns).
+  #     WINPROBE-validated: consumer re-aggregates Max/Min, NEVER Sum.
+  #   - anything else windowed (Cumulative*/Moving* inside a pivot grid) is
+  #     UNVALIDATED in pivot context — dropped from the grid with a loud warn.
+  win_stage = [] # { 'col' =>, 'plan' => }
+  user_vals.each do |uv|
+    ws_calc = (z['calculations'] || []).find do |c|
+      c['name'].to_s.gsub(/^\[|\]$/, '').strip.casecmp?(uv['name'])
+    end
+    next unless ws_calc
+    plan = translate_window_calc(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
+    if plan.nil?
+      f = translate_user_agg_formula(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
+      if f
+        uv['col']['formula'] = f
+        warnings << "'#{cap}' pivot value '#{uv['name']}' is a Tableau User-aggregated calc — decomposed: #{f[0..120]}"
+      else
+        warnings << "'#{cap}' pivot value '#{uv['name']}' is a Tableau calc that could not be auto-decomposed — " \
+                    "its emitted formula will not resolve; re-author manually. Formula: #{ws_calc['formula'].to_s.gsub(/\s+/, ' ')[0..120]}"
+      end
+    elsif plan['mode'] == 'two-stage'
+      win_stage << { 'col' => uv['col'], 'plan' => plan }
+    else
+      note = plan['mode'] == 'inline' ? 'cumulative/moving window formulas are UNVALIDATED inside a pivot grid' : plan['note']
+      cols_array.delete(uv['col'])
+      values_arr.delete(uv['col']['id'])
+      warnings << "'#{cap}' pivot value '#{uv['name']}' STAYS MANUAL (#{note}) — dropped from the grid; " \
+                  "rebuild by hand if needed. Formula: #{ws_calc['formula'].to_s.gsub(/\s+/, ' ')[0..120]}"
+    end
+  end
+
+  source = { 'kind' => 'table', 'elementId' => opts[:master_id] }
+  if win_stage.any?
+    inner_formulas = win_stage.map { |w| w['plan']['value_formula'] }.uniq
+    non_window_vals = values_arr.reject { |vid| win_stage.any? { |w| w['col']['id'] == vid } }
+    if inner_formulas.size == 1 && non_window_vals.empty?
+      row_dims = cols_array.select { |c| rows_by.any? { |r| r['id'] == c['id'] } }
+      col_dims = cols_array.select { |c| cols_by.any? { |r| r['id'] == c['id'] } }
+      value_name = "#{inner_formulas.first[/\[Master\/([^\]]+)\]/, 1] || header_base(win_stage.first['col']['name'])} Window Base"
+      helper, src_name = build_window_helper(
+        el_id: el_id, master_id: opts[:master_id],
+        partition_dims: row_dims.map { |c| { 'name' => c['name'], 'formula' => c['formula'] } },
+        addressing_dims: col_dims.map { |c| { 'name' => c['name'], 'formula' => c['formula'] } },
+        value_name: value_name, value_formula: inner_formulas.first,
+        stages: win_stage.map { |w| { 'name' => w['col']['name'], 'agg' => w['plan']['stage_agg'] } })
+      data_elements << helper
+      source = { 'kind' => 'table', 'elementId' => helper['id'] }
+      (row_dims + col_dims).each { |c| c['formula'] = "[#{src_name}/#{c['name']}]" }
+      win_stage.each { |w| w['col']['formula'] = "#{w['plan']['retrieve_agg']}([#{src_name}/#{w['col']['name']}])" }
+      warnings << "'#{cap}' unbounded window pivot value(s) #{win_stage.map { |w| w['col']['name'] }.join(', ')} → " \
+                  "hidden helper '#{src_name}' (partition = #{row_dims.map { |c| c['name'] }.join(', ')}; " \
+                  "addressing = #{col_dims.map { |c| c['name'] }.join(', ')}) ⚠ verify in Sigma"
+      warnings << "'#{cap}' window partition spans #{row_dims.size} dims — multi-dim partitions beyond a single " \
+                  'split are UNTESTED; verify against Tableau' if row_dims.size > 1
+    else
+      win_stage.each do |w|
+        cols_array.delete(w['col'])
+        values_arr.delete(w['col']['id'])
+      end
+      warnings << "'#{cap}' mixes unbounded window value(s) with other measures / differing inner aggregates — " \
+                  'helper rewiring only supports a uniform window pivot; the windowed value(s) were dropped (manual)'
+    end
+  end
+
   {
     'id'        => el_id,
     'kind'      => 'pivot-table',
     'name'      => cap,
-    'source'    => { 'kind' => 'table', 'elementId' => opts[:master_id] },
+    'source'    => source,
     'columns'   => cols_array,
     'values'    => values_arr,
     'rowsBy'    => rows_by,
@@ -1199,7 +1492,7 @@ layout.each do |dash|
     # Falls through to the CSV-driven flat-table path if shelves can't be
     # resolved cleanly (logged via warnings).
     if z['chart_kind'] == 'pivot-table'
-      pivot_el = build_pivot_element(z, meta, mmap, opts, warnings)
+      pivot_el = build_pivot_element(z, meta, mmap, opts, warnings, data_elements)
       if pivot_el
         pivot_el['_worksheet'] = cap
         pivot_el['_dashboard'] = dash['dashboard']
@@ -1253,6 +1546,97 @@ layout.each do |dash|
                   "need dim + measure. NO Sigma chart was built for this zone — " \
                   "the Phase-6 tile census will report it as unmatched."
       next
+    end
+
+    # ---- Measure Names / Measure Values long format → multi-measure chart --
+    # Tableau exports a Measure-Names worksheet as LONG rows
+    # ("Measure Names","<dim>","Measure Values") — the 2-column flow below
+    # would mis-read the measure-name strings as a color dim. Dissolve it into
+    # ONE chart with a yAxis column per measure (WINPROBE-validated shape:
+    # multi-measure line over the shared dim, window calcs included).
+    mn_i = headers.index { |h| h.to_s.strip.casecmp?('Measure Names') }
+    mv_i = headers.index { |h| h.to_s.strip.casecmp?('Measure Values') }
+    if mn_i && mv_i && headers.length == 3 && !%w[pivot-table kpi].include?(z['chart_kind'].to_s)
+      dim_i   = ([0, 1, 2] - [mn_i, mv_i]).first
+      dim_hdr = headers[dim_i].to_s.strip
+      labels  = rows.map { |r| r[mn_i] }.compact.map(&:strip).reject(&:empty?).uniq
+      dimm = map_column(dim_hdr, mmap) ||
+             { 'id' => "m-#{dim_hdr.downcase.gsub(/\W+/, '-')}", 'name' => dim_hdr }
+      mm_trunc = (hm = dim_hdr.match(/^(second|minute|hour|day|week|month|quarter|year) of /i)) && hm[1].downcase
+      el_id = "el-#{cap.downcase.gsub(/\W+/, '-')[0..40]}".sub(/-$/, '')
+      mm_dim_formula =
+        if mm_trunc == 'week'
+          # Tableau weeks are Sunday-anchored (see the week note below).
+          %(DateAdd("day", 1 - Weekday([Master/#{dimm['name']}]), DateTrunc("day", [Master/#{dimm['name']}])))
+        elsif mm_trunc
+          %(DateTrunc("#{mm_trunc}", [Master/#{dimm['name']}]))
+        else
+          "[Master/#{dimm['name']}]"
+        end
+      dim_col_obj = { 'id' => "x-#{el_id}", 'name' => dimm['name'], 'formula' => mm_dim_formula }
+      dim_col_obj['format'] = { 'kind' => 'datetime', 'formatString' => mm_trunc == 'week' ? '%b %d, %Y' : '%b %Y' } if mm_trunc
+      cap_deriv = {}
+      (z['aggregations'] || {}).each do |col_ref, deriv|
+        g = strip_brackets(col_ref)
+        info = (meta['columns_by_guid'] || {})[g]
+        cap_deriv[(info ? info['caption'] : g).to_s.strip.downcase] = deriv
+      end
+      mm_norm = ->(x) { x.to_s.gsub(/^\[|\]$/, '').strip.downcase }
+      y_cols = []
+      unresolved = []
+      labels.each_with_index do |label, i|
+        base = header_base(label)
+        ws_calc = (z['calculations'] || []).find do |c|
+          n = mm_norm.call(c['name'])
+          n == mm_norm.call(base) || n == mm_norm.call(label)
+        end
+        formula = nil
+        if ws_calc
+          wp = translate_window_calc(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
+          if wp && wp['mode'] == 'inline'
+            formula = wp['formula']
+            warnings << "'#{cap}' measure '#{label}' is a window table-calc — emitted as a Sigma viz formula [#{wp['note']}]"
+          elsif wp
+            warnings << "'#{cap}' measure '#{label}' STAYS MANUAL in the multi-measure chart: #{wp['note']}"
+          else
+            formula = translate_user_agg_formula(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
+          end
+        else
+          mcol = map_column(base, mmap) || map_column(label, mmap)
+          if mcol
+            deriv = infer_csv_agg(label) || cap_deriv[mcol['name'].to_s.strip.downcase] ||
+                    cap_deriv[base.downcase] || 'Sum'
+            formula = mcol['formula'] || render_agg(SIGMA_AGG[deriv] || 'Sum', "[Master/#{mcol['name']}]")
+          end
+        end
+        if formula.nil?
+          unresolved << label
+          next
+        end
+        fmt = label.to_s =~ /(rate|margin|pct|percent|ratio)/i ?
+                { 'kind' => 'number', 'formatString' => ',.1%' } :
+                { 'kind' => 'number', 'formatString' => ',.0f' }
+        # Column NAME = the Tableau measure-name label verbatim — the parity
+        # plan pivots the long CSV and matches Sigma columns by display name.
+        y_cols << { 'id' => "y#{i}-#{el_id}", 'name' => label, 'formula' => formula, 'format' => fmt }
+      end
+      if y_cols.any?
+        element = {
+          'id' => el_id, 'kind' => SIGMA_KIND[z['chart_kind']] || 'line-chart', 'name' => cap,
+          'source' => { 'kind' => 'table', 'elementId' => opts[:master_id] },
+          'columns' => [dim_col_obj] + y_cols,
+          'xAxis' => { 'columnId' => dim_col_obj['id'] },
+          'yAxis' => { 'columnIds' => y_cols.map { |c| c['id'] } },
+          '_worksheet' => cap, '_dashboard' => dash['dashboard']
+        }
+        elements << element
+        warnings << "'#{cap}' Measure Names/Values long-format view dissolved into a multi-measure " \
+                    "#{element['kind']} (#{y_cols.size} measure(s): #{y_cols.map { |c| c['name'] }.join(', ')})" \
+                    "#{unresolved.any? ? "; UNRESOLVED measure(s): #{unresolved.join(', ')}" : ''} — " \
+                    'view filters (other than the Measure Names filter itself) are not auto-carried; verify'
+        next
+      end
+      warnings << "'#{cap}' is a Measure Names/Values view but no measure resolved — falling through to the 2-column flow"
     end
 
     dim_hdr  = headers[0].to_s.strip
@@ -1359,6 +1743,8 @@ layout.each do |dash|
     # Sum([Master/X]) is unresolvable when no master column carries the ratio —
     # decompose the calc formula into a direct Sigma formula instead (bead k3kk).
     user_agg_formula = nil
+    window_plan = nil
+    window_calc_name = nil
     if agg_label == 'User' && meas['formula'].nil?
       norm = ->(x) { x.to_s.gsub(/^\[|\]$/, '').strip.downcase }
       user_calc = (z['calculations'] || []).find do |c|
@@ -1366,12 +1752,33 @@ layout.each do |dash|
         !n.empty? && (n == norm.call(meas['name']) || n == norm.call(meas_hdr) ||
                       norm.call(meas_hdr).include?(n))
       end
-      user_agg_formula = user_calc &&
-                         translate_user_agg_formula(user_calc['formula'], mmap,
-                                                    meta['columns_by_guid'] || {})
-      if user_agg_formula
+      # Window table-calcs FIRST (RUNNING_* / WINDOW_* / RANK / LOOKUP / INDEX /
+      # TOTAL): translate to Sigma-native window math on the chart yAxis (see
+      # translate_window_calc above — WINPROBE-validated, zero Custom SQL).
+      window_plan = user_calc &&
+                    translate_window_calc(user_calc['formula'], mmap,
+                                          meta['columns_by_guid'] || {})
+      window_calc_name = user_calc && user_calc['name'].to_s.gsub(/^\[|\]$/, '')
+      case window_plan && window_plan['mode']
+      when 'inline'
+        user_agg_formula = window_plan['formula']
+        warnings << "'#{cap}' measure '#{meas_hdr}' is a Tableau window table-calc — auto-emitted as a Sigma " \
+                    "viz formula on the yAxis: #{user_agg_formula[0..140]}  [#{window_plan['note']}]"
+      when 'two-stage'
+        # Helper built below once the dim/color column objects exist.
+        warnings << "'#{cap}' measure '#{meas_hdr}' is an unbounded window aggregate — auto-built as a hidden " \
+                    "two-level grouped helper [#{window_plan['note']}]"
+      when 'manual'
+        warnings << "'#{cap}' measure '#{meas_hdr}' STAYS MANUAL: #{window_plan['note']}. " \
+                    "Formula: #{user_calc['formula'].to_s.gsub(/\s+/, ' ')[0..140]}"
+        window_plan = nil
+      end
+      user_agg_formula ||= (window_plan.nil? || window_plan['mode'] != 'two-stage') && user_calc &&
+                           translate_user_agg_formula(user_calc['formula'], mmap,
+                                                      meta['columns_by_guid'] || {}) || nil
+      if user_agg_formula && !(window_plan && window_plan['mode'] == 'inline')
         warnings << "'#{cap}' measure '#{meas['name']}' is a Tableau User-aggregated calc — emitted its decomposed Sigma formula directly: #{user_agg_formula[0..140]}"
-      else
+      elsif user_agg_formula.nil? && !(window_plan && window_plan['mode'] == 'two-stage')
         # Fall back to the CSV-header aggregation hint ("Avg. X" → Avg), not a
         # raw column ref (which Sigma's yAxis silently Sum()s — bead z1d0).
         sigma_agg = SIGMA_AGG[infer_csv_agg(meas_hdr) || 'Sum'] || 'Sum'
@@ -1450,7 +1857,32 @@ layout.each do |dash|
     # formulas (null-dim IsNotNull, sort, dataLabel) keeps working because the
     # column OBJECTS keep their ids/names — only formulas + source change.
     chart_source_eid = opts[:master_id]
-    if meas['formula'].nil? && user_agg_formula.nil?
+    if window_plan && window_plan['mode'] == 'two-stage'
+      # Unbounded partitioned window aggregate (WINDOW_MAX/MIN/SUM, TOTAL):
+      # partition = the chart's color/series dim (Tableau's default
+      # Table(Across) addressing restarts per pane row); addressing = the
+      # plotted x dim. No color dim = a whole-table window (constant key).
+      partition = color_col_obj ? [{ 'name' => color_col_obj['name'], 'formula' => color_col_obj['formula'] }] : []
+      value_name = "#{window_plan['value_formula'][/\[Master\/([^\]]+)\]/, 1] || header_base(meas_hdr)} Window Base"
+      helper, src_name = build_window_helper(
+        el_id: el_id, master_id: opts[:master_id],
+        partition_dims: partition,
+        addressing_dims: [{ 'name' => dim['name'], 'formula' => dim_formula }],
+        value_name: value_name, value_formula: window_plan['value_formula'],
+        stages: [{ 'name' => header_base(meas_hdr), 'agg' => window_plan['stage_agg'] }])
+      data_elements << helper
+      chart_source_eid = helper['id']
+      dim_col_obj['formula'] = "[#{src_name}/#{dim['name']}]"
+      color_col_obj['formula'] = "[#{src_name}/#{color_col_obj['name']}]" if color_col_obj
+      measure_formula = "#{window_plan['retrieve_agg']}([#{src_name}/#{header_base(meas_hdr)}])"
+      warnings << "'#{cap}' unbounded window measure '#{meas_hdr}' → hidden helper '#{src_name}' " \
+                  "(outer grouping = #{partition.any? ? partition.map { |d| d['name'] }.join(', ') : 'whole table'}, " \
+                  "inner = #{dim['name']}; consumer #{window_plan['retrieve_agg']}s the broadcast stage value) ⚠ verify in Sigma"
+      if partition.size > 1 || (color_col_obj && z.dig('channels', 'color').nil?)
+        warnings << "'#{cap}' window partition has more than one split dim — multi-dim partitions beyond a single " \
+                    'color split are UNTESTED; verify the windowed values against Tableau before shipping'
+      end
+    elsif meas['formula'].nil? && user_agg_formula.nil?
       lod_calc = (z['calculations'] || []).find do |c|
         c['name'].to_s.gsub(/^\[|\]$/, '').strip.casecmp?(header_base(meas_hdr))
       end
@@ -1534,6 +1966,15 @@ layout.each do |dash|
     # bare formatString string for convenience.
     if meas['format'].is_a?(String)
       meas_col_obj['format'] = { 'kind' => 'number', 'formatString' => meas['format'] }
+    end
+    # Windowed-measure format overrides: a rank named "Revenue Rank" would
+    # otherwise inherit the $-currency heuristic from the /revenue/ name match.
+    if window_plan && window_plan['mode'] == 'inline'
+      case window_plan['formula']
+      when /\A\s*RankPercentile\(/ then meas_col_obj['format'] = { 'kind' => 'number', 'formatString' => ',.1%' }
+      when /\A\s*(Rank|RankDense|RowNumber)\(/ then meas_col_obj['format'] = { 'kind' => 'number', 'formatString' => ',.0f' }
+      when /\A\s*(CumulativeSum\(PercentOfTotal|PercentOfTotal)\(/ then meas_col_obj['format'] = { 'kind' => 'number', 'formatString' => ',.2%' }
+      end
     end
 
     kind = SIGMA_KIND[z['chart_kind']] || 'bar-chart'
@@ -1813,10 +2254,37 @@ layout.each do |dash|
       if z['sort']
         dir = z.dig('sort', 'direction').to_s
         sigma_dir = (dir =~ /desc/i) ? 'descending' : 'ascending'
-        x_axis['sort'] = {
-          'by'        => sort_target_column_id(z['sort'], dim, dim_hdr, dim_col_obj['id'], meas_col_obj['id']),
-          'direction' => sigma_dir
-        }
+        sort_by = nil
+        # <computed-sort using='[sum:GUID:qk]'> = "sort the dim BY measure Y".
+        # Resolve Y; when it isn't the plotted measure, carry it as a HIDDEN
+        # companion aggregate so xAxis.sort can target it. This is load-bearing
+        # for window calcs: Sigma Cumulative*/Rank follow the xAxis sort, so a
+        # pareto chart sorted by revenue desc must accumulate in that order
+        # (sorting by the cumulative measure itself would be circular).
+        if z['sort']['using']
+          u = z['sort']['using'].to_s
+          ug = guid_from_text(u)
+          ucap = ug && (meta['columns_by_guid'] || {})[ug]&.dig('caption')
+          ucap ||= u.sub(/^\[[^\]]+\]\./, '').gsub(/^\[|\]$/, '')
+                    .sub(/^[a-z]+:/i, '').sub(/:[a-z]+$/i, '').strip
+          um = ucap && ucap !~ /\A[0-9a-f\-]{36}\z/i ? map_column(ucap, mmap) : nil
+          if um && um['name'].casecmp?(meas['name'])
+            sort_by = meas_col_obj['id']
+          elsif um && chart_source_eid == opts[:master_id]
+            uagg = SHELF_AGG_FOR_PREFIX[(u[/\[([a-z]+):/i, 1] || 'sum').downcase] || 'Sum'
+            comp_id = "srt-#{el_id}"
+            element['columns'] << { 'id' => comp_id, 'name' => um['name'],
+                                    'formula' => um['formula'] || render_agg(uagg, "[Master/#{um['name']}]") }
+            sort_by = comp_id
+            warnings << "'#{cap}' Tableau computed-sort (by #{um['name']} #{sigma_dir}) carried into xAxis.sort " \
+                        'via a hidden companion aggregate — cumulative/rank window formulas follow this order'
+          elsif window_plan
+            warnings << "'#{cap}' computed-sort measure '#{ucap}' could not be carried (unmapped or helper-sourced " \
+                        'chart) — VERIFY the accumulation order of the windowed measure against Tableau'
+          end
+        end
+        sort_by ||= sort_target_column_id(z['sort'], dim, dim_hdr, dim_col_obj['id'], meas_col_obj['id'])
+        x_axis['sort'] = { 'by' => sort_by, 'direction' => sigma_dir }
       end
       element['xAxis'] = x_axis
       # Combo-chart: yAxis.columnIds is a mixed array — bare strings default to
@@ -2038,6 +2506,12 @@ layout.each do |dash|
 
       next if formula =~ /\A\s*(SUM|COUNT|AVG|MIN|MAX)\(\[[^\]]+\]\)\s*\z/
       next if formula =~ /\A\s*\[[^\]]+\]\s*\z/
+
+      # The plotted measure's window calc was already auto-emitted on this
+      # chart (inline yAxis viz formula or two-stage helper) — skip the
+      # hint-only re-translation so the WARN stream stays single-sourced.
+      next if window_plan && window_calc_name &&
+              c['name'].to_s.gsub(/^\[|\]$/, '').casecmp?(window_calc_name)
 
       # Try parameter-driven translations first (CASE / IF chain on param).
       translated = translate_case_on_param(formula, param_caps) ||

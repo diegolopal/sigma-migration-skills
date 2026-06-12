@@ -149,6 +149,31 @@ sigma_charts.each do |el|
   rows = CSV.read(csv_path)
   next if rows.empty?
   header = rows.shift
+
+  # Measure Names / Measure Values long-format CSV → pivot WIDE so it compares
+  # against the dissolved multi-measure Sigma chart (build-charts emits one
+  # yAxis column per measure, NAMED with the verbatim Tableau measure label —
+  # the pivoted header below therefore matches by display name).
+  mn_i = header.index { |h| h.to_s.strip.casecmp?('Measure Names') }
+  mv_i = header.index { |h| h.to_s.strip.casecmp?('Measure Values') }
+  if mn_i && mv_i && header.length == 3
+    dim_i  = ([0, 1, 2] - [mn_i, mv_i]).first
+    labels = rows.map { |r| r[mn_i] }.compact.map(&:strip).reject(&:empty?).uniq
+    wide   = {}
+    order  = []
+    rows.each do |r|
+      k = r[dim_i]
+      unless wide.key?(k)
+        wide[k] = {}
+        order << k
+      end
+      wide[k][r[mn_i].to_s.strip] = r[mv_i]
+    end
+    header = [header[dim_i]] + labels
+    rows   = order.map { |k| [k] + labels.map { |l| wide[k][l] } }
+    warn "#{sigma_name.inspect}: Measure Names/Values long CSV pivoted to wide (#{labels.size} measure(s)) for the multi-measure chart"
+  end
+
   n_fields = header.length
 
   # Parse a Tableau CSV cell to a comparable value. Measures arrive as
