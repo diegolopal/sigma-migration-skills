@@ -20,6 +20,13 @@
     field: order_fact.order_channel
     allow_multiple_values: true
 
+  - name: First Order Date
+    title: First Order Date
+    type: date_filter
+    model: skilltest_orders
+    explore: order_fact
+    field: customer_dim.first_order
+
   elements:
   - name: Total Net Revenue
     title: Total Net Revenue
@@ -30,6 +37,7 @@
     listen:
       Region: customer_dim.region
       Order Channel: order_fact.order_channel
+      First Order Date: customer_dim.first_order_date
     row: 0
     col: 0
     width: 8
@@ -44,6 +52,7 @@
     listen:
       Region: customer_dim.region
       Order Channel: order_fact.order_channel
+      First Order Date: customer_dim.first_order_date
     row: 0
     col: 8
     width: 8
@@ -58,6 +67,7 @@
     listen:
       Region: customer_dim.region
       Order Channel: order_fact.order_channel
+      First Order Date: customer_dim.first_order_date
     row: 0
     col: 16
     width: 8

@@ -2597,6 +2597,105 @@ if title_text
   }
 end
 
+# ---- Control targeting: intended-scope closure ------------------------------
+# A control filter applied to an element propagates to every element that
+# SOURCES it (verified Sigma propagation), so the old emission hardcoded ONE
+# target — opts[:master_id]. That goes DEAD for any chart whose source chain
+# never reaches the master: DM-direct elements and dim-grain helpers source
+# the data model itself (audit-proven case: a master-targeted Region control
+# never filtered 'Monthly Revenue Trend'). Targeting now walks every emitted
+# chart's source chain to its ROOT and targets the set of roots the control's
+# INTENDED charts actually use. Intended scope per source signal:
+#   * shared-view quick filters apply PER-DASHBOARD: the dashboards whose zone
+#     tree carries that filter zone; no zone info → shared-view default (all)
+#   * worksheet-level `[Action (X)]` filters: the sheets the .twb scopes the
+#     action to join the closure even without a quick-filter zone
+# The contract is recorded in <tableau-dir>/control-scope.json per control
+# ({controlId, source_signal, intended matchers, targets, unreachable}) so the
+# downstream coverage lint can assert it and allowlist by-design gaps.
+control_scope_records = []
+helpers_by_id = data_elements.to_h { |d| [d['id'], d] }
+norm_cap = ->(s) { s.to_s.strip.downcase.gsub(/[^a-z0-9]+/, '') }
+# Chart-id/page snapshot for the sidecar's scope decision (taken BEFORE the
+# page-mode emitters strip the _dashboard tags).
+ctl_chart_index = elements.select { |e| e['source'] }
+                          .map { |e| { 'id' => e['id'], 'dash' => e['_dashboard'], 'ws' => e['_worksheet'] } }
+
+# The element a filter must target so it propagates into `el`: chains through
+# hidden helpers; the master and any data-model-sourced element are roots.
+root_of = lambda do |el|
+  cur = el
+  seen = {}
+  loop do
+    src = cur['source'] || {}
+    return cur['id'] if src['kind'] == 'data-model'
+    nxt_id = src['elementId']
+    return cur['id'] if nxt_id.nil?
+    return opts[:master_id] if nxt_id == opts[:master_id]
+    nxt = helpers_by_id[nxt_id]
+    return nxt_id if nxt.nil? || seen[nxt_id] # unknown id — treat as its own root
+    seen[nxt_id] = true
+    cur = nxt
+  end
+end
+
+# Filter-target spec for caption `cap` on a root, or nil when the root carries
+# no matching column (caller records it as unreachable — NEVER guess a column).
+target_on_root = lambda do |root_id, cap, mcol|
+  if root_id == opts[:master_id]
+    return mcol && { 'source' => { 'kind' => 'table', 'elementId' => opts[:master_id] },
+                     'columnId' => mcol['id'] }
+  end
+  rel = helpers_by_id[root_id] || elements.find { |e| e['id'] == root_id }
+  col = rel && (rel['columns'] || []).find { |c| norm_cap.call(c['name']) == norm_cap.call(cap) }
+  col && { 'source' => { 'kind' => 'table', 'elementId' => root_id }, 'columnId' => col['id'] }
+end
+
+# Dashboards whose zone tree carries a quick-filter zone for this caption.
+filter_zone_dashboards = lambda do |cap|
+  (layout || []).select do |d|
+    (d['zones'] || []).any? do |z|
+      z['kind'] == 'filter' && norm_cap.call(z['filter_column_caption']) == norm_cap.call(cap)
+    end
+  end.map { |d| d['dashboard'] }
+end
+
+# Worksheets whose own view filters carry `[Action (<cap>)]` — the .twb scopes
+# those cross-sheet filter actions to specific sheets.
+action_worksheets = lambda do |cap|
+  (meta['worksheets'] || {}).select do |_ws, w|
+    (w['filters'] || []).any? do |f|
+      f['is_action'] && f['raw_param'].to_s.include?("[Action (#{cap.to_s.strip})]")
+    end
+  end.keys
+end
+
+# Closure for one source filter: [targets, intended, unreachable, zone_dashes,
+# action_ws]. `mcol` is the master-map entry (nil → master can't be a target).
+control_targets = lambda do |cap, mcol|
+  zd = filter_zone_dashboards.call(cap)
+  aw = action_worksheets.call(cap)
+  in_scope = elements.select do |e|
+    e['source'] && ((zd.empty? || zd.include?(e['_dashboard'])) || aw.include?(e['_worksheet']))
+  end
+  roots = {}
+  in_scope.each { |e| (roots[root_of.call(e)] ||= []) << e }
+  targets, unreachable = [], []
+  roots.each do |rid, els|
+    t = target_on_root.call(rid, cap, mcol)
+    if t
+      targets << t
+    else
+      unreachable << { 'root' => rid, 'elements' => els.map { |e| e['name'] } }
+    end
+  end
+  intended = in_scope.map do |e|
+    { 'element_id' => e['id'], 'name' => e['name'], 'root' => root_of.call(e),
+      'dashboard' => e['_dashboard'], 'worksheet' => e['_worksheet'] }
+  end
+  [targets, intended, unreachable, zd, aw]
+end
+
 # ---- Auto-generated parameter controls (--auto-controls) ------------------
 # Tableau parameters become Sigma controls. The control's name matches the
 # parameter caption so any translated `Switch([Param Caption], ...)` formula
@@ -2653,6 +2752,18 @@ if opts[:auto_controls]
       spec['value'] = p['default_value']
     end
     param_controls << spec
+    # Parameters drive charts through FORMULA references, not filter targets —
+    # record the formula-consumer set so the coverage lint knows the mechanism.
+    control_scope_records << {
+      'controlId' => spec['controlId'], 'name' => cap, 'mechanism' => 'formula',
+      'source_signal' => "tableau parameter '#{cap}' (referenced by worksheet calcs)",
+      # Translated calcs reference the control by its CONTROL ID (line ~541's
+      # "[ctl-param-<slug>]" form), not by caption — match what the lint's
+      # formula-ref reach walk will actually see.
+      'intended' => elements.select { |e|
+        (e['columns'] || []).any? { |c| c['formula'].to_s.include?("[#{spec['controlId']}]") }
+      }.map { |e| { 'element_id' => e['id'], 'name' => e['name'] } }
+    }
   end
 end
 
@@ -2672,12 +2783,43 @@ if opts[:auto_controls]
       next
     end
     slug = cap.downcase.gsub(/\W+/, '-').sub(/-$/, '')
+    # Intended-scope closure (see the control-targeting section above): targets
+    # = the sourcing ROOTS of every chart this filter is meant to reach, not a
+    # hardcoded master. A filter with NO reachable target never ships dead.
+    targets, intended, unreachable, zone_dashes, action_ws = control_targets.call(cap, m)
+    unreachable.each do |u|
+      warnings << "control '#{cap}' cannot reach #{u['elements'].join(', ')} — their sourcing root " \
+                  "'#{u['root']}' has no '#{cap}' column; wire manually or add the column to the helper"
+    end
+    if targets.empty?
+      warnings << "DROPPED auto-control '#{cap}' — no chart root carries a matching column " \
+                  '(a control that filters nothing never ships); see control-scope.json'
+      control_scope_records << {
+        'controlId' => "ctl-#{slug}", 'name' => cap.strip, 'mechanism' => 'filters',
+        'source_signal' => "tableau shared-view quick filter '#{cap}'",
+        'status' => 'dropped', 'intended' => intended, 'unreachable' => unreachable
+      }
+      next
+    end
     spec = {
       'id'           => "el-ctl-#{slug}",
       'kind'         => 'control',
       'controlId'    => "ctl-#{slug}",
       'name'         => cap.strip,
       'includeNulls' => 'when-no-value-is-selected'
+    }
+    # Quick-filter zones apply per-dashboard: place the control only on the
+    # dashboard pages whose zone tree shows it (page-per-dashboard mode);
+    # empty = no zone info → shared-view default (every page).
+    spec['_scope_dashboards'] = zone_dashes
+    control_scope_records << {
+      'controlId' => spec['controlId'], 'name' => cap.strip, 'mechanism' => 'filters',
+      'source_signal' => "tableau shared-view quick filter '#{cap}'" +
+                         (zone_dashes.any? ? " (zones on: #{zone_dashes.join(', ')})" : ' (no zone parsed — shared-view default: all dashboards)') +
+                         (action_ws.any? ? "; [Action (#{cap.to_s.strip})] scoped to: #{action_ws.join(', ')}" : ''),
+      'intended' => intended, 'targets' => targets,
+      'zone_dashboards' => zone_dashes, 'action_worksheets' => action_ws,
+      'unreachable' => unreachable, 'status' => 'emitted'
     }
     case f['kind']
     when 'list'
@@ -2690,10 +2832,7 @@ if opts[:auto_controls]
         'source'   => { 'kind' => 'table', 'elementId' => opts[:master_id] },
         'columnId' => m['id']
       }
-      spec['filters'] = [{
-        'source'   => { 'kind' => 'table', 'elementId' => opts[:master_id] },
-        'columnId' => m['id']
-      }]
+      spec['filters'] = targets
     when 'relative-date'
       # Tableau "this year" / "this month" / "this quarter" → Sigma date-range
       # control with `mode: "current"` + `unit: <period>`. E2E re-verified
@@ -2706,10 +2845,7 @@ if opts[:auto_controls]
       # verified rolling-control shape for yet.
       spec['controlType'] = 'date-range'
       period = (f['period_type'] || 'year').downcase
-      spec['filters'] = [{
-        'source'   => { 'kind' => 'table', 'elementId' => opts[:master_id] },
-        'columnId' => m['id']
-      }]
+      spec['filters'] = targets
       if f['first_period'].to_i.zero? && f['last_period'].to_i.zero?
         spec['mode'] = 'current'
         spec['unit'] = period
@@ -2729,10 +2865,7 @@ if opts[:auto_controls]
       end
     when 'number-range'
       spec['controlType'] = 'range-slider'
-      spec['filters'] = [{
-        'source'   => { 'kind' => 'table', 'elementId' => opts[:master_id] },
-        'columnId' => m['id']
-      }]
+      spec['filters'] = targets
     end
     auto_controls << spec
   end
@@ -2745,6 +2878,21 @@ end
 if opts[:controls]
   controls = JSON.parse(File.read(opts[:controls]))
   controls.each_with_index do |c, i|
+    # Explicit controls carry no per-dashboard scope signal — intended scope is
+    # EVERY chart, so the target list is every sourcing root in the workbook
+    # (master + DM-direct/grain-helper roots that carry a matching column),
+    # not the master alone.
+    col_name = c['column_name'] ||
+               (mmap.values.find { |v| v['id'] == c['column'] } || {})['name'] ||
+               c['name']
+    mcol_entry = { 'id' => c['column'] }
+    targets, intended, unreachable, _zone_dashes, ctl_action_ws = control_targets.call(col_name, mcol_entry)
+    targets = [{ 'source' => { 'kind' => 'table', 'elementId' => opts[:master_id] },
+                 'columnId' => c['column'] }] if targets.empty?
+    unreachable.each do |u|
+      warnings << "control '#{c['name']}' cannot reach #{u['elements'].join(', ')} — their sourcing " \
+                  "root '#{u['root']}' has no '#{col_name}' column; wire manually"
+    end
     spec = {
       'id'          => "el-ctl-#{c['name'] ? c['name'].downcase.gsub(/\W+/, '-') : "f#{i}"}",
       'kind'        => 'control',
@@ -2752,12 +2900,14 @@ if opts[:controls]
       'name'        => c['name'] || "Filter #{i + 1}",
       'controlType' => c['type'] || 'list',
       'includeNulls' => 'when-no-value-is-selected',
-      'filters' => [
-        {
-          'source'   => { 'kind' => 'table', 'elementId' => opts[:master_id] },
-          'columnId' => c['column']
-        }
-      ]
+      'filters' => targets
+    }
+    control_scope_records << {
+      'controlId' => spec['controlId'], 'name' => spec['name'], 'mechanism' => 'filters',
+      'source_signal' => 'explicit --controls entry (no per-dashboard scope signal: all charts intended)',
+      'intended' => intended, 'targets' => targets,
+      'action_worksheets' => ctl_action_ws,
+      'unreachable' => unreachable, 'status' => 'emitted'
     }
     case spec['controlType']
     when 'list'
@@ -2818,10 +2968,13 @@ if opts[:pages_mode] == :worksheet
     ctl_rewrites = {}
     (param_controls + auto_controls).each do |c|
       dup = JSON.parse(c.to_json)
+      dup.delete('_scope_dashboards') # page-per-worksheet has no dashboard scope
       original_cid = dup['controlId']
       dup['id']        = "#{dup['id']}-#{ws_slug}"
       dup['controlId'] = "#{dup['controlId']}-#{ws_slug}"
       ctl_rewrites[original_cid] = dup['controlId']
+      base = control_scope_records.find { |r| r['controlId'] == original_cid }
+      (base['page_instances'] ||= []) << { 'page' => ws_name, 'controlId' => dup['controlId'] } if base
       page_extras << dup
     end
     # Rewrite Switch / If formulas on this page's chart calc columns.
@@ -2862,11 +3015,18 @@ elsif opts[:pages_mode] == :dashboard
     }]
     ctl_rewrites = {}
     (param_controls + auto_controls).each do |c|
+      # Quick-filter zones apply per-dashboard: skip pages whose zone tree
+      # doesn't carry the filter (empty scope = shared-view default, all pages).
+      sd = c['_scope_dashboards']
+      next if sd.is_a?(Array) && sd.any? && !sd.include?(dash_name)
       dup = JSON.parse(c.to_json)
+      dup.delete('_scope_dashboards')
       original_cid = dup['controlId']
       dup['id']        = "#{dup['id']}-#{d_slug[0..20]}"
       dup['controlId'] = "#{dup['controlId']}-#{d_slug[0..20]}"
       ctl_rewrites[original_cid] = dup['controlId']
+      base = control_scope_records.find { |r| r['controlId'] == original_cid }
+      (base['page_instances'] ||= []) << { 'page' => dash_name, 'controlId' => dup['controlId'] } if base
       page_extras << dup
     end
     els.each do |el|
@@ -2882,6 +3042,7 @@ elsif opts[:pages_mode] == :dashboard
   warn "wrote #{opts[:out]} (page-per-dashboard: #{pages.size} page(s), #{data_elements.size} hidden data element(s), #{(param_controls + auto_controls).size} controls per page)"
 else
   elements.each { |e| e.delete('_worksheet'); e.delete('_dashboard') }
+  all_extras.each { |e| e.delete('_scope_dashboards') }
   all_elements = all_extras + elements
   File.write(opts[:out], JSON.pretty_generate(all_elements))
   warn "wrote #{opts[:out]}  (#{all_elements.size} elements: #{all_extras.size} controls/text + #{elements.size} charts)"
@@ -2890,6 +3051,64 @@ else
     File.write(side, JSON.pretty_generate(data_elements))
     warn "wrote #{side} (#{data_elements.size} HIDDEN data-page element(s) — scatter grouped sources; add them to the workbook's Data page)"
   end
+end
+
+# ---- Intended-scope contract (control-scope.json) ---------------------------
+# Emitted in the lib/control_lint.rb CONTRACT shape (a Hash — a bare array is
+# silently ignored by the lint):
+#   * sourceFilterSignals = every source signal we saw (parameters, quick
+#     filters, explicit --controls entries — dropped ones included: they ARE
+#     signals; the loud build warning covers the drop)
+#   * per emitted control: scope = "page" when the control's reachable intent
+#     covers every chart on its page, else the allowlist of reachable intended
+#     element ids (zone-scoped quick filters, formula-driven parameters, and
+#     unreachable-root exclusions are all by-design narrow scopes — recorded,
+#     never silent); mustReach = the [Action (X)]-scoped worksheets' charts —
+#     the sheet-scoped-filter closure is a hard assertion, not a default
+#   * page-mode runs emit one entry per page INSTANCE (the per-page rewritten
+#     controlId is what the posted spec actually carries)
+#   * dropped controls live under "dropped", NOT "controls" (a sidecar control
+#     missing from the spec is a lint failure by design — the drop is already
+#     loud above); rich detail keys ride along, the lint ignores unknown keys.
+unless control_scope_records.empty?
+  unreach_names = ->(r) { Array(r['unreachable']).flat_map { |u| u['elements'] || [] } }
+  page_chart_ids = lambda do |page|
+    page ? ctl_chart_index.select { |c| c['dash'] == page || c['ws'] == page }.map { |c| c['id'] }
+         : ctl_chart_index.map { |c| c['id'] }
+  end
+  to_contract = lambda do |r, cid, page|
+    ints = Array(r['intended'])
+    # page is a dashboard name (page-per-dashboard) or a worksheet name
+    # (page-per-worksheet); parameter records carry neither key — keep those.
+    ints = ints.select { |i| (i['dashboard'] || i['worksheet']).nil? || i['dashboard'] == page || i['worksheet'] == page } if page
+    bad = unreach_names.call(r)
+    reached = ints.reject { |i| bad.include?(i['name']) }
+    reached_ids = reached.map { |i| i['element_id'] }.uniq
+    e = r.merge('controlId' => cid, 'sourceName' => r['source_signal'])
+    e.delete('page_instances')
+    e['scope'] = (page_chart_ids.call(page) - reached_ids).empty? ? 'page' : reached_ids
+    aws = Array(r['action_worksheets'])
+    must = reached.select { |i| aws.include?(i['worksheet']) }.map { |i| i['element_id'] }.uniq
+    e['mustReach'] = must if must.any?
+    e
+  end
+  emitted_rs, dropped_rs = control_scope_records.partition { |r| r['status'] != 'dropped' }
+  contract_controls = emitted_rs.flat_map do |r|
+    if (insts = Array(r['page_instances'])).any?
+      insts.map { |pi| to_contract.call(r, pi['controlId'], pi['page']) }
+    else
+      [to_contract.call(r, r['controlId'], nil)]
+    end
+  end
+  sidecar = {
+    'version' => 1, 'source' => 'tableau',
+    'sourceFilterSignals' => control_scope_records.size,
+    'controls' => contract_controls,
+    'dropped' => dropped_rs
+  }
+  scope_path = File.join(opts[:tab], 'control-scope.json')
+  File.write(scope_path, JSON.pretty_generate(sidecar))
+  warn "wrote #{scope_path} (#{contract_controls.size} control scope entr(y/ies), #{dropped_rs.size} dropped)"
 end
 warnings.each { |w| warn "  WARN  #{w}" }
 
