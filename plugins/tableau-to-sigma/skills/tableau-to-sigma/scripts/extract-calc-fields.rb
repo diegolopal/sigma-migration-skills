@@ -111,20 +111,28 @@ def gotchas(formula)
   end
 
   if formula =~ /\{\s*FIXED\b/i
-    notes << 'REQUIRES SIGMA CUSTOM SQL ELEMENT. {FIXED <dim>:<agg>} pre-aggregates at a fixed grain — ' \
-             'translate as <agg>(<expr>) OVER (PARTITION BY <dim>) or a pre-aggregated subquery joined back.'
+    notes << 'AUTO-TRANSLATED when plotted: {FIXED <dims>:<agg>} becomes a hidden two-level grouped helper element ' \
+             '(visibleAsSource:false; inner grouping = the FIXED dims computing the LOD aggregate, outer grouping = ' \
+             'the chart dims computing the 2nd-stage aggregate; the chart Max()es the outer calc). ' \
+             '⚠ carried chart dims must be functionally dependent on the FIXED dims — verify in Sigma. ' \
+             'NEVER translate as SumOver/CountOver in master or DM-element calc columns (silent error).'
   end
   if formula =~ /\{\s*INCLUDE\b/i
-    notes << 'REQUIRES SIGMA CUSTOM SQL ELEMENT. {INCLUDE <dim>:<agg>} — fine-grain subquery joined back to the view-grain.'
+    notes << 'MANUAL. {INCLUDE <dim>:<agg>} needs the chart grouping context: add <dim> to the chart grouping and use ' \
+             'the plain aggregate, OR a fine-grain subquery (Custom SQL element) joined back to the view grain.'
   end
   if formula =~ /\{\s*EXCLUDE\b/i
-    notes << 'REQUIRES SIGMA CUSTOM SQL ELEMENT. {EXCLUDE <dim>:<agg>} — <agg>(<expr>) OVER (PARTITION BY <view-dims-minus-excluded>).'
+    notes << 'MANUAL. {EXCLUDE <dim>:<agg>} needs the chart grouping context: remove <dim> from the chart grouping and ' \
+             'use the plain aggregate, OR <agg>(<expr>) OVER (PARTITION BY <view-dims-minus-excluded>) via Custom SQL.'
   end
   notes
 end
 
+# FIXED LODs are auto-translated (hidden grouped helper element — see gotchas
+# above), so they no longer force the Custom-SQL decision path or the exit-4
+# workbook handoff. INCLUDE/EXCLUDE still do (chart-grouping context needed).
 def requires_custom_sql?(formula)
-  detect_window_fns(formula).any? || !!lod?(formula)
+  detect_window_fns(formula).any? || !!(formula =~ /\{\s*(INCLUDE|EXCLUDE)\b/i)
 end
 
 # ---- Metadata API path --------------------------------------------------
