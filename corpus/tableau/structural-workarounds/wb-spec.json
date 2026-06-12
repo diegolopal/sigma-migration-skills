@@ -1,0 +1,36 @@
+{
+  "name": "Structural Workarounds Test",
+  "pages": [
+    { "id": "page-data", "name": "Data", "elements": [
+      { "id": "master", "kind": "table", "name": "Master",
+        "source": { "kind": "table", "elementId": "dm-base" },
+        "columns": [
+          { "id": "m-region", "name": "Region" },
+          { "id": "m-sales", "name": "Sales" },
+          { "id": "m-orderdate", "name": "Order Date" },
+          { "id": "m-custid", "name": "Customer Id" }
+        ] } ] },
+    { "name": "Overview Dash", "elements": [
+      { "id": "el-attainment-by-region", "kind": "bar-chart", "name": "Attainment by Region",
+        "source": { "kind": "table", "elementId": "master" },
+        "columns": [
+          { "id": "x-1", "name": "Region", "formula": "[Master/Region]" },
+          { "id": "y-1", "name": "Sales", "formula": "Sum([Master/Sales])" } ],
+        "filters": [ { "id": "flt-el-attainment-0", "columnId": "x-1", "kind": "list", "mode": "include", "values": ["North", "South"] } ] },
+      { "id": "el-sales-trend", "kind": "line-chart", "name": "Sales Trend",
+        "source": { "kind": "table", "elementId": "master" },
+        "columns": [
+          { "id": "x-2", "name": "Order Date", "formula": "DateTrunc(\"month\", [Master/Order Date])" },
+          { "id": "y-2", "name": "Sales", "formula": "Sum([Master/Sales])" } ] },
+      { "id": "el-ctl-region", "kind": "control", "controlId": "ctl-region", "name": "Region",
+        "controlType": "list", "mode": "include", "selectionMode": "multiple", "values": [],
+        "source": { "kind": "source", "source": { "kind": "table", "elementId": "master" }, "columnId": "m-region" },
+        "filters": [ { "source": { "kind": "table", "elementId": "master" }, "columnId": "m-region" } ] },
+      { "id": "el-customer-detail", "kind": "table", "name": "Customer Detail",
+        "source": { "kind": "table", "elementId": "master" },
+        "columns": [
+          { "id": "x-3", "name": "Customer Id", "formula": "[Master/Customer Id]" },
+          { "id": "y-3", "name": "Sales", "formula": "[Master/Sales]" } ] }
+    ] }
+  ]
+}

@@ -417,7 +417,7 @@ xml.elements.each('//worksheet') do |ws|
     cls  = calc.attributes['class']
     formula = calc.attributes['formula']
     next if formula.nil? || formula.empty?
-    calcs << {
+    entry = {
       'name'    => col.attributes['name'],
       'caption' => col.attributes['caption'],
       'datatype'=> col.attributes['datatype'],
@@ -425,6 +425,15 @@ xml.elements.each('//worksheet') do |ws|
       'class'   => cls,
       'formula' => formula
     }
+    # Tableau numeric bins are calc columns with class='bin': `formula` is the
+    # base field ref, `size` (or a `size-parameter` ref) is the bin width and
+    # `peg` the bin origin. Surfaced so build-charts-from-signals.rb can emit
+    # the Sigma-native BinFixed/BinRange translation (beads-sigma-t67b).
+    if cls == 'bin'
+      entry['bin_size'] = calc.attributes['size'] || calc.attributes['size-parameter']
+      entry['bin_peg']  = calc.attributes['peg']
+    end
+    calcs << entry
   end
 
   # Worksheet-level "Show Mark Labels" toggle. Tableau emits this on the
@@ -684,8 +693,14 @@ xml.elements.each('//dashboard') do |d|
       'filter_column_datatype' => (kind == 'filter' || kind == 'parameter' ? filter_col_datatype : nil)
     }
   end
+  # A "storyboard" dashboard is Tableau's story container (sequential story
+  # points in a flipboard zone) — flag it so downstream layout builders don't
+  # treat the flipboard chrome as a regular chart page. The story itself is
+  # parsed into story-plan.json below (beads-sigma-y6b).
+  is_story = d.attributes['type-v2'] == 'storyboard' || !d.elements['.//story-points'].nil?
   dashboards << {
     'dashboard' => d.attributes['name'],
+    'is_story'  => is_story,
     'zones'     => zones
   }
 end
@@ -847,8 +862,64 @@ xml.elements.each('//shared-view') do |sv|
   end
 end
 
+## ---- Tableau stories (story points) ----------------------------------------
+# A Tableau story is a sequential slide deck: each <story-point> captures a
+# dashboard or worksheet plus a navigator caption. XML shapes in the wild:
+#   <story name='X'> ... <flipboard><story-points><story-point .../>   (older)
+#   <dashboard name='X' type-v2='storyboard'> ... same flipboard tree  (newer)
+# We match on //story-points so both shapes parse, and resolve each point's
+# captured-sheet against the dashboard/worksheet name sets so the downstream
+# builder (scripts/build-story-pages.rb) knows whether the point's Sigma page
+# clones a whole dashboard page or a single worksheet element. Output:
+# story-plan.json in the same directory as OUT (only when stories exist).
+# beads-sigma-y6b.
+stories = []
+dashboard_names = dashboards.map { |d| d['dashboard'] }
+xml.elements.each('//story-points') do |spn|
+  # Enclosing story container = nearest ancestor carrying a name attribute
+  # (<story name=...> or <dashboard name=... type-v2='storyboard'>).
+  story_name = nil
+  anc = spn.parent
+  while anc
+    nm = anc.respond_to?(:attributes) && anc.attributes ? anc.attributes['name'] : nil
+    unless nm.to_s.empty?
+      story_name = nm
+      break
+    end
+    anc = anc.respond_to?(:parent) ? anc.parent : nil
+  end
+  points = []
+  spn.elements.each('story-point') do |sp|
+    a = sp.attributes
+    cap = a['caption']
+    cap = sp.elements['caption'].text if (cap.nil? || cap.to_s.empty?) && sp.elements['caption']
+    captured = a['captured-sheet']
+    kind = if captured.nil?                          then 'unknown'
+           elsif dashboard_names.include?(captured)  then 'dashboard'
+           elsif worksheets.key?(captured)           then 'worksheet'
+           else 'unknown'
+           end
+    points << {
+      'id'             => a['id'],
+      'caption'        => cap,
+      'captured_sheet' => captured,
+      'sheet_kind'     => kind
+    }
+  end
+  next if points.empty?
+  stories << { 'story' => story_name, 'points' => points }
+end
+unless stories.empty?
+  story_plan_path = File.join(File.dirname(File.expand_path(OUT)), 'story-plan.json')
+  File.write(story_plan_path, JSON.pretty_generate(stories))
+  puts "wrote #{story_plan_path} (#{stories.size} story(ies), " \
+       "#{stories.sum { |st| st['points'].size }} story point(s)) — " \
+       'run scripts/build-story-pages.rb to emit one Sigma page per story point'
+end
+
 meta = {
   'worksheets'     => worksheets.transform_values { |v| v.transform_keys(&:to_s) },
+  'stories'        => stories,
   'shared_filters' => shared_filters,
   'parameters'     => parameters,
   'column_aliases' => column_aliases,

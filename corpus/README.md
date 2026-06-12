@@ -23,6 +23,7 @@ corpus/
 | Case | Source format | Golden |
 |---|---|---|
 | tableau/orders-overview | .twb workbook + discovery signals | data model (9 elements, LOD child) |
+| tableau/structural-workarounds | synthetic .twb (story + blend + nested LOD/ISOYEAR/FINDNTH/bins) | skill-script pins: story-plan / blend-plan / lod-chains (no golden DM) |
 | powerbi/model-fixtures | 8 TMSL .bim (plugin fixtures) | DM for fixture_01 |
 | powerbi/report-classic-employee-dashboard | legacy single report.json | artifact-pin only |
 | powerbi/report-pbir-retail-performance | exploded PBIR + bookmarks | artifact-pin only |

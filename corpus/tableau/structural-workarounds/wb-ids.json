@@ -1,0 +1,15 @@
+{ "workbookId": "fake-wb", "pages": [
+  { "id": "pg-data", "name": "Data", "elements": [ { "id": "master-srv", "name": "Master", "kind": "table" } ] },
+  { "id": "pg-ov", "name": "Overview Dash", "elements": [] },
+  { "id": "pg-sp1", "name": "Where FY26 landed", "elements": [
+      { "id": "an1", "name": null, "kind": "text" },
+      { "id": "c1", "name": "Attainment by Region", "kind": "bar-chart" },
+      { "id": "c2", "name": "Sales Trend", "kind": "line-chart" },
+      { "id": "c3", "name": "Customer Detail", "kind": "table" } ] },
+  { "id": "pg-sp2", "name": "Regional attainment deep-dive", "elements": [
+      { "id": "an2", "name": null, "kind": "text" },
+      { "id": "c4", "name": "Attainment by Region", "kind": "bar-chart" } ] },
+  { "id": "pg-sp3", "name": "What changed in Q4", "elements": [
+      { "id": "an3", "name": null, "kind": "text" },
+      { "id": "c5", "name": "Sales Trend", "kind": "line-chart" } ] }
+] }
