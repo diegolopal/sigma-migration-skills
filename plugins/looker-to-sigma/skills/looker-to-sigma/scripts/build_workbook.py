@@ -694,7 +694,13 @@ def main():
             else:
                 ctrl["mode"] = "between"
         else:
-            warnings.append(f"filter '{flt['name']}': could not bind to a master column")
+            # An unbound control is furniture — a user changes it and nothing
+            # reacts (it also fails post-and-readback's control lint / gate 7
+            # of assert-phase6-ran.rb). Dropping it loudly is more honest than
+            # shipping a dead control; record the gap so the report names it.
+            warnings.append(f"filter '{flt['name']}': could not bind to a master column — "
+                            "control DROPPED (dead control; add the column to the master or migrate the filter by hand)")
+            continue
         controls.append(ctrl)
 
     # ── layout finalize: container bands (layout-playbook.md, 2026-06-10) ──

@@ -175,6 +175,8 @@ ruby scripts/assert-phase6-ran.rb --workdir /tmp/<name> --workbook-id <WORKBOOK_
 **POST success ≠ working.** You MUST query-verify the built elements:
 - `sigma-mcp-v2 query` each element → confirm real rows (not blank / not all `error`).
 - True parity: compare each Sigma aggregation against the same aggregation computed from the QuickSight side (or the warehouse). `assert-phase6-ran.rb` is a hard gate — a subagent must run it and it must pass before reporting success.
+- `assert-phase6-ran.rb` runs 7 gates incl. layout lint (gate 6) and **control lint** (gate 7 — dead controls / ghost targets / partial same-page reach / `control-scope.json` coverage; `--skip-control-lint` escape; see `refs/control-parity.md`).
+- Optional flip test when the dashboard had parameters/filter controls: `ruby scripts/probe-controls.rb --workbook-id <wb> --check-out-of-closure` — runtime proof controls actually filter (export API `parameters` is the only way to set a control programmatically; MCP queries see saved defaults only).
 - **mcp-v2 warehouse-side (EXPECTED) queries can NOT use the raw warehouse FQN**
   (`SELECT … FROM DB.SCHEMA.TABLE` fails): with `type=connection` the table must
   be addressed as `"connection"."<inodeId>"`, where `<inodeId>` is the table's

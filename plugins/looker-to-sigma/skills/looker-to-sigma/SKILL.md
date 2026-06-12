@@ -101,7 +101,8 @@ python3 scripts/migrate-looker.py --lookml-dir /path/to/lookml \
 | `scripts/migrate-looker.py` | **ONE-COMMAND orchestrator** (preferred entry) — chains every phase below + the scripted parity hard gate; see the section above. |
 | `scripts/phase6-parity-looker.rb` | **Phase 4 (parity gate):** two-pass orchestrator — PASS 1 reads the workbook spec → `parity-plan.json` + per-chart fetch instructions; PASS 2 `--finalize` runs `verify-parity.rb` and writes the **`parity-final.json` sentinel** the hard gate requires. Same contract as quicksight/thoughtspot/tableau. |
 | `scripts/verify-parity.rb` | **Phase 4:** the comparator (strict set-compare with date-bucket canonicalization; `--extract-mode` tolerance variant). Vendored from the shared converter copy. |
-| `scripts/assert-phase6-ran.rb` | **HARD GATE** (vendored **byte-identical** from quicksight-to-sigma — keep the md5 in lockstep): parity ran + PASS, no orphan workbooks, no `type=error` columns, layout applied. `ruby scripts/assert-phase6-ran.rb --workdir <dir> --workbook-id <wb>` must **exit 0** before declaring GREEN. |
+| `scripts/assert-phase6-ran.rb` | **HARD GATE** (vendored **byte-identical** across the 5 plugins — keep the md5 in lockstep): parity ran + PASS, no orphan workbooks, no `type=error` columns, layout applied, layout lint (gate 6), **control lint (gate 7** — dead controls / ghost targets / partial same-page reach / `control-scope.json` coverage; `--skip-control-lint` escape, exit 9; see `refs/control-parity.md`**)**. `ruby scripts/assert-phase6-ran.rb --workdir <dir> --workbook-id <wb>` must **exit 0** before declaring GREEN. |
+| `scripts/probe-controls.rb` | **Optional Phase-4 flip test** — runtime proof that controls actually filter: per control, exports one in-closure element CSV with and without `parameters:{controlId: <non-default value>}` (must differ) and, with `--check-out-of-closure`, an out-of-closure element (must NOT differ). Not the mandatory inner loop. Shared, vendored byte-identical. `refs/control-parity.md` has the design + the MCP-vs-export answer. |
 | `scripts/get-token.sh` | Exchange `SIGMA_CLIENT_ID`/`SIGMA_CLIENT_SECRET` → `SIGMA_API_TOKEN` (~1h TTL). `eval "$(scripts/get-token.sh)"` |
 | `scripts/looker_api.py` | Minimal Looker REST API 4.0 client (no SDK). Reads `~/.looker/looker.ini`, logs in via `client_credentials`, exposes `L.call(method, path, body)`. **Caches the bearer per process** (thread-safe; one login instead of one per call — ~150ms/call saved, measured 2.4x on a 10-call run) and retries once with a fresh login on 401. CLI: `python3 looker_api.py whoami` / `get <path>` / `raw GET /lookml_models`. |
 | `scripts/fetch_looker_dashboard.py` | **Phase 1 (live):** `GET /dashboards/{id}` → the normalized contract (`refs/dashboard-contract.md`). Works for UDD AND LookML dashboards. Self-contained (reads `~/.looker/looker.ini`). `tileType` is read from `query.vis_config.type` (NOT `element.type`, which is always `"vis"`); `listen` from `result_maker.filterables`; layout from the **active** layout's components. |
@@ -612,9 +613,14 @@ ruby scripts/assert-phase6-ran.rb   --workdir /tmp/<name> --workbook-id <wb>    
 ```
 
 The finalize pass writes the **`parity-final.json` sentinel**; `assert-phase6-ran.rb`
-(hard gate, vendored byte-identical from quicksight-to-sigma) refuses GREEN unless
+(hard gate, vendored byte-identical across the 5 plugins) refuses GREEN unless
 parity ran + PASSed, no orphan workbooks were left, the live workbook has no
-`type=error` columns, and a real layout is applied. `migrate-looker.py` automates
+`type=error` columns, a real layout is applied, the layout lint passes (gate 6),
+and the control lint passes (gate 7 — dead/ghost/partial controls; see
+`refs/control-parity.md`). Optional runtime follow-up when controls exist:
+`ruby scripts/probe-controls.rb --workbook-id <wb> --check-out-of-closure`
+(flip test — in-closure export must change under a non-default control value,
+out-of-closure must not). `migrate-looker.py` automates
 both fetch sides and runs the gate for you. The manual 3-way checks below remain
 the reference for what "parity" means.
 

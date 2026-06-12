@@ -122,11 +122,12 @@ which calc translation, which layout) — not orchestration.
 | `scripts/remap-wb-spec-to-dm-ids.rb` | When a DM is re-POSTed and element IDs churn, remaps a cached `wb-spec.json` to the new IDs via name-based matching. Optional `--rename` for renamed elements. |
 | `scripts/extract-calc-fields.rb` | Phase 1e: pull every Tableau calc field (with formula) via Metadata API (`POST /api/metadata/graphql`); falls back to `.twb` XML when Metadata API is unavailable. Drops VDS dependency. Caches to `<wb-dir>/calc-fields.json`. |
 | `scripts/validate-spec.rb` | DM or workbook spec validator. Accepts `--type` and `--dm-context` |
-| `scripts/post-and-readback.rb` | POST a DM or workbook spec, parse YAML response, GET back the spec, emit element ID map. Also runs a universal **column-type guard** afterward: any column whose formula resolved to type `error` aborts the script with exit 2 and the failing formula. Catches silent-error columns the validator doesn't pattern-match (typo refs, `IsIn`, unsupported functions) without waiting for Phase 6. |
+| `scripts/post-and-readback.rb` | POST a DM or workbook spec, parse YAML response, GET back the spec, emit element ID map. Also runs a universal **column-type guard** afterward: any column whose formula resolved to type `error` aborts the script with exit 2 and the failing formula. Catches silent-error columns the validator doesn't pattern-match (typo refs, `IsIn`, unsupported functions) without waiting for Phase 6. Then the shared **layout lint** (exit 3) and **control lint** (`scripts/lib/control_lint.rb`, exit 4 — dead controls / ghost targets / partial same-page reach; honors the `<workdir>/control-scope.json` sidecar, `--skip-control-lint` escape). |
 | `scripts/put-layout.rb` | Apply a layout XML to an existing workbook (strips read-only fields) |
 | `scripts/auto-parity-plan.rb` | Phase 6a: auto-build a parity plan by matching Sigma chart elements to Tableau view CSVs (with `--rename` for renamed tiles). Output → `/tmp/<name>/parity-plan.json` wrapped as `{ extract, charts: [...] }` |
 | `scripts/verify-parity.rb` | Phase 6c: diff expected (Tableau) vs actual (Sigma) per chart. `--extract-mode` switches to structural comparison (bucket count + dim set + sort) with value-drift tolerance for hasExtracts=true workbooks |
-| `scripts/assert-phase6-ran.rb` | **Conversion hard gate (5 gates)** — exits 0 only when ALL five pass: (1) Phase 6 ran and parity-final.json shows status=PASS at the required rate, (2) no uncleaned orphan workbooks (posted-workbooks.jsonl has ≤1 entry OR cleanup-marker.json shows a successful non-dry-run cleanup), (3) the live workbook's `/columns` endpoint shows no column with `type=error` (catches circular refs / runtime errors introduced after the initial POST's column-type guard), (4) a non-empty top-level layout XML is applied (beads-sigma-bw3), (5) tile census — parity-final.json's `tile_census` shows no unexplained dashboard zones without a matching chart (catches the empty-view-CSV N-1-charts escape, bead gjhe; `--allow-missing-tiles N` for legitimately unbuildable zones). Exits 1 for missing parity sentinel, 2 for parity FAIL / extract-mode-without-flag / charts_total==0, 4 for uncleaned orphans, 5 for live type=error columns, 6 for missing layout, 7 for census failure. Subagent flows MUST call this as their final step. |
+| `scripts/assert-phase6-ran.rb` | **Conversion hard gate (7 gates)** — exits 0 only when ALL seven pass: (1) Phase 6 ran and parity-final.json shows status=PASS at the required rate, (2) no uncleaned orphan workbooks (posted-workbooks.jsonl has ≤1 entry OR cleanup-marker.json shows a successful non-dry-run cleanup), (3) the live workbook's `/columns` endpoint shows no column with `type=error` (catches circular refs / runtime errors introduced after the initial POST's column-type guard), (4) a non-empty top-level layout XML is applied (beads-sigma-bw3), (5) tile census — parity-final.json's `tile_census` shows no unexplained dashboard zones without a matching chart (catches the empty-view-CSV N-1-charts escape, bead gjhe; `--allow-missing-tiles N` for legitimately unbuildable zones). Exits 1 for missing parity sentinel, 2 for parity FAIL / extract-mode-without-flag / charts_total==0, 4 for uncleaned orphans, 5 for live type=error columns, 6 for missing layout, 7 for census failure, 8 for layout-lint violations (gate 6, `lib/layout_lint.rb`, `--skip-layout-lint`), 9 for control-lint violations (gate 7, `lib/control_lint.rb` — dead controls / ghost targets / partial reach / control-scope coverage; `--skip-control-lint`, `--control-scope PATH`). Subagent flows MUST call this as their final step. |
+| `scripts/probe-controls.rb` | **Phase 6 (optional) — control flip test**: per control, export one in-closure element CSV with and without `parameters:{controlId: <first non-default value>}` (must differ) and, with `--check-out-of-closure`, one out-of-closure element (must NOT differ). Runtime proof the wiring works; the static check is gate 7. Shared, vendored byte-identical (md5 discipline). See `refs/control-parity.md`. |
 | `scripts/cleanup-orphan-workbooks.rb` | Delete orphan workbooks left by spec-iteration retries. Reads `<workdir>/posted-workbooks.jsonl`, keeps the most-recent ID, deletes the rest via `DELETE /v2/files/{id}`. Writes `cleanup-marker.json` so the hard gate can confirm cleanup ran (and wasn't `--dry-run`). Idempotent (404 on delete is treated as success). See beads-sigma-38a. |
 | `scripts/build-dashboard-layout.rb` | **MANDATORY in Phase 5d** (dashboard-fidelity mode) — auto-build the Sigma layout XML from the parsed Tableau zone tree (`dashboard-layout.json`) + the workbook readback IDs (`wb-ids.json`). Positions each chart at the grid cell derived from its zone's x/y/w/h%. Without this step, the workbook PUTs without a top-level layout and Sigma renders elements as a single-column stack — see `assert-phase6-ran.rb` gate 4 (beads-sigma-bw3). |
 | `scripts/build-story-pages.rb` | **Story workbooks only** — when `parse-twb-layout.rb` wrote `story-plan.json`, emit one Sigma page per story point: pass 1 (`--spec`/`--out`) appends caption-named pages (annotation text atop + cloned elements with fresh ids/controlIds) to the workbook spec pre-POST; pass 2 (`--wb-ids`/`--layout-out`) emits the banded per-page layout + container sidecar post-readback. See `refs/story-points.md`. |
@@ -1564,6 +1565,25 @@ When to escalate to a visual check rather than just CSV parity:
 > **Known render-vs-spec drift on log-scale axes.** A `yAxis.format.scale: {type: "log"}` spec persists correctly via PUT/GET, and the interactive Sigma UI renders log-scaled. The Phase 6f PNG export endpoint, however, renders the y-axis linearly (verified 2026-05-24 on OCT v2's Monthly Trend export). This is a render-side limitation of the export endpoint, not a converter regression — confirm log behavior in the live workbook before downgrading parity. When the source Tableau chart had a log axis and the Sigma PNG shows linear, note YELLOW with `error_summary: "log-axis export-renders-linear"` and link the live workbook URL; do NOT re-emit the chart spec.
 
 ---
+
+### 6 (optional) — Control flip test
+
+When the workbook has controls (or you just repaired/hand-wired any), get
+runtime evidence that they actually filter — the lints above are static:
+
+```bash
+ruby scripts/probe-controls.rb --workbook-id <wb> --check-out-of-closure
+```
+
+Per control it exports one in-closure element CSV with and without
+`parameters:{<controlId>: <first non-default value>}` (must differ) and one
+out-of-closure element (must NOT differ). Optional Phase-6 step, not the
+mandatory inner loop — the mandatory static check is `assert-phase6-ran.rb`
+gate 7 (control lint). Auto-pick needs a list/segmented/switch control; pass
+`--value <controlId>=<value>` for date/range controls. See
+`refs/control-parity.md` for the lint/probe design and the MCP-vs-export
+answer (MCP applies saved control defaults and has NO parameter mechanism;
+only the export API's `parameters` map can flip a control programmatically).
 
 ## Phase E (opt-in) — Enhance
 

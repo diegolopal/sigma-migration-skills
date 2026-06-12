@@ -202,10 +202,16 @@ you export for `migrate.py`). Decision:
   build via `CONVERTER_PATH`; without one, migrate.py emits the MCP request instead)
 - `phase6-parity-thoughtspot.rb` — parity orchestrator (two-pass; writes the
   `parity-final.json` sentinel) + `verify-parity.rb` (comparator)
-- `assert-phase6-ran.rb` — **hard gate** (vendored byte-identical from
-  quicksight-to-sigma): parity ran + PASS, no orphan workbooks, no `type=error`
-  columns, layout applied. Run with `--workdir <dir> --workbook-id <wb>`; exit 0
-  required before GREEN
+- `assert-phase6-ran.rb` — **hard gate** (vendored byte-identical across the 5
+  plugins): parity ran + PASS, no orphan workbooks, no `type=error`
+  columns, layout applied, layout lint (gate 6), control lint (gate 7 — dead
+  controls / ghost targets / partial same-page reach / `control-scope.json`
+  coverage; `--skip-control-lint`; see `refs/control-parity.md`). Run with
+  `--workdir <dir> --workbook-id <wb>`; exit 0 required before GREEN
+- `probe-controls.rb` — optional flip test for Liveboard-filter→control
+  wiring: in-closure export must change under a non-default `parameters`
+  value, out-of-closure must not (`--check-out-of-closure`). Shared, vendored
+  byte-identical
 - `ts-dm-signature.py` — step 2.5: model TML → DM-reuse signature for `find-or-pick-dm.rb`
 - `find-or-pick-dm.rb` — step 2.5: scan existing Sigma DMs, recommend reuse (0.7·column +
   0.2·table + 0.1·metric overlap; `--auto-pick` w/ tie-window). Shared vendor-neutral copy
