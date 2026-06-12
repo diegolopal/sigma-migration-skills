@@ -109,6 +109,8 @@ OptionParser.new do |o|
   o.on('--finalize')         {     opts[:finalize] = true }
   o.on('--actuals PATH')     { |v| opts[:actuals] = File.expand_path(v) }
   o.on('--allow-missing-tiles N', Integer) { |v| opts[:allow_missing_tiles] = v }
+  o.on('--min-pass-rate F', Float, 'accept a parity pass-rate below 1.0 at the gate — ONLY for honest, ' \
+                                   'NAMED divergences (LOD placeholders / cross-grain semantics)') { |v| opts[:min_pass_rate] = v }
   # Phase E (opt-in) — Enhance. NEVER runs without --enhance; with --enhance
   # but no --enhance-accept the run stops at exit 14 with the scan proposals
   # (present them per-item to the human, e.g. AskUserQuestion), then re-run
@@ -233,6 +235,7 @@ if opts[:finalize]
   gate = ['ruby', File.join(HERE, 'assert-phase6-ran.rb'), '--tableau', WORK, '--workbook-id', wb_id]
   gate += ['--allow-extract'] if state['extract_mode']
   gate += ['--allow-missing-tiles', opts[:allow_missing_tiles].to_s] if opts[:allow_missing_tiles]
+  gate += ['--min-pass-rate', opts[:min_pass_rate].to_s] if opts[:min_pass_rate]
   _, gst = sigma_run!(gate, allow_fail: true)
   mark('assert-phase6-ran')
 
@@ -258,7 +261,10 @@ if opts[:finalize]
     puts '============================================================================='
   end
 
-  all_green = p6st.success? && clst.success? && gst.success?
+  # With an explicit --min-pass-rate (honest NAMED divergences), the census-
+  # aware gate is the parity authority — phase6's own exit stays strict-100%.
+  parity_ok = p6st.success? || (opts[:min_pass_rate] && gst.success?)
+  all_green = parity_ok && clst.success? && gst.success?
 
   # ---------------------------------------------------------------------------
   # Phase E (OPT-IN) — Enhance. Runs ONLY when --enhance was passed (here or on
@@ -335,34 +341,109 @@ end
 hdr(1, 'Discover')
 $t_mark = Time.now
 twb = File.join(WORK, 'workbook-content.twb')
-disc = ['ruby', File.join(HERE, 'tableau-discover.rb'), '--out', WORK]
-disc += opts[:wb_id] ? ['--workbook-id', opts[:wb_id]] : ['--workbook-name', opts[:wb_name]]
-disc_sh = disc.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')
-scan_sh = ['ruby', File.join(HERE, 'scan-workbook-gaps.rb'), twb]
-          .map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')
+
+# ---------------------------------------------------------------------------
+# Discovery REUSE (bead mg92). A 4-stop run must pay the ~112s Tableau fetch
+# ONCE: stamp the out-dir per source revision (workbook luid + updatedAt). On
+# re-entry, ONE cheap REST probe (~1s) decides:
+#   * stamp matches + artifacts complete → SKIP the discovery lane entirely
+#   * stamp differs / artifacts missing  → CLEAR the stale artifacts first so
+#     lane_wait_for can never pick up a prior run's workbook-content.twb,
+#     then re-fetch and re-stamp.
+# ---------------------------------------------------------------------------
+FAKE_OK = Struct.new(:exitstatus) do
+  def success?
+    exitstatus.zero?
+  end
+end
+stamp_path = File.join(WORK, 'discovery-stamp.json')
+disc_artifacts = [File.join(WORK, 'get-workbook.json'), twb, File.join(WORK, 'timings.json')]
+probe = nil
+probe_rb = +"$LOAD_PATH.unshift #{File.join(HERE, 'lib').inspect}; require 'tableau_rest'; require 'json'; "
+probe_rb << if opts[:wb_id]
+              "wb = Tableau.get_workbook(#{opts[:wb_id].inspect}); "
+            else
+              "h = Tableau.find_workbook_by_name(#{opts[:wb_name].inspect}) or abort 'no workbook'; wb = Tableau.get_workbook(h['id']); "
+            end
+probe_rb << "puts JSON.generate({ 'id' => wb['id'], 'updatedAt' => wb['updatedAt'] })"
+probe_quoted = "'" + probe_rb.gsub("'") { "'\\''" } + "'"
+probe_out, probe_st = Open3.capture2e('bash', '-c',
+                                      "eval \"$(#{File.join(HERE, 'get-tableau-token.sh')})\" && ruby -e #{probe_quoted}")
+probe = (JSON.parse(probe_out.lines.last.to_s) rescue nil) if probe_st.success?
+stamp = (JSON.parse(File.read(stamp_path)) rescue nil)
+reuse_discovery = probe && stamp &&
+                  stamp['workbook_id'] == probe['id'] && stamp['updatedAt'] == probe['updatedAt'] &&
+                  disc_artifacts.all? { |p| File.exist?(p) } &&
+                  Dir[File.join(WORK, 'views', '*.csv')].any?
+
 disc_log = File.join(WORK, 'phase1-discover.log')
-File.write(disc_log, '')
-# Gap scan runs in the lane as soon as its input (the .twb) is ready — i.e.
-# right after discovery lands it. Scan failure is tolerated (same as before);
-# discovery failure is the lane's exit code.
-lane_cmd = "eval \"$(#{File.join(HERE, 'get-tableau-token.sh')})\" && #{disc_sh}; rc=$?; " \
-           "if [ $rc -eq 0 ] && [ -f '#{twb}' ]; then #{scan_sh} || true; fi; exit $rc"
-lane = { started: Time.now, status: nil }
-lane[:pid] = Process.spawn('bash', '-c', lane_cmd, %i[out err] => [disc_log, 'a'])
-line "Tableau discovery + gap scan: BACKGROUND lane (pid #{lane[:pid]}, log #{File.basename(disc_log)})"
-line 'Sigma-side phases 1.6 + 2 run concurrently; lanes join before discovery output is consumed.'
+if reuse_discovery
+  lane = { started: Time.now, ended: Time.now, status: FAKE_OK.new(0), reused: true }
+  line "discovery REUSED (stamp match: workbook #{probe['id']} updatedAt=#{probe['updatedAt']}; " \
+       "#{Dir[File.join(WORK, 'views', '*.csv')].size} view CSVs already on disk) — Tableau fetch skipped"
+else
+  unless probe
+    line "WARN: workbook-revision probe failed (#{probe_out.lines.last.to_s.strip[0, 120]}); discovery will re-fetch"
+  end
+  # Clear stale artifacts from any prior run — lane_wait_for polls File.exist?,
+  # so a leftover file would short-circuit the wait with stale content.
+  stale = (disc_artifacts + [stamp_path, File.join(WORK, 'ds-metadata.json'),
+                             File.join(WORK, 'graphql-fields.json'), File.join(WORK, 'calc-fields.json'),
+                             File.join(WORK, 'workbook-content.twbx')] +
+           Dir[File.join(WORK, 'views', '*')] + Dir[File.join(WORK, '*gaps*report*')])
+          .select { |p| File.exist?(p) }
+  if stale.any?
+    line "cleared #{stale.size} stale discovery artifact(s) from a prior run (source revision unknown or changed)"
+    stale.each { |p| FileUtils.rm_f(p) }
+  end
+  disc = ['ruby', File.join(HERE, 'tableau-discover.rb'), '--out', WORK]
+  disc += opts[:wb_id] ? ['--workbook-id', opts[:wb_id]] : ['--workbook-name', opts[:wb_name]]
+  disc_sh = disc.map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')
+  scan_sh = ['ruby', File.join(HERE, 'scan-workbook-gaps.rb'), twb]
+            .map { |a| "'" + a.gsub("'", "'\\''") + "'" }.join(' ')
+  File.write(disc_log, '')
+  # Gap scan runs in the lane as soon as its input (the .twb) is ready — i.e.
+  # right after discovery lands it. Scan failure is tolerated (same as before);
+  # discovery failure is the lane's exit code.
+  lane_cmd = "eval \"$(#{File.join(HERE, 'get-tableau-token.sh')})\" && #{disc_sh}; rc=$?; " \
+             "if [ $rc -eq 0 ] && [ -f '#{twb}' ]; then #{scan_sh} || true; fi; exit $rc"
+  lane = { started: Time.now, status: nil }
+  lane[:pid] = Process.spawn('bash', '-c', lane_cmd, %i[out err] => [disc_log, 'a'])
+  line "Tableau discovery + gap scan: BACKGROUND lane (pid #{lane[:pid]}, log #{File.basename(disc_log)})"
+  line 'Sigma-side phases 1.6 + 2 run concurrently; lanes join before discovery output is consumed.'
+end
 
 lane_done = lambda do
   next true if lane[:status]
   if (st = Process.wait2(lane[:pid], Process::WNOHANG))
     lane[:status] = st[1]
     lane[:ended] = Time.now
+    # Stamp the completed discovery for resume reuse (bead mg92) — but ONLY a
+    # COMPLETE one: a run with failed fetch tasks (Tableau Cloud's transient
+    # 400s) must not be blessed, or the resume reuses a discovery with missing
+    # view CSVs and tiles silently drop. No stamp = the next run re-fetches.
+    if st[1].success? && probe
+      tj = (JSON.parse(File.read(File.join(WORK, 'timings.json'))) rescue nil)
+      # Only ESSENTIAL tasks block the stamp (view CSVs / .twb / workbook meta).
+      # A persistently-failing dashboard PNG must not force re-paying discovery
+      # on every resume.
+      failed = tj ? (tj['tasks'] || []).select { |t| t['ok'] == false && t['task'].to_s =~ /\A(csv:|twb|get-workbook)/ } : []
+      if failed.empty?
+        File.write(stamp_path, JSON.pretty_generate(
+                                 'workbook_id' => probe['id'], 'updatedAt' => probe['updatedAt'],
+                                 'stamped_at' => Time.now.utc.iso8601))
+      else
+        line "discovery NOT stamped for reuse — #{failed.size} fetch task(s) failed " \
+             "(#{failed.map { |t| t['task'] }.join(', ')[0, 120]}); a resume will re-fetch"
+      end
+    end
     true
   else
     false
   end
 end
 print_lane_log = lambda do
+  next if lane[:reused] # prior run's log — already shown on the run that fetched
   File.read(disc_log).each_line { |l| puts "   │ #{l.rstrip}" } if File.exist?(disc_log)
 end
 # Wait for a lane artifact (tableau-discover writes them atomically). Returns
@@ -880,6 +961,34 @@ end
 mark('decisions')
 
 # ---------------------------------------------------------------------------
+# folderId default (bead epvr). POST /v2/dataModels/spec REQUIRES folderId
+# ("Expecting UUID at 0.folderId"). When the human chose "proceed into My
+# Documents" (--yes / answered default), RESOLVE the caller's My Documents
+# folder id and inject it — never emit a folderId-less spec. (Same contract
+# the quicksight converter enforces with its mandatory --folder-id.)
+# ---------------------------------------------------------------------------
+if opts[:folder].to_s.empty?
+  require 'sigma_rest'
+  begin
+    uid = Sigma.request(:get, '/v2/whoami')['userId']
+    entry = ((Sigma.request(:get, "/v2/members/#{uid}/files") || {})['entries'] || [])
+            .find { |e| e['path'] == 'My Documents' }
+    folder_id = entry && entry['parentId']
+    unless folder_id
+      entry2 = ((Sigma.request(:get, '/v2/files?typeFilters=folder&limit=500') || {})['entries'] || [])
+               .find { |e| e['path'] == 'My Documents' && e['ownerId'] == uid }
+      folder_id = entry2 && entry2['parentId']
+    end
+    abort "FATAL: could not resolve the caller's My Documents folder id (the DM POST requires folderId) — pass --folder <id>" unless folder_id
+    opts[:folder] = folder_id
+    line "folderId default: resolved caller's My Documents = #{folder_id} (no --folder supplied)"
+  rescue Sigma::Error => e
+    abort "FATAL: My Documents folder resolution failed (#{e.message.lines.first&.strip}) — pass --folder <id>"
+  end
+end
+mark('folder-resolve')
+
+# ---------------------------------------------------------------------------
 # Phase 3 — Build + POST the data model.
 # ---------------------------------------------------------------------------
 hdr(3, 'Build data model')
@@ -926,15 +1035,40 @@ elsif mechanical
   # base-column refs that don't exist in the real table. Drop them so the POST
   # resolves. Load the cols-<TABLE>.json files discovered in Phase 2.
   real_cols = {}
+  dim_catalogs = {}
   Dir[File.join(WORK, 'cols-*.json')].each do |cf|
     cj = (JSON.parse(File.read(cf)) rescue nil)
     next unless cj && cj['columns']
     tname = File.basename(cf, '.json').sub(/^cols-/, '')
     real_cols[tname] = cj['columns'].map { |c| c['name'] }
+    dim_catalogs[tname.upcase] = cj['columns']
   end
   unless real_cols.empty?
     pf = MechanicalSpecs.fixup_dm_spec(dm, real_cols)
     line "phantom-column filter: dropped #{pf[:phantom]} non-existent base column(s) using #{real_cols.size} live table catalog(s)" if pf[:phantom].to_i.positive?
+  end
+  # Computed-key join recovery (bead ovud): joins the converter skipped
+  # ("DATE([Order Date]) = [Date Key]") are recovered mechanically — via a calc
+  # key column, or via the physical "<X>_KEY" FK when the wrapped column is
+  # VDS-only — so date axes resolve instead of NULL-bucketing.
+  if have_twb
+    MechanicalSpecs.recover_computed_key_joins!(dm, File.read(twb), real_cols, dim_catalogs)
+                   .each { |m| line m }
+  end
+  # Relationship reachability guard (bead ovud): duplicate relationship names /
+  # refs through nonexistent relationships make charts NULL-bucket SILENTLY.
+  # Fail loudly BEFORE the POST.
+  viols = MechanicalSpecs.relationship_reachability_violations(dm)
+  if viols.any?
+    puts
+    puts '==================== RELATIONSHIP GUARD STOP ===================='
+    viols.each { |v| puts "  - #{v}" }
+    puts 'Every cross-element ref must resolve through a uniquely-named,'
+    puts 'existing relationship ([Base/REL_NAME/Field]) or charts grouped'
+    puts 'through it silently NULL-bucket. Fix the converter output / report'
+    puts 'this as a converter bug — do NOT proceed to the POST.'
+    puts '================================================================='
+    abort 'FATAL: relationship reachability guard failed'
   end
 else
   dm = Specs.dm_spec
@@ -1011,26 +1145,35 @@ if mechanical
   line "master-map: #{master_columns.size} master column(s) (fact element '#{fact['name']}', #{real_labels ? real_labels.size : 0} readback labels)"
 
   # 2) Build the chart-element specs from the parsed zones + view CSVs + map.
+  #    ONE SIGMA PAGE PER TABLEAU DASHBOARD (bead ptrt) — a fat workbook's 4
+  #    dashboards become 4 laid-out pages, each with its own banded layout.
   charts_path = File.join(WORK, 'chart-specs.json')
   build_cmd = ['ruby', File.join(HERE, 'build-charts-from-signals.rb'),
                '--tableau-dir', WORK, '--layout', layout_json,
                '--master-map', mmap_path, '--master-element-id', 'master',
+               '--page-per-dashboard',
                '--out', charts_path]
   build_cmd += ['--meta', layout_json.sub(/\.json$/, '-meta.json')] if File.exist?(layout_json.sub(/\.json$/, '-meta.json'))
   build_cmd += ['--auto-controls'] if File.exist?(layout_json.sub(/\.json$/, '-meta.json'))
   run!(build_cmd, allow_fail: true)
   raw_charts = (JSON.parse(File.read(charts_path)) rescue [])
-  chart_elements = raw_charts.is_a?(Hash) ? (raw_charts['pages'] || []).flat_map { |p| p['elements'] || [] } : raw_charts
+  chart_pages = raw_charts.is_a?(Hash) ? (raw_charts['pages'] || []) : nil
+  data_elements = raw_charts.is_a?(Hash) ? (raw_charts['data_elements'] || []) : []
+  chart_elements = chart_pages ? chart_pages.flat_map { |p| p['elements'] || [] } : raw_charts
   if chart_elements.empty?
     line 'WARN: build-charts produced 0 elements (no usable view CSVs / zones); emitting an empty dashboard page'
   else
-    line "build-charts: #{chart_elements.size} chart/control element(s)"
+    line "build-charts: #{chart_elements.size} chart/control element(s) across #{chart_pages ? chart_pages.size : 1} page(s)" \
+         "#{data_elements.any? ? " + #{data_elements.size} hidden data element(s)" : ''}"
   end
 
-  # 3) Assemble the workbook spec (page-data master + dashboard page).
+  # 3) Assemble the workbook spec (page-data master [+ hidden helpers] + one
+  #    page per dashboard).
   spec = MechanicalSpecs.build_wb_spec(
     name: display_wb_name, dm_id: dm_id, fact_eid: fact_eid,
-    master_columns: master_columns, chart_elements: chart_elements,
+    master_columns: master_columns,
+    chart_elements: (chart_pages && chart_pages.any? ? chart_pages : chart_elements),
+    data_elements: data_elements,
     folder_id: opts[:folder])
 else
   spec = Specs.wb_spec(dm_id, fact_eid)

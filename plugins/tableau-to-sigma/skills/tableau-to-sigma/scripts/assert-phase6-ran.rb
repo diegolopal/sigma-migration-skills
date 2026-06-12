@@ -126,16 +126,25 @@ if mode == 'extract' && !opts[:allow_extract]
 end
 
 pass_rate = passed.to_f / total
-if status != 'PASS' || pass_rate < opts[:min_pass_rate]
+# status=PASS requires 100% — when the caller explicitly accepts a lower
+# pass-rate (--min-pass-rate, for honest NAMED divergences like LOD
+# placeholders / cross-grain semantics), the rate is the gate, not the status.
+rate_gate_only = opts[:min_pass_rate] < 1.0
+if (rate_gate_only ? pass_rate < opts[:min_pass_rate] : (status != 'PASS' || pass_rate < opts[:min_pass_rate]))
   warn "[FAIL] parity status=#{status} pass-rate=#{(pass_rate * 100).round(1)}% (#{passed}/#{total})"
-  warn "       Required: status=PASS and pass-rate >= #{(opts[:min_pass_rate] * 100).to_i}%"
+  warn "       Required: #{rate_gate_only ? '' : 'status=PASS and '}pass-rate >= #{(opts[:min_pass_rate] * 100).to_i}%"
   if (fail_names = summary['fail_names']) && !fail_names.empty?
     warn "       Failing charts: #{fail_names.join(', ')}"
   end
   exit 2
 end
 
-puts "[OK] gate 1/6: Phase 6 ran cleanly — #{passed}/#{total} charts PASS (mode=#{mode}, status=#{status})"
+if rate_gate_only && status != 'PASS'
+  puts "[OK] gate 1/6: Phase 6 ran — #{passed}/#{total} charts PASS (>= #{(opts[:min_pass_rate] * 100).to_i}% accepted); " \
+       "DIVERGING (accepted, must be NAMED in the report): #{(summary['fail_names'] || []).join(', ')}"
+else
+  puts "[OK] gate 1/6: Phase 6 ran cleanly — #{passed}/#{total} charts PASS (mode=#{mode}, status=#{status})"
+end
 
 # ---------------------------------------------------------------------------
 # Gate 2 — orphan workbooks (beads-sigma-38a)

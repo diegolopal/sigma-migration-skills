@@ -243,7 +243,15 @@ if opts[:type] == 'workbook'
     end
     next if masters.empty?
 
-    others = els.reject { |e| masters.include?(e) }
+    # HIDDEN helper tables that source a master (visibleAsSource:false, e.g.
+    # the scatter grouped-source tables — bead z1d0/ry0n) are data-page
+    # citizens, not content: exempt them from the mixing rule.
+    master_ids = masters.map { |m| m['id'] }
+    helpers = els.select do |e|
+      e['kind'] == 'table' && e['visibleAsSource'] == false &&
+        e.dig('source', 'kind') == 'table' && master_ids.include?(e.dig('source', 'elementId'))
+    end
+    others = els.reject { |e| masters.include?(e) || helpers.include?(e) }
     unless others.empty?
       master_names = masters.map { |m| m['name'] || m['id'] }.join(', ')
       kind_counts = Hash.new(0)
