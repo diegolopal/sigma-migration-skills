@@ -78,8 +78,14 @@ Consequences:
   control should govern (the column must exist on each); elements sourcing
   from those masters inherit via the closure.
 - **partial reach, chart bypasses the master** (sources the DM directly) →
-  either re-source the chart from the master or add a filter target on the
-  chart element itself with that element's own columnId.
+  either re-source the chart from the master or re-root it through a hidden
+  shared BASE TABLE (a `kind: table` element sourcing the same DM element,
+  carrying passthrough columns; the chart re-sourced through it) and target
+  the table. Control filter targets may only point at TABLE elements — a
+  chart/KPI target is rejected at POST/PUT with 400 "Dependency not found"
+  (live-verified 2026-06-12; the looker builder's listen-scope tables and
+  enhance-apply's `ensure_base_table!` are the two automated forms of this
+  pattern).
 - **intentional narrow control** (grain switcher driving one chart by
   formula) → annotate `scope: [...]` in control-scope.json; don't fake-wire.
 

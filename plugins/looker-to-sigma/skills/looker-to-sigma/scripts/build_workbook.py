@@ -14,11 +14,23 @@ placeholders so the spec generates locally); wire them to a real converted DM
 before POSTing. Tile->kind, filter->control, and layout maps follow
 refs/dashboard-contract.md and research/looker-dashboard-layout.md.
 """
-import argparse, json, os, re, secrets, string, glob
+import argparse, json, os, re, secrets, string, sys, glob
 
 def sid(p="el"): return p + "-" + "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(8))
 def disp(seg):  return " ".join(w.capitalize() for w in str(seg).split("_"))
 def leaf(field): return field.split(".")[-1]            # users.traffic_source -> traffic_source
+
+# dimension_group timeframe expansion — MIRRORS the DM converter (lookml.ts
+# TIMEFRAME_MAP / DEFAULT_TIMEFRAMES): a `dimension_group: order_date` with >1
+# timeframes becomes DM columns "Order Date Raw" / "Order Date Date" /
+# "Order Date Month" / ...; with <=1 timeframes it stays ONE raw column named
+# after the physical SQL column. Dashboard filters routinely reference the
+# BARE group name (`order_fact.order_date`) while tiles reference expanded
+# fields (`order_fact.order_date_month`) — both must resolve to a real DM
+# column display name or the filter binding dies.
+TIMEFRAME_SUFFIX = {"raw": "Raw", "time": "Time", "date": "Date", "week": "Week",
+                    "month": "Month", "quarter": "Quarter", "year": "Year"}
+DEFAULT_TIMEFRAMES = ["raw", "time", "date", "week", "month", "quarter", "year"]
 
 TILE_KIND = {
     "single_value": "kpi-chart", "looker_column": "bar-chart", "looker_bar": "bar-chart",
@@ -112,6 +124,8 @@ def build_field_index(view_files):
     view_pk = {}    # "view" -> primary-key dimension name
     yesno = set()   # "view.field" of type:yesno dims — the DM converter names
                     # their boolean calc column "<label> (T-F)"
+    dim_groups = {} # "view.group" -> {"timeframes": [...], "phys": display name
+                    #   of the physical column (the single-column fallback name)}
     for path in view_files:
         txt = open(path).read()
         txt = re.sub(r"#[^\n]*", "", txt)               # strip comments
@@ -120,6 +134,26 @@ def build_field_index(view_files):
         view = vm.group(1)
         for d in re.finditer(r"\b(dimension|dimension_group)\s*:\s*(\w+)", txt):
             dims.add(f"{view}.{d.group(2)}")
+        # dimension_group blocks: capture timeframes + physical column so field
+        # refs (bare group OR expanded `<group>_<timeframe>`) resolve to the DM
+        # column names the converter actually emits (see TIMEFRAME_SUFFIX).
+        for m in re.finditer(r"dimension_group:\s*(\w+)\s*\{", txt):
+            name = m.group(1); start = m.end(); depth, i = 1, start
+            while i < len(txt) and depth:
+                depth += {"{": 1, "}": -1}.get(txt[i], 0); i += 1
+            block = txt[start:i]
+            if re.search(r"type:\s*duration\b", block):
+                continue          # duration groups expand to Days/Hours/… columns
+            tfm = re.search(r"timeframes:\s*\[([^\]]*)\]", block)
+            tfs = ([t.strip().lower() for t in tfm.group(1).split(",") if t.strip()]
+                   if tfm else list(DEFAULT_TIMEFRAMES))
+            tfs = [t for t in tfs if t in TIMEFRAME_SUFFIX]
+            sqlm = re.search(r"sql:\s*(.+?);;", block, re.S)
+            phys = None
+            if sqlm:
+                r2 = re.search(r"\$\{TABLE\}\.(\w+)", sqlm.group(1))
+                if r2: phys = disp(r2.group(1))
+            dim_groups[f"{view}.{name}"] = {"timeframes": tfs, "phys": phys or disp(name)}
         # primary key / yesno: scan each dimension block
         for m in re.finditer(r"dimension:\s*(\w+)\s*\{", txt):
             name = m.group(1); start = m.end(); depth, i = 1, start
@@ -171,7 +205,7 @@ def build_field_index(view_files):
                     measures[key] = (agg, disp(tc.group(2)),
                                      f"{tc.group(1)}(${{TABLE}}.{tc.group(2)})", mfilters)
                     formats.setdefault(key, tfmt)
-    return measures, dims, view_pk, formats, yesno
+    return measures, dims, view_pk, formats, yesno, dim_groups
 
 def main():
     ap = argparse.ArgumentParser()
@@ -190,10 +224,13 @@ def main():
     ap.add_argument("--master-name", default="Data")
     ap.add_argument("--folder-id", default="<FOLDER_ID>")
     ap.add_argument("--out", default="/tmp/workbook.spec.json")
+    ap.add_argument("--strict", action="store_true",
+                    help="exit non-zero when a dashboard filter cannot be bound "
+                         "(default: drop the control with a loud warning)")
     a = ap.parse_args()
 
     dash = json.load(open(a.contract))
-    measures, dims, view_pk, formats, yesno_dims = build_field_index(sorted(glob.glob(os.path.join(a.views, "*.view.lkml"))))
+    measures, dims, view_pk, formats, yesno_dims, dim_groups = build_field_index(sorted(glob.glob(os.path.join(a.views, "*.view.lkml"))))
     warnings = []
 
     # ── per-explore masters ────────────────────────────────────────────────────
@@ -267,6 +304,30 @@ def main():
         view = f.split(".")[0]
         return [f"{view}.{r}" for r in re.findall(r"\$\{(\w+)\}", measures[f][2])
                 if f"{view}.{r}" in measures]
+    def dimgroup_display(f):
+        """DM column display name for a dimension_group field, or None when `f`
+        isn't one. Mirrors the converter's timeframe expansion (lookml.ts):
+        multi-timeframe groups expand to '<Group> <Suffix>' columns; a single-
+        timeframe group keeps ONE raw column named after the physical column.
+        Accepts the BARE group name (dashboard filters: `view.order_date`) and
+        expanded timeframe fields (`view.order_date_month`). A bare-group ref
+        (no timeframe) prefers the day-grain 'Date' column, then 'Raw'/'Time'."""
+        view = f.split(".")[0]; lf = leaf(f)
+        entry = dim_groups.get(f"{view}.{lf}"); tf = None; base = lf
+        if entry is None:
+            m = re.match(r"^(.*)_(\w+)$", lf)
+            if m and m.group(2).lower() in TIMEFRAME_SUFFIX:
+                entry = dim_groups.get(f"{view}.{m.group(1)}")
+                tf, base = m.group(2).lower(), m.group(1)
+            if entry is None:
+                return None
+        tfs = entry["timeframes"]
+        if len(tfs) <= 1:
+            return entry["phys"]                  # converter emits one raw column
+        if tf is None or tf not in tfs:
+            tf = next((t for t in ("date", "raw", "time") if t in tfs), tfs[0])
+        return f"{disp(base)} {TIMEFRAME_SUFFIX[tf]}"
+
     def col_display(f, explore):
         """Display name of the MASTER column a field maps to. Joined-view columns
         in the denormalized DM element are disambiguated as '<Field> (<joinAlias>)'
@@ -277,6 +338,9 @@ def main():
             if is_ratio(f): return None           # composite — components needed separately
             base = measures[f][1]                 # base column (None for plain count)
             return (base + suf) if base else None
+        dg = dimgroup_display(f)
+        if dg is not None:
+            return dg + suf
         return disp(leaf(f)) + suf
     def pk_display(view, explore):
         """Display name of a view's primary-key column in the denorm element."""
@@ -481,10 +545,12 @@ def main():
             for f in kpis:
                 kid = sid(); cid = sid("v")
                 col = apply_fmt({"id": cid, "formula": formula_for(f, ex), "name": disp(leaf(f))}, f)
-                elements.append({"id": kid, "kind": "kpi-chart",
-                                 "name": f"{el['name']} · {disp(leaf(f))}",
-                                 "source": {"elementId": master_of(ex)["id"], "kind": "table"},
-                                 "columns": [col], "value": {"columnId": cid}})
+                kpi_el = {"id": kid, "kind": "kpi-chart",
+                          "name": f"{el['name']} · {disp(leaf(f))}",
+                          "source": {"elementId": master_of(ex)["id"], "kind": "table"},
+                          "columns": [col], "value": {"columnId": cid}}
+                elements.append(kpi_el)
+                el.setdefault("_emitted", []).append(kpi_el)   # control-targeting (listen:)
                 c0 = int(round(L["col"] + slot * w)) + 1
                 c1 = int(round(L["col"] + (slot + 1) * w)) + 1
                 layout_items.append((kid, c0, c1, r0, r1, "kpi-chart"))
@@ -669,39 +735,142 @@ def main():
                 continue
             base.setdefault("columns", []).append({"id": sid("tc"), "formula": sig.strip(), "name": label})
         elements.append(base)
+        el.setdefault("_emitted", []).append(base)   # control-targeting (listen:)
 
         # newspaper -> 24-col grid (rows scaled — see ROW_SCALE above)
         L = _layout_of(el); c0 = L["col"] + 1; c1 = L["col"] + 1 + L["width"]
         r0 = L["row"] * ROW_SCALE + 1; r1 = r0 + L["height"] * ROW_SCALE
         layout_items.append((eid, c0, c1, r0, r1, kind))
 
-    # ── controls from dashboard filters ──
-    controls = []
+    # ── controls from dashboard filters (listen-scoped, never dead) ──
+    # A Looker dashboard filter applies to EXACTLY the tiles that `listen:` to
+    # it, on the per-tile field the listen entry names. The old emission bound
+    # ONE master-level target — wrong scope (a master filter propagates into
+    # EVERY tile, including non-listeners) AND shipped a dead, untargeted
+    # control whenever the master display-name lookup missed. Now:
+    #   * tiles are partitioned by their listen-SET; each partition that needs
+    #     its own scope is re-sourced through a hidden LISTEN-SCOPE TABLE on
+    #     the Data page (control filters may only target TABLE elements — a
+    #     chart/KPI target 400s with "Dependency not found", live-verified),
+    #     and each control targets exactly the scope tables (or the master,
+    #     when every tile of the explore shares one listen-set) of the tiles
+    #     that listen; non-listening tiles stay un-targeted BY DESIGN
+    #   * an unbindable filter NEVER ships as a dead control: it is DROPPED
+    #     with a loud warning naming the unbound field (--strict exits 2)
+    #   * the intended scope contract is written to control-scope.json next to
+    #     --out: per control {controlId, source_signal, intended/excluded
+    #     element matchers} — the downstream coverage lint consumes it
+    filter_names = {f["name"] for f in dash["filters"]}
+
+    def listen_set(el):
+        return frozenset(k for k in (el.get("listen") or {}) if k in filter_names)
+
+    groups = {}            # (explore, listen-set) -> [contract tiles]
+    explore_lsets = {}     # explore -> {listen-set, ...}
+    for el in dash["elements"]:
+        if not el.get("_emitted"):
+            continue
+        groups.setdefault((el["explore"], listen_set(el)), []).append(el)
+        explore_lsets.setdefault(el["explore"], set()).add(listen_set(el))
+
+    scope_tables = {}      # (explore, listen-set) -> {"id","name","explore","needed":{}}
+
+    def scope_for(ex, lset):
+        """The hidden scope table for a tile partition — or None when the tile
+        can stay on the master (single uniform listen-set per explore, or a
+        tile that listens to nothing and is therefore never targeted)."""
+        if len(explore_lsets[ex]) == 1 or not lset:
+            return None
+        key = (ex, lset)
+        if key not in scope_tables:
+            n = len(scope_tables) + 1
+            scope_tables[key] = {"id": f"scope-{n}", "explore": ex, "needed": {},
+                                 "name": f"{master_of(ex)['name']} Scope {n}"}
+        return scope_tables[key]
+
+    # Re-source partitioned tiles through their scope table (formulas rewritten
+    # [<Master>/…] -> [<Scope>/…]; the scope passes every master column through).
+    for (ex, lset), tiles in groups.items():
+        sc = scope_for(ex, lset)
+        if sc is None:
+            continue
+        mname = master_of(ex)["name"]
+        for el in tiles:
+            el["_scope"] = sc
+            for sp in el["_emitted"]:
+                sp["source"] = {"kind": "table", "elementId": sc["id"]}
+                for c in sp.get("columns", []):
+                    if isinstance(c.get("formula"), str):
+                        c["formula"] = c["formula"].replace(f"[{mname}/", f"[{sc['name']}/")
+
+    controls, control_scope, dropped_controls = [], [], []
     for flt in dash["filters"]:
         fld = flt.get("dimension") or flt.get("field") or flt.get("_resolvedField")
-        fex = flt.get("explore") or flt.get("_resolvedExplore") or (fld.split(".")[0] if fld else "")
-        cdisp = col_display(fld, fex) if fld else None
-        fmaster = master_of(fex)
-        col_id = fmaster["needed"].get(cdisp)
         ctype = "date-range" if flt["type"] == "date_filter" else "list"
-        ctrl = {"kind": "control", "id": sid("ctrl"), "controlId": flt["name"].lower().replace(" ", "-"),
-                "name": flt["title"], "controlType": ctype}
-        if col_id:
-            ctrl["filters"] = [{"source": {"kind": "table", "elementId": fmaster["id"]}, "columnId": col_id}]
-            if ctype == "list":
-                ctrl.update({"mode": "include", "selectionMode": "multiple", "values": [],
-                             "source": {"kind": "source", "source": {"kind": "table", "elementId": fmaster["id"]}, "columnId": col_id}})
-            else:
-                ctrl["mode"] = "between"
-        else:
-            # An unbound control is furniture — a user changes it and nothing
-            # reacts (it also fails post-and-readback's control lint / gate 7
-            # of assert-phase6-ran.rb). Dropping it loudly is more honest than
-            # shipping a dead control; record the gap so the report names it.
-            warnings.append(f"filter '{flt['name']}': could not bind to a master column — "
-                            "control DROPPED (dead control; add the column to the master or migrate the filter by hand)")
+        cid = flt["name"].lower().replace(" ", "-")
+        entry = {"controlId": cid, "name": flt["title"], "controlType": ctype,
+                 "source_signal": f"looker dashboard filter '{flt['name']}' (per-tile listen: scope)",
+                 "intended": [], "excluded": [], "unresolved": []}
+        targets, seen_targets, domain = [], set(), None   # domain = (master, colId) for the list value source
+        for el in dash["elements"]:
+            emitted = el.get("_emitted") or []
+            if not emitted:
+                continue
+            lf = (el.get("listen") or {}).get(flt["name"])
+            if not lf:
+                entry["excluded"].extend(
+                    {"element_id": sp["id"], "element_name": sp.get("name") or el["name"],
+                     "reason": "tile does not listen: to this filter (un-targeted by design)"}
+                    for sp in emitted)
+                continue
+            d = col_display(lf, el["explore"])
+            if d is None:
+                warnings.append(f"⚠ filter '{flt['name']}': tile '{el['name']}' listens via "
+                                f"'{lf}' which maps to no master column — tile NOT wired")
+                entry["unresolved"].append({"element_name": el["name"], "field": lf})
+                continue
+            mcol = need(d, el["explore"])               # master carries the field
+            if domain is None:
+                domain = (master_of(el["explore"]), mcol)
+            sc = el.get("_scope")
+            if sc is not None:                          # filter lands on the scope table
+                tcol = sc["needed"].setdefault(d, sid("sc"))
+                tkey = (sc["id"], tcol)
+            else:                                       # uniform listen-set: the master
+                tcol = mcol
+                tkey = (master_of(el["explore"])["id"], tcol)
+            if tkey not in seen_targets:
+                seen_targets.add(tkey)
+                targets.append({"source": {"kind": "table", "elementId": tkey[0]},
+                                "columnId": tcol})
+            entry["intended"].extend(
+                {"element_id": sp["id"], "element_name": sp.get("name") or el["name"],
+                 "via_column": d, "target_element": tkey[0]}
+                for sp in emitted)
+        if not targets:
+            why = (f"listening tile field(s) unresolvable: "
+                   f"{', '.join(u['field'] for u in entry['unresolved'])}"
+                   if entry["unresolved"] else "no tile listens: to it")
+            warnings.append(f"⚠⚠ DROPPED control '{flt['name']}'"
+                            + (f" (field '{fld}')" if fld else "") + f" — {why}. "
+                            "A control that filters nothing never ships; fix the field "
+                            "mapping or the listen: wiring, or re-run without the filter.")
+            entry.update({"status": "dropped", "reason": why})
+            dropped_controls.append(flt["name"])
+            control_scope.append(entry)
             continue
+        ctrl = {"kind": "control", "id": sid("ctrl"), "controlId": cid,
+                "name": flt["title"], "controlType": ctype, "filters": targets}
+        if ctype == "list":
+            ctrl.update({"mode": "include", "selectionMode": "multiple", "values": [],
+                         "source": {"kind": "source",
+                                    "source": {"kind": "table", "elementId": domain[0]["id"]},
+                                    "columnId": domain[1]}})
+        else:
+            ctrl["mode"] = "between"
+        entry["status"] = "emitted"
         controls.append(ctrl)
+        control_scope.append(entry)
 
     # ── layout finalize: container bands (layout-playbook.md, 2026-06-10) ──
     # The raw newspaper→grid math (above) honors Looker's pixel positions; the
@@ -805,7 +974,11 @@ def main():
         "layout": layout_xml,
         "pages": [
             {"id": "page-data", "name": "Data", "elements": []},  # filled below
-            {"id": page_id, "name": dash["title"], "elements": controls + elements + band_els},
+            # tiles BEFORE controls: controls now target tile columns directly
+            # (per-tile listen: scope) and Sigma resolves spec dependencies in
+            # array order — a control referencing a later element 400s with
+            # "Dependency not found".
+            {"id": page_id, "name": dash["title"], "elements": elements + controls + band_els},
         ],
     }
     master_elements = [{
@@ -814,16 +987,58 @@ def main():
         "columns": [{"id": cid, "formula": master_ref(d, ex), "name": d}
                     for d, cid in m["needed"].items()],
     } for ex, m in masters.items()]
-    spec["pages"][0]["elements"] = master_elements
+    # listen-scope tables: full passthrough of the master (so every re-sourced
+    # tile formula resolves) — control-targeted columns keep the ids registered
+    # in the control loop; the rest get fresh ids.
+    scope_elements = [{
+        "id": sc["id"], "name": sc["name"], "kind": "table",
+        "source": {"kind": "table", "elementId": master_of(ex)["id"]},
+        "columns": [{"id": sc["needed"].get(d) or sid("sc"), "name": d,
+                     "formula": f"[{master_of(ex)['name']}/{d}]"}
+                    for d in master_of(ex)["needed"]],
+    } for (ex, _lset), sc in scope_tables.items()]
+    spec["pages"][0]["elements"] = master_elements + scope_elements
 
     open(a.out, "w").write(json.dumps(spec, indent=2))
+    # intended-scope contract for the control-coverage lint — MUST be the
+    # control_lint.rb CONTRACT shape (a Hash; a bare array is silently ignored
+    # by the lint and every by-design exclusion would flag PARTIAL):
+    #   * sourceFilterSignals = every dashboard filter (incl. dropped ones —
+    #     they ARE source signals; the loud build warning + --strict cover them)
+    #   * per emitted control: scope = "page" when every tile listens, else the
+    #     allowlist of intended (listening) tile element ids; mustReach = those
+    #     same ids as hard reach assertions; rich detail keys (intended/
+    #     excluded/unresolved) ride along — the lint ignores unknown keys.
+    #   * dropped controls live under "dropped" (NOT "controls" — a sidecar
+    #     control absent from the spec is a gate-7 "missing control" failure;
+    #     the drop is already loud at build time).
+    for e in control_scope:
+        if e["status"] != "emitted":
+            continue
+        e["sourceName"] = e["source_signal"]
+        reach_ids = sorted({t["element_id"] for t in e["intended"]})
+        e["mustReach"] = reach_ids
+        e["scope"] = "page" if not e["excluded"] and not e["unresolved"] else reach_ids
+    sidecar = {"version": 1, "source": "looker",
+               "sourceFilterSignals": len(dash["filters"]),
+               "controls": [e for e in control_scope if e["status"] == "emitted"],
+               "dropped": [e for e in control_scope if e["status"] != "emitted"]}
+    scope_path = os.path.join(os.path.dirname(os.path.abspath(a.out)), "control-scope.json")
+    json.dump(sidecar, open(scope_path, "w"), indent=2)
     print(f"wrote {a.out}")
-    print(f"  masters: {len(master_elements)} ({', '.join(m['name'] + ':' + str(len(m['columns'])) + ' cols' for m in master_elements)})  tiles: {len(elements)}  controls: {len(controls)}")
+    print(f"  masters: {len(master_elements)} ({', '.join(m['name'] + ':' + str(len(m['columns'])) + ' cols' for m in master_elements)})  tiles: {len(elements)}  controls: {len(controls)}"
+          + (f"  listen-scope tables: {len(scope_elements)}" if scope_elements else ""))
+    print(f"  control-scope: {scope_path} ({len(controls)} emitted"
+          + (f", {len(dropped_controls)} DROPPED: {', '.join(dropped_controls)}" if dropped_controls else "")
+          + ")")
     for e in elements:
         print(f"    {e['kind']:11} {e.get('name', '(text)')}")
     if warnings:
         print("\n  WARNINGS:")
         for w in warnings: print("   -", w)
+    if a.strict and dropped_controls:
+        sys.exit(f"--strict: {len(dropped_controls)} dashboard filter(s) could not be bound: "
+                 + ", ".join(dropped_controls))
 
 if __name__ == "__main__":
     main()

@@ -13,6 +13,12 @@ view: customer_dim {
     sql: ${TABLE}.REGION ;;
   }
 
+  dimension_group: first_order {
+    type: time
+    timeframes: [raw, date, month, year]
+    sql: ${TABLE}.FIRST_ORDER_DATE ;;
+  }
+
   dimension: customer_segment {
     type: string
     sql: ${TABLE}.CUSTOMER_SEGMENT ;;

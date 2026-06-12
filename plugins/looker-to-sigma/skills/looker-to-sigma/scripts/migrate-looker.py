@@ -467,7 +467,7 @@ def main():
     if not os.path.isdir(views_dir):
         views_dir = lookml_dir
     view_files = sorted(glob.glob(os.path.join(views_dir, "*.view.lkml")))
-    measures, _dims, view_pk, _formats, _yesno = build_field_index(view_files)
+    measures, _dims, view_pk, _formats, _yesno, _dim_groups = build_field_index(view_files)
     print(f"   '{dash['title']}': {len(dash['elements'])} tile(s), {len(dash['filters'])} filter(s), "
           f"explore '{explore}' · {len(view_files)} view file(s), {len(measures)} measure(s) · workdir {wd}")
 
