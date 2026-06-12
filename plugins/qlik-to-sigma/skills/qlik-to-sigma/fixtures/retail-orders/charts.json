@@ -1377,5 +1377,135 @@
         }
       ]
     }
+  },
+  {
+    "id": "fp-1",
+    "vizType": "filterpane",
+    "title": "Filters",
+    "sheet": "yGLwX",
+    "dimensions": [],
+    "dimLabels": [],
+    "dimNullSuppression": [],
+    "measures": [],
+    "measureLabels": [],
+    "measureFmts": [],
+    "sort": {},
+    "children": [
+      "lb-1",
+      "lb-2"
+    ]
+  },
+  {
+    "id": "lb-1",
+    "vizType": "listbox",
+    "title": "Region",
+    "sheet": null,
+    "dimensions": [],
+    "dimLabels": [],
+    "dimNullSuppression": [],
+    "measures": [],
+    "measureLabels": [],
+    "measureFmts": [],
+    "sort": {},
+    "listbox": {
+      "field": "CUSTOMER_REGION",
+      "label": "Customer Region",
+      "state": null
+    }
+  },
+  {
+    "id": "lb-2",
+    "vizType": "listbox",
+    "title": "AltState",
+    "sheet": null,
+    "dimensions": [],
+    "dimLabels": [],
+    "dimNullSuppression": [],
+    "measures": [],
+    "measureLabels": [],
+    "measureFmts": [],
+    "sort": {},
+    "listbox": {
+      "field": "CATEGORY",
+      "label": "Category",
+      "state": "AltA"
+    }
+  },
+  {
+    "id": "lb-3",
+    "vizType": "listbox",
+    "title": "Ship Mode",
+    "sheet": "yGLwX",
+    "dimensions": [],
+    "dimLabels": [],
+    "dimNullSuppression": [],
+    "measures": [],
+    "measureLabels": [],
+    "measureFmts": [],
+    "sort": {},
+    "listbox": {
+      "field": "NO_SUCH_FIELD",
+      "label": "Bogus",
+      "state": null
+    }
+  },
+  {
+    "id": "lb-4",
+    "vizType": "listbox",
+    "title": "Category",
+    "sheet": "yGLwX",
+    "dimensions": [],
+    "dimLabels": [],
+    "dimNullSuppression": [],
+    "measures": [],
+    "measureLabels": [],
+    "measureFmts": [],
+    "sort": {},
+    "listbox": {
+      "field": "CATEGORY",
+      "label": "Category",
+      "state": null
+    }
+  },
+  {
+    "id": "lb-5",
+    "vizType": "listbox",
+    "title": "Customer Region (dup)",
+    "sheet": "sh-product",
+    "dimensions": [],
+    "dimLabels": [],
+    "dimNullSuppression": [],
+    "measures": [],
+    "measureLabels": [],
+    "measureFmts": [],
+    "sort": {},
+    "listbox": {
+      "field": "CUSTOMER_REGION",
+      "label": "Customer Region",
+      "state": null
+    }
+  },
+  {
+    "id": "lb-6",
+    "vizType": "listbox",
+    "title": "Order Date",
+    "sheet": "yGLwX",
+    "dimensions": [],
+    "dimLabels": [],
+    "dimNullSuppression": [],
+    "measures": [],
+    "measureLabels": [],
+    "measureFmts": [],
+    "sort": {},
+    "listbox": {
+      "field": "FULL_DATE",
+      "label": "Order Date",
+      "state": null,
+      "tags": [
+        "$date",
+        "$numeric"
+      ],
+      "numFmt": "YYYY-MM-DD"
+    }
   }
 ]

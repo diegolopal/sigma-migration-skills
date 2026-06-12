@@ -216,14 +216,35 @@ def extract(report):
             }
             if rec["sigma_kind"] == "text":
                 rec["text"] = _textbox_body(sv)
-            visuals.append(rec)
-        visuals.sort(key=lambda r: (r["y"], r["x"]))
+            visuals.append((cfg.get("name"), rec))
+        visuals.sort(key=lambda nr: (nr[1]["y"], nr[1]["x"]))
+        # Visual-interaction overrides ("edit interactions"): the classic
+        # section config (JSON string) carries visualInteractions[{source,
+        # target, type}] ONLY when an author edited them; source/target are
+        # config names — remapped here onto the synthesized visual_ids the
+        # builder keys on (control-targeting wave, workstream B). Numeric
+        # types: 3 = none/no-filter (the exemption the builder honors);
+        # 1/2 = filter/highlight (both still filter-like — kept verbatim).
+        name_to_id = {n: r["visual_id"] for n, r in visuals if n}
+        interactions = []
+        try:
+            scfg = json.loads(s.get("config") or "{}")
+        except (TypeError, ValueError):
+            scfg = {}
+        for ia in (scfg.get("visualInteractions") or []):
+            src, tgt = name_to_id.get(ia.get("source")), name_to_id.get(ia.get("target"))
+            if not (src and tgt):
+                continue
+            t = ia.get("type")
+            interactions.append({"source": src, "target": tgt,
+                                 "type": "none" if t in (3, "3", "none", "noFilter") else str(t).lower()})
         out_pages.append({
             "page_id": s.get("name"),
             "page_title": s.get("displayName", s.get("name")),
             "page_w": s.get("width", 1280),
             "page_h": s.get("height", 720),
-            "visuals": visuals,
+            "visuals": [r for _n, r in visuals],
+            "interactions": interactions,
         })
     return {"source": "report.json-classic", "pages": out_pages}
 

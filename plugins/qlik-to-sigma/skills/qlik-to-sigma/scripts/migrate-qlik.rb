@@ -420,9 +420,13 @@ if app_meta['isDirectQueryMode'] == true
 end
 
 # (d) charts with no native Sigma element kind (auto-chart is resolved by shape).
-NATIVE = %w[barchart auto-chart kpi linechart table piechart combochart scatterplot pivot-table].freeze
-SKIP_KINDS = %w[sheet singlepublic appprops LoadModel measure dimension masterobject sheetlist
-                filterpane listbox].freeze
+# filterpane/listbox are NOT skipped (control-targeting wave, workstream B):
+# build-sigma-workbook.py turns them into Sigma list controls wired to the
+# master (global scope, matching Qlik's associative model); alternate-state
+# panes are flagged manual in its warnings + control-scope.json.
+NATIVE = %w[barchart auto-chart kpi linechart table piechart combochart scatterplot pivot-table
+            filterpane listbox].freeze
+SKIP_KINDS = %w[sheet singlepublic appprops LoadModel measure dimension masterobject sheetlist].freeze
 real_charts.each do |c|
   vt = c['vizType']
   next if NATIVE.include?(vt) || SKIP_KINDS.include?(vt)
@@ -543,7 +547,8 @@ wb_res = JSON.parse(File.read(File.join(WORK, 'wb-result.json')))
 WB_ID = wb_res['workbookId']
 emap  = JSON.parse(File.read(File.join(WORK, 'element-map.json')))
 puts "   workbookId = #{WB_ID || '(dry-run)'}  (#{wb_res['pages']} page(s), #{wb_res['elements']} element(s), " \
-     "#{wb_res['kpis']} KPI(s))"
+     "#{wb_res['kpis']} KPI(s), #{wb_res['controls'] || 0} control(s))"
+puts "   control scope contract -> #{wb_res['controlScope']}" if (wb_res['controls'] || 0) > 0
 mark('phase4-wb')
 
 # ---------------------------------------------------------------------------
@@ -701,6 +706,33 @@ end
 
 divergent = kpi_results.count('DIVERGENT')
 parity_ok = err_cols.empty? && entries.size.positive? && divergent.zero?
+
+# 6e — control-wiring lint, gate 7 (scripts/lib/control_lint.rb, shared —
+# vendored byte-identical across the migration plugins). Lints the LIVE spec
+# readback against the control-scope.json sidecar the workbook builder
+# emitted: dead controls, ghost targets, partial same-page reach, mustReach
+# (Qlik global-scope assertions over every chart on every page), and the
+# source-signal coverage check (filterpanes/listboxes in the app but zero
+# controls in the spec = the silently-dropped class this gate exists to
+# kill). RED here blocks GREEN exactly like a parity failure.
+puts
+puts '   ── CONTROL LINT (gate 7: every filterpane/listbox a WORKING control) ──'
+$LOAD_PATH.unshift File.expand_path('lib', HERE)
+require 'control_lint'
+live = Sigma.request(:get, "/v2/workbooks/#{WB_ID}/spec") rescue {}
+live_spec = live.is_a?(Hash) ? (live['spec'] || live) : {}
+ctl_scope = (JSON.parse(File.read(File.join(WORK, 'control-scope.json'))) rescue nil)
+ctl_violations = ControlLint.lint(live_spec, scope: ctl_scope)
+ctl_rows = ControlLint.controls_report(live_spec)
+if ctl_violations.empty?
+  puts "     [OK] control lint clean — #{ctl_rows.size} control(s), " \
+       "#{(ctl_scope || {})['sourceFilterSignals'].to_i} source filter signal(s), " \
+       "#{((ctl_scope || {})['unbound'] || []).size} unbound (reasons in control-scope.json)"
+else
+  puts "     [FAIL] #{ctl_violations.size} control-lint violation(s):"
+  ctl_violations.each { |v| puts "       - #{v}" }
+end
+control_ok = ctl_violations.empty?
 mark('phase6-parity')
 
 # ---------------------------------------------------------------------------
@@ -713,8 +745,10 @@ puts "workbookId  : #{WB_ID}"
 puts "PARITY      : #{parity_ok ? 'GREEN' : 'RED'} — #{entries.size} cols resolve (#{err_cols.size} error), " \
      "KPIs: #{kpi_results.count('MATCH')} match / #{kpi_results.count('STALE-EXPLAINED')} stale-explained / #{divergent} divergent, " \
      "#{bucket_warns} bucket warning(s)"
+puts "CONTROLS    : #{control_ok ? 'GREEN' : 'RED'} — gate 7 control lint, #{ctl_rows.size} control(s) checked" \
+     "#{ctl_violations.any? ? ", #{ctl_violations.size} violation(s)" : ''}"
 puts "freshness   : Qlik last reload #{app_meta['lastReloadTime'] || '?'} (#{stale_days} days ago)" if stale_days
 puts "warnings    : #{conv_warnings.size} converter, #{(wb_res['warnings'] || []).size} workbook-build" if conv_warnings.any? || (wb_res['warnings'] || []).any?
 puts '======================================='
 phase_summary
-exit(parity_ok ? 0 : 3)
+exit(parity_ok && control_ok ? 0 : 3)

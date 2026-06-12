@@ -211,6 +211,19 @@ The Qlik cell grid maps 1:1 onto the 24-col Sigma grid. Element shapes + the
 `source.dataModelId` requirement in `refs/sigma-build-gotchas.md`.
 POST `/v2/workbooks/spec`, then `scripts/vendor/put-layout.rb` applies the layout XML.
 
+**Filterpanes/listboxes → controls (NOT skipped).** Each filterpane child
+listbox (discovered via `qChildList` + per-listbox layout) and standalone
+listbox becomes a Sigma **list control** — or a **date-range control** when the
+field is date-typed (`$date`/`$timestamp` qTags; a list control bound to a
+datetime column gets its filter targets SILENTLY STRIPPED by Sigma). Scope is
+GLOBAL, matching Qlik's associative model: one filter target on the master
+table propagates to every chart on every page. A second listbox on the same
+field dedupes to the one global control; alternate-state listboxes are flagged
+MANUAL. The builder emits the **`control-scope.json` sidecar** (contract:
+`scripts/lib/control_lint.rb` header + `refs/control-parity.md`) with
+`sourceFilterSignals`, per-control `mustReach` over every chart on every page
+(static proof of global reach), and `unbound` entries with reasons.
+
 ## Phase 5 — Parity (hard gate)
 Three checks, led by the **freshness banner** (Phase 1.5 — read it before any
 side-by-side):
@@ -222,8 +235,16 @@ side-by-side):
    dim-value-without-facts surfaces **even when every shared cell matches**.
    (Known shape: Qlik shows dimension values with zero fact rows — e.g. a store with
    no orders — that a fact-grain LEFT JOIN can never emit; that's data shape, not a bug.)
-GREEN = all columns resolve + no DIVERGENT KPI. Bucket mismatches WARN loudly with
-the likely cause. (First run matched to the cent; staleness-explained deltas don't block.)
+4. **Control lint (gate 7)** — `scripts/lib/control_lint.rb` (shared, vendored
+   byte-identical) runs against the LIVE spec readback + the builder's
+   `control-scope.json` sidecar: no dead controls, no ghost targets, full reach
+   (incl. the Qlik `mustReach` global-scope assertions), and source-signal
+   coverage (filterpanes/listboxes in the app but zero controls = RED).
+   Optional runtime proof: `ruby scripts/probe-controls.rb --workbook-id <wb>`
+   (flip test via export `parameters`; MCP can NOT set a control value).
+GREEN = all columns resolve + no DIVERGENT KPI + control lint clean. Bucket
+mismatches WARN loudly with the likely cause. (First run matched to the cent;
+staleness-explained deltas don't block.)
 
 > **Querying for parity:** `metric('<id>', t)` against a data-model element can return
 > "Missing Metric" — aggregate the element's raw columns directly instead
@@ -248,6 +269,9 @@ the likely cause. (First run matched to the cent; staleness-explained deltas don
 | `scripts/qlik-screenshot.py` | 1/6 | Export PNGs of a sheet's charts (or specific viz ids) via the Qlik reporting API, for before/after capture. **Validated** (per-viz PNG; whole-sheet is PDF only). |
 | `scripts/build-sigma-dm.py` | 3 | Author + POST the Sigma data model FROM THE PIPELINE ARTIFACTS (converter-out + reconcile + denorm): repointed star + relationships + denorm SQL element + metrics. `--dry-run` for offline. **Proven (generalized 2026-06-10).** |
 | `scripts/build-sigma-workbook.py` | 4 | Author + POST the workbook FROM DISCOVERY (charts.json + layout.json): one page per Qlik sheet, cell-grid layout, sorts, formats, null-suppression filters. `--dry-run` for offline. **Proven (generalized 2026-06-10).** |
+| `scripts/lib/control_lint.rb` | 5 | **Shared control-wiring lint (gate 7)** — dead controls / ghost targets / reach / `control-scope.json` coverage; vendored byte-identical across plugins; run automatically by `migrate-qlik.rb` Phase 6e. |
+| `scripts/probe-controls.rb` | 5 | **Shared flip test** — runtime proof a control filters: export an in-closure element with/without `parameters:{controlId: value}`; cross-page exports prove Qlik's global scope. |
+| `refs/control-parity.md` | 5 | The control-parity contract: lint + sidecar schema + the MCP/export-API answer (export `parameters` is the only way to set a control value). |
 | `refs/example-converter-input.json` | 1–2 | The exact convert_qlik_to_sigma input from the first migration. |
 | `fixtures/retail-orders/` | — | Complete offline discovery+converter input set (sanitized demo app) — see `fixtures/README.md` for the offline smoke path. |
 

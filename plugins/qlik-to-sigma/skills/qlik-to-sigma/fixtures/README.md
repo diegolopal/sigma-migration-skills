@@ -29,5 +29,24 @@ ruby scripts/migrate-qlik.rb \
 
 Expected: all 6 phases run; `/tmp/qlik-smoke/` gains `dm-spec.json` (7 elements:
 6 repointed star tables + denorm SQL element with 13 metrics), `wb-spec.json`
-(6 pages, 35 elements, 15 KPIs), `layout.xml` (6 `<Page>` grids), and
-`element-map.json`; exit code 0. Nothing is POSTed.
+(6 pages, 62 elements, 15 KPIs, 3 controls), `layout.xml` (6 `<Page>` grids),
+`element-map.json`, and `control-scope.json` (the gate-7 sidecar); exit code 0.
+Nothing is POSTed.
+
+### Filter-object fixtures (control-targeting wave)
+
+`charts.json`/`layout.json` carry synthetic filter objects exercising every
+control path in `build-sigma-workbook.py`:
+
+| object | case | expected outcome |
+|---|---|---|
+| `fp-1` (children `lb-1`,`lb-2`) | filterpane | one control per child listbox |
+| `lb-1` CUSTOMER_REGION | plain field | `list` control, wired to the master |
+| `lb-2` CATEGORY, state `AltA` | alternate state | NOT emitted; `unbound` status `manual` |
+| `lb-3` NO_SUCH_FIELD | unresolvable | NOT emitted (loud WARN); `unbound` |
+| `lb-4` CATEGORY | standalone listbox | `list` control |
+| `lb-5` CUSTOMER_REGION (2nd sheet) | duplicate field | deduped (`unbound` status `duplicate`) |
+| `lb-6` FULL_DATE, qTags `$date` | date-typed field | **`date-range` control** (a `list` on a datetime column gets its targets silently stripped) |
+
+`control-scope.json` must report `sourceFilterSignals: 5` and pass
+`ruby scripts/lib/control_lint.rb /tmp/qlik-smoke/wb-spec.json /tmp/qlik-smoke/control-scope.json`.
