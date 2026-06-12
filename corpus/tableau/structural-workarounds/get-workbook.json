@@ -1,0 +1,5 @@
+{ "views": { "view": [
+  { "id": "v1", "name": "Attainment by Region" },
+  { "id": "v2", "name": "Sales Trend" },
+  { "id": "v3", "name": "Customer Detail" }
+] } }

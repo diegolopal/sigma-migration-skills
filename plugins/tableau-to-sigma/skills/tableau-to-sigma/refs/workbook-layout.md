@@ -751,7 +751,7 @@ the chart editor after publish.
 | Series color | No (not yet) | Chart editor → Properties → Color |
 | Chart color palette | No | Chart editor → Properties → Color |
 | Font size / axis title | No | Chart editor → Format tab |
-| Text element alignment (center / right) | No | Element editor → Format → Alignment. Confirmed UI-only: spec GET returns only `id`/`kind`/`body` even after centering in the UI. Markdown `# Heading` in `body` always renders left-aligned. |
+| Text element alignment (center / right) | **Yes (since 2026-06-11)** | Inline HTML in `body`: `<p style="text-align: center">…</p>` (also `right`/`left`). Round-trips through GET/PUT — live-verified 2026-06-11. Combines with `<span>` color/font-size styling. Pre-fix UI-set alignment did not serialize; re-apply once via spec or UI and it sticks. |
 
 **`"orientation": "horizontal"` is silently accepted but ignored.** Do not include it — it does nothing.
 
@@ -801,7 +801,7 @@ KPI elements require a `value` field referencing one column ID:
 {
   "kind": "kpi-chart",
   "columns": [{"id": "k-sales", "formula": "Sum([Master/Sales])", "name": "Total Sales", "format": {"kind": "number", "formatString": "$,.0f"}}],
-  "value": {"id": "k-sales"}
+  "value": {"columnId": "k-sales"}
 }
 ```
 
@@ -1006,9 +1006,10 @@ page (`page['name']`) only changes the tab label; it does not put a heading on t
 If the Tableau dashboard image shows a title at the top, add `{ "kind": "text", "body": "# Title" }`
 and reserve the top ~2 grid rows for it in the layout XML.
 
-**Alignment is UI-only.** Markdown `# Heading` in `body` always renders left-aligned. Centering
-or right-aligning has to be applied post-publish via the element editor's Format tab — the spec
-GET round-trip confirms only `id`/`kind`/`body` survive on text elements.
+**Alignment is spec-able as of 2026-06-11** (previously UI-only). Wrap the content in inline
+HTML: `<p style="text-align: center">…</p>` (also `right`/`left`). Live-verified: POSTs cleanly,
+survives GET→PUT cycles, and combines with `<span style="color/font-size">` styling. Bare
+markdown (`# Heading`) still renders left-aligned — alignment must be expressed in the HTML form.
 
 ### Image element
 
@@ -1301,7 +1302,7 @@ curl -s -X PUT \
 | Setting `layout` on each page object instead of top-level | PUT returns success but UI shows no layout change | Set `spec['layout']` once at the top level; strip `layout` from all page objects |
 | Bare `<Page>` tag without `type`/`id` attributes | Layout ignored silently | Use `<Page type="grid" gridTemplateColumns="repeat(24, 1fr)" gridTemplateRows="auto" id="<pageId>">` |
 | Using `measures` instead of `yAxis` on bar/line charts | `"Invalid array: ...yAxis, got undefined"` | Replace `measures` with `yAxis` |
-| KPI missing `value` field | `"Invalid object: ...value, got undefined"` | Add `"value": {"id": "<col-id>"}` to every `kpi-chart` element |
+| KPI missing `value` field | `"Invalid object: ...value, got undefined"` | Add `"value": {"columnId": "<col-id>"}` to every `kpi-chart` element |
 | Using `rows`/`columnGroups` on a pivot table | API accepts silently but pivot does not render | Use `rowsBy`/`columnsBy` (object arrays) and `values` (string array) |
 | Using IDs from POST body instead of GET response | Layout elements don't appear | Always GET spec after POST to get real IDs |
 | `<LayoutElement>` for a container | Empty container visible | Use `<GridContainer>` for elements that have children |

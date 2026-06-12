@@ -333,7 +333,11 @@ xml.elements.each('//worksheet') do |ws|
     deriv = ci.attributes['derivation']
     next if col.nil? || deriv.nil?
     next unless ci.attributes['type'] == 'quantitative'
-    next if %w[None User].include?(deriv)
+    # 'None' = raw (non-aggregated) usage — not a measure. 'User' IS a measure:
+    # a user-aggregated calc field (ratio KPIs like Gross Margin Pct). Excluding
+    # it made every calc-measure KPI read as 0-measure and fall through to the
+    # flat-table flow (bead 3w4d — "CSV has only 1 column" KPI drops).
+    next if deriv == 'None'
     measures << { 'column' => col.to_s, 'derivation' => deriv.to_s }
   end
   # Conservative: only flag dual_axis when Tableau explicitly synchronized two
@@ -413,7 +417,7 @@ xml.elements.each('//worksheet') do |ws|
     cls  = calc.attributes['class']
     formula = calc.attributes['formula']
     next if formula.nil? || formula.empty?
-    calcs << {
+    entry = {
       'name'    => col.attributes['name'],
       'caption' => col.attributes['caption'],
       'datatype'=> col.attributes['datatype'],
@@ -421,6 +425,15 @@ xml.elements.each('//worksheet') do |ws|
       'class'   => cls,
       'formula' => formula
     }
+    # Tableau numeric bins are calc columns with class='bin': `formula` is the
+    # base field ref, `size` (or a `size-parameter` ref) is the bin width and
+    # `peg` the bin origin. Surfaced so build-charts-from-signals.rb can emit
+    # the Sigma-native BinFixed/BinRange translation (beads-sigma-t67b).
+    if cls == 'bin'
+      entry['bin_size'] = calc.attributes['size'] || calc.attributes['size-parameter']
+      entry['bin_peg']  = calc.attributes['peg']
+    end
+    calcs << entry
   end
 
   # Worksheet-level "Show Mark Labels" toggle. Tableau emits this on the
@@ -456,14 +469,20 @@ xml.elements.each('//worksheet') do |ws|
     (rows_shelf['measure_count'] + cols_shelf['measure_count'] + measures.size) >= 2
   is_crosstab = is_text_mark && (both_have_dims || measure_names_crosstab)
 
-  # KPI signal: Text/Square mark with ZERO dims on both shelves AND ≥1 measure
-  # (on shelves or on the worksheet's Marks card). Tableau "scorecard" /
-  # "big number" tiles match this shape — they're not detail lists, not
-  # crosstabs, just a single aggregated value rendered as text. Maps to
-  # Sigma kpi-chart. beads-sigma-bw3.
+  # KPI signal: Text/Square/AUTOMATIC mark with ZERO dims on both shelves AND
+  # ≥1 measure (on shelves or on the worksheet's Marks card). Tableau
+  # "scorecard" / "big number" tiles match this shape — they're not detail
+  # lists, not crosstabs, just a single aggregated value rendered as text.
+  # Maps to Sigma kpi-chart. beads-sigma-bw3.
+  # Automatic mark included (bead 3w4d): Tableau's default mark for a
+  # zero-dim single-measure sheet renders as a big-number text table — the
+  # FATSCALE rehearsal lost 14/40 tiles because these fell through to the
+  # CSV-driven flow (1-column CSV → zone dropped).
+  kpi_capable_mark = is_text_mark || mark_class.to_s.downcase == 'automatic' ||
+                     mark_class.to_s.empty?
   total_dim_count = rows_shelf['dim_count'] + cols_shelf['dim_count']
   total_measure_count = rows_shelf['measure_count'] + cols_shelf['measure_count'] + measures.size
-  is_kpi = is_text_mark && !is_crosstab &&
+  is_kpi = kpi_capable_mark && !is_crosstab &&
            total_dim_count == 0 && total_measure_count >= 1
 
   worksheets[name] = {
@@ -592,7 +611,9 @@ def chart_kind_for(meta)
   when 'square'     then (meta[:is_crosstab] ? 'pivot-table' : (meta[:is_kpi] ? 'kpi' : 'table'))
   when 'text'       then (meta[:is_crosstab] ? 'pivot-table' : (meta[:is_kpi] ? 'kpi' : 'table'))
   when 'shape'      then 'scatter'
-  when 'automatic'  then 'automatic'              # Tableau's default-pick — verify against PNG
+  # Automatic is Tableau's default-pick — but a zero-dim single-measure sheet
+  # under Automatic renders as a big-number text table, i.e. a KPI (bead 3w4d).
+  when 'automatic'  then (meta[:is_kpi] ? 'kpi' : 'automatic')
   when ''           then 'other'
   else 'other'
   end
@@ -672,8 +693,14 @@ xml.elements.each('//dashboard') do |d|
       'filter_column_datatype' => (kind == 'filter' || kind == 'parameter' ? filter_col_datatype : nil)
     }
   end
+  # A "storyboard" dashboard is Tableau's story container (sequential story
+  # points in a flipboard zone) — flag it so downstream layout builders don't
+  # treat the flipboard chrome as a regular chart page. The story itself is
+  # parsed into story-plan.json below (beads-sigma-y6b).
+  is_story = d.attributes['type-v2'] == 'storyboard' || !d.elements['.//story-points'].nil?
   dashboards << {
     'dashboard' => d.attributes['name'],
+    'is_story'  => is_story,
     'zones'     => zones
   }
 end
@@ -835,8 +862,64 @@ xml.elements.each('//shared-view') do |sv|
   end
 end
 
+## ---- Tableau stories (story points) ----------------------------------------
+# A Tableau story is a sequential slide deck: each <story-point> captures a
+# dashboard or worksheet plus a navigator caption. XML shapes in the wild:
+#   <story name='X'> ... <flipboard><story-points><story-point .../>   (older)
+#   <dashboard name='X' type-v2='storyboard'> ... same flipboard tree  (newer)
+# We match on //story-points so both shapes parse, and resolve each point's
+# captured-sheet against the dashboard/worksheet name sets so the downstream
+# builder (scripts/build-story-pages.rb) knows whether the point's Sigma page
+# clones a whole dashboard page or a single worksheet element. Output:
+# story-plan.json in the same directory as OUT (only when stories exist).
+# beads-sigma-y6b.
+stories = []
+dashboard_names = dashboards.map { |d| d['dashboard'] }
+xml.elements.each('//story-points') do |spn|
+  # Enclosing story container = nearest ancestor carrying a name attribute
+  # (<story name=...> or <dashboard name=... type-v2='storyboard'>).
+  story_name = nil
+  anc = spn.parent
+  while anc
+    nm = anc.respond_to?(:attributes) && anc.attributes ? anc.attributes['name'] : nil
+    unless nm.to_s.empty?
+      story_name = nm
+      break
+    end
+    anc = anc.respond_to?(:parent) ? anc.parent : nil
+  end
+  points = []
+  spn.elements.each('story-point') do |sp|
+    a = sp.attributes
+    cap = a['caption']
+    cap = sp.elements['caption'].text if (cap.nil? || cap.to_s.empty?) && sp.elements['caption']
+    captured = a['captured-sheet']
+    kind = if captured.nil?                          then 'unknown'
+           elsif dashboard_names.include?(captured)  then 'dashboard'
+           elsif worksheets.key?(captured)           then 'worksheet'
+           else 'unknown'
+           end
+    points << {
+      'id'             => a['id'],
+      'caption'        => cap,
+      'captured_sheet' => captured,
+      'sheet_kind'     => kind
+    }
+  end
+  next if points.empty?
+  stories << { 'story' => story_name, 'points' => points }
+end
+unless stories.empty?
+  story_plan_path = File.join(File.dirname(File.expand_path(OUT)), 'story-plan.json')
+  File.write(story_plan_path, JSON.pretty_generate(stories))
+  puts "wrote #{story_plan_path} (#{stories.size} story(ies), " \
+       "#{stories.sum { |st| st['points'].size }} story point(s)) — " \
+       'run scripts/build-story-pages.rb to emit one Sigma page per story point'
+end
+
 meta = {
   'worksheets'     => worksheets.transform_values { |v| v.transform_keys(&:to_s) },
+  'stories'        => stories,
   'shared_filters' => shared_filters,
   'parameters'     => parameters,
   'column_aliases' => column_aliases,

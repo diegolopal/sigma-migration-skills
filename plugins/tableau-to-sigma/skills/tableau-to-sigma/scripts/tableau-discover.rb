@@ -86,7 +86,11 @@ def atomic_write(path, bytes)
   File.rename(tmp, path)
 end
 
-RETRYABLE = /\b(429|408|50[234])\b|Too Many Requests|timed? ?out|Timeout/i
+# 400 is included: Tableau Cloud's VizQL layer intermittently 400s view/data
+# exports under concurrent load (observed on the FATSCALE 44-view fat workbook:
+# 5/44 CSVs 400'd on one run, all succeeded on the next) — a retry with backoff
+# recovers them. A genuinely-bad request just burns the 4 attempts.
+RETRYABLE = /\b(429|408|400|50[234])\b|Too Many Requests|timed? ?out|Timeout/i
 
 # Run one named fetch task with timing + backoff-retry. Returns task result or nil.
 def run_task(name)
