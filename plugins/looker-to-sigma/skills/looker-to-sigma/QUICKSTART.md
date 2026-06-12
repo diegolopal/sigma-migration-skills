@@ -5,6 +5,10 @@ End-to-end: a Looker LookML model + its dashboards (UDD or LookML-defined) → a
 
 ## 0. ONE COMMAND (preferred)
 ```bash
+# env: SIGMA_CONNECTION_ID (full warehouse-connection UUID, NOT a short prefix)
+# is required unless --reuse-dm — persist it via setup.rb (~/.sigma-migration/env,
+# auto-sourced) or export it here:
+export SIGMA_CONNECTION_ID=<full-connection-uuid>
 # offline (fixtures work end-to-end):
 python3 scripts/migrate-looker.py --lookml-dir fixtures/skilltest-orders \
     --dashboard fixtures/skilltest-orders/skilltest_orders.dashboard.lookml \

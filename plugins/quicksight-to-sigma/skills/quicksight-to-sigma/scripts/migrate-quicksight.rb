@@ -21,9 +21,16 @@
 # Usage (live):
 #   ruby scripts/migrate-quicksight.rb \
 #     --analysis-id <ID> --account-id <ACCT> --region <REGION> --profile <PROFILE> \
-#     --connection <SIGMA_CONNECTION_ID> --folder <SIGMA_FOLDER_ID> \
+#     --connection <SIGMA_CONNECTION_ID> --folder <SIGMA_FOLDER_ID-or-name> \
 #     [--database DB --schema SCH] [--name "My Dashboard"] \
 #     [--out DIR] [--answers '<json>'] [--yes]
+#   --folder accepts a folder id OR an exact folder NAME (looked up via
+#   /v2/files; ambiguous names abort with the candidate ids).
+#
+# IDEMPOTENT RESUME: re-running with the same --out after a mid-run crash
+# NEVER duplicates the DM or workbook — ids already posted by this workdir
+# (dm-readback.json / wb-id.txt) are verified live and reused. Use a fresh
+# --out (or delete the workdir) to force a fresh build.
 #
 # Usage (offline fixtures — no AWS needed):
 #   ruby scripts/migrate-quicksight.rb --from-fixtures fixtures/ \
@@ -325,6 +332,19 @@ end
 # attach to it (--reuse-dm <id>), but never silently reuses.
 # ---------------------------------------------------------------------------
 require 'sigma_rest' # also loads ~/.sigma-migration/env for the child scripts
+
+# --folder accepts a NAME or an id (bead eqom): anything that isn't a UUID is
+# looked up by exact (case-insensitive) folder name via /v2/files.
+if opts[:folder] && opts[:folder] !~ /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
+  want = opts[:folder].strip.downcase
+  entries = (Sigma.request(:get, '/v2/files?typeFilters=folder&limit=500')['entries'] rescue []) || []
+  hits = entries.select { |e| (e['name'] || '').strip.downcase == want }
+  abort "FATAL: --folder #{opts[:folder].inspect} matched no folder by name — list them via GET /v2/files?typeFilters=folder, or pass an id" if hits.empty?
+  abort "FATAL: --folder #{opts[:folder].inspect} is ambiguous (#{hits.size} folders named that): #{hits.map { |h| h['id'] }.join(', ')} — pass an id" if hits.size > 1
+  puts "   --folder resolved by name: '#{hits[0]['name']}' → #{hits[0]['id']}"
+  opts[:folder] = hits[0]['id']
+end
+
 hdr('2.5', TOTAL, 'DM reuse check')
 if opts[:reuse_dm]
   puts "   --reuse-dm #{opts[:reuse_dm]} — attaching to the existing DM (Phase 3 skipped)"
@@ -358,7 +378,24 @@ end
 hdr(3, TOTAL, 'Build data model')
 dm_spec = File.join(WORK, 'dm-spec.json')
 dm_readback = File.join(WORK, 'dm-readback.json')
-if opts[:reuse_dm]
+# Idempotent resume BEFORE the parity state (bead eqom): a mid-run crash after
+# the DM POST must not create a duplicate DM on re-run. dm-readback.json is
+# written only by a successful post — when this workdir already has one,
+# verify the DM still exists and REUSE it.
+prior_dm = File.exist?(dm_readback) ? (JSON.parse(File.read(dm_readback))['dataModelId'] rescue nil) : nil
+if prior_dm && !opts[:reuse_dm]
+  if (Sigma.request(:get, "/v2/dataModels/#{prior_dm}") rescue nil)
+    dm_id = prior_dm
+    puts "   idempotent resume: dataModelId #{dm_id} was already posted by a prior run of"
+    puts "   this workdir — REUSING it (no duplicate DM). Use a fresh --out for a fresh build."
+  else
+    puts "   prior dataModelId #{prior_dm} in #{dm_readback} no longer exists — rebuilding"
+    prior_dm = nil
+  end
+end
+if dm_id
+  # reused above — nothing to post
+elsif opts[:reuse_dm]
   # Read the existing DM's spec back and synthesize the dm-readback artifact the
   # workbook builder consumes (element names/ids). The spec endpoint answers in
   # YAML even when asked for JSON — parse both.
@@ -398,6 +435,23 @@ end
 # ---------------------------------------------------------------------------
 hdr(4, TOTAL, 'Build workbook')
 wb_spec = File.join(WORK, 'wb-spec.json')
+wb_readback = File.join(WORK, 'wb-readback.json')
+# Idempotent resume (bead eqom): a workbook already posted by this workdir is
+# reused — never duplicated. wb-id.txt is the primary record; wb-readback.json
+# still holds workbookId when the crash hit before wb-id.txt was written.
+prior_wb = File.exist?(wb_id_path) ? File.read(wb_id_path).strip : nil
+prior_wb = (JSON.parse(File.read(wb_readback))['workbookId'] rescue nil) if (prior_wb.nil? || prior_wb.empty?) && File.exist?(wb_readback)
+if prior_wb && !prior_wb.empty?
+  if (Sigma.request(:get, "/v2/workbooks/#{prior_wb}") rescue nil)
+    wb_id = prior_wb
+    File.write(wb_id_path, wb_id)
+    puts "   idempotent resume: workbook #{wb_id} was already posted by a prior run of"
+    puts "   this workdir — REUSING it (no duplicate workbook). Use a fresh --out for a fresh build."
+  else
+    puts "   prior workbookId #{prior_wb} no longer exists — rebuilding"
+  end
+end
+unless wb_id
 build = ['ruby', File.join(HERE, 'build-workbook-from-quicksight.rb'),
          '--analysis', File.join(WORK, 'analysis.json'),
          '--dm-readback', dm_readback, '--out', wb_spec]
@@ -411,7 +465,6 @@ if opts[:name]
   j['name'] = opts[:name]
   File.write(wb_spec, JSON.pretty_generate(j))
 end
-wb_readback = File.join(WORK, 'wb-readback.json')
 run!(['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'workbook',
       '--spec', wb_spec, '--out', wb_readback, '--workdir', WORK])
 wb_id = JSON.parse(File.read(wb_readback))['workbookId']
@@ -419,6 +472,7 @@ wb_id = JSON.parse(File.read(wb_readback))['workbookId']
 # key), so persist the id separately — the parity-finalize resume needs it.
 File.write(wb_id_path, wb_id)
 puts "   workbookId = #{wb_id}"
+end # unless wb_id (idempotent resume)
 
 # ---------------------------------------------------------------------------
 # Phase 5 — Layout (build-quicksight-layout.rb infers the QS grid width — the

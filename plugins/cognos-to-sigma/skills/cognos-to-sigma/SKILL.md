@@ -29,10 +29,17 @@ of emitting wrong logic.
 ```bash
 node scripts/migrate-cognos.mjs \
   --module <module.json> --report <report.xml> \
-  --connection <SIGMA_CONNECTION_ID> --folder <SIGMA_FOLDER_ID> \
+  --connection <SIGMA_CONNECTION_ID> \
+  [--folder <SIGMA_FOLDER_ID>] \
   [--database CSA --schema TJ] [--name '<prefix>'] \
   [--reuse-dm [ID]] [--expected expected.json] [--yes]
 ```
+
+`--folder` is optional: when omitted, the DM + workbook land in **your My
+Documents** (resolved automatically via `GET /v2/whoami`). To target a shared
+folder, look its id up first — `GET /v2/files?typeFilters=folder&limit=500`
+(match on `name`/`path`) — and pass `--folder <id>`. Converter deps install
+themselves on first run (`npm install` in `converter/`; needs Node ≥ 18 + npm).
 
 Chains every phase below in one process: module convert → DM-reuse scan
 (candidates printed; default BUILD NEW, `--reuse-dm` opts in) → DM
@@ -45,6 +52,10 @@ Parity is two-pass when `--expected` isn't supplied up front: pass 1 auto-export
 every element to CSV via the Sigma REST export API → `<workdir>/sigma-actuals.json`
 (keys `"<Element>/<Column>" = sum`, `"<Element>/rows" = count`), prints the
 `assert-parity --plan` mcp-v2 query list, then exits 10 with resume instructions.
+When two elements share a display name (a report can render the same query twice,
+e.g. two "Sheet 1 — qMain" tables), their parity keys are disambiguated with an
+elementId suffix — `"<Element> [<elementId>]/<Column>"` — so BOTH verify; copy
+the exact keys from `sigma-actuals.json` into `expected.json`.
 Build `expected.json` from the **Cognos** report's numbers (same keys, subset ok)
 and resume:
 

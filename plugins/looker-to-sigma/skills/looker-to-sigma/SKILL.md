@@ -55,6 +55,11 @@ Gates are never bypassed: the command exits non-zero if parity or
 `assert-phase6-ran.rb` fails.
 
 ```bash
+# env: SIGMA_CONNECTION_ID = the FULL warehouse-connection UUID (NOT a short
+# prefix) — required unless --reuse-dm. Persist it once via the tableau plugin's
+# `ruby scripts/setup.rb` (writes ~/.sigma-migration/env, which this command
+# auto-sources) or export it for the run:
+export SIGMA_CONNECTION_ID=<full-connection-uuid>
 # offline (.dashboard.lookml + view files; the fixture pair works end-to-end):
 python3 scripts/migrate-looker.py --lookml-dir fixtures/skilltest-orders \
     --dashboard fixtures/skilltest-orders/skilltest_orders.dashboard.lookml \
