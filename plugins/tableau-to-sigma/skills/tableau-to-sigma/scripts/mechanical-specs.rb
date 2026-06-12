@@ -170,15 +170,22 @@ module MechanicalSpecs
     JSON.parse(File.read(meta_out))
   end
 
-  # Tableau functions with no Sigma equivalent (fallback when the SigmaFunctions
-  # lib isn't loadable).
+  # Tableau functions that cannot survive as a DM CALC COLUMN (fallback when
+  # the SigmaFunctions lib isn't loadable). NB: the window/table-calc family
+  # (WINDOW_* / RUNNING_* / RANK / INDEX / LOOKUP / TOTAL) IS auto-translated —
+  # but only as CHART-element viz formulas by build-charts-from-signals.rb
+  # (refs/window-functions.md, WINPROBE-validated). A converter-emitted DM calc
+  # column still carrying one of these names is untranslated leakage and must
+  # be dropped here (window functions silently error in DM calc columns).
   def unknown_functions(formula)
     if defined?(SigmaFunctions) && SigmaFunctions.respond_to?(:unknown_functions)
       return SigmaFunctions.unknown_functions(formula)
     end
-    %w[DATEPARSE MAKEDATE MAKEDATETIME WINDOW_SUM WINDOW_AVG RUNNING_SUM RUNNING_AVG
-       RANK RANK_DENSE INDEX LOOKUP PREVIOUS_VALUE TOTAL SCRIPT_REAL SCRIPT_STR
-       MODEL_QUANTILE MODEL_PERCENTILE].select { |fn| formula.to_s =~ /\b#{fn}\s*\(/i }
+    %w[DATEPARSE MAKEDATE MAKEDATETIME WINDOW_SUM WINDOW_AVG WINDOW_MIN WINDOW_MAX
+       WINDOW_COUNT WINDOW_MEDIAN WINDOW_PERCENTILE WINDOW_STDEV WINDOW_CORR
+       RUNNING_SUM RUNNING_AVG RUNNING_COUNT RUNNING_MIN RUNNING_MAX
+       RANK RANK_DENSE RANK_PERCENTILE INDEX LOOKUP PREVIOUS_VALUE SIZE TOTAL
+       SCRIPT_REAL SCRIPT_STR MODEL_QUANTILE MODEL_PERCENTILE].select { |fn| formula.to_s =~ /\b#{fn}\s*\(/i }
   end
 
   # ---- caption hygiene (bead 320u) ------------------------------------------

@@ -814,14 +814,18 @@ end
                  'default' => 'proceed (column dropped; re-author as a Custom SQL element or Sigma calc)' }
 end
 
-# (a) calc fields that have NO Sigma calc-column translation (window / table
-#     calc / LOD) — they become Custom-SQL DM elements or degrade.
+# (a) calc fields that have NO Sigma translation AT ALL — the manual window
+#     residues (WINDOW_MEDIAN/PERCENTILE/CORR/..., PREVIOUS_VALUE, SIZE,
+#     FIRST/LAST) and INCLUDE/EXCLUDE LODs. The mainstream window/table-calc
+#     family (RUNNING_*/bounded WINDOW_*/RANK*/INDEX/LOOKUP/TOTAL) no longer
+#     lands here: build-charts auto-emits it as Sigma-native chart formulas
+#     (refs/window-functions.md) with no decision needed.
 calcs.select { |c| c['requires_custom_sql'] }.each do |c|
   questions << {
     'id' => 'calc_requires_custom_sql', 'severity' => 'review',
     'calc' => c['name'],
-    'detail' => "Tableau calc '#{c['name']}' (#{c['is_lod'] ? 'LOD' : 'table-calc'}) has no native Sigma " \
-                "calc-column form: #{c['formula'].to_s.gsub(/\s+/, ' ').strip[0, 120]}",
+    'detail' => "Tableau calc '#{c['name']}' (#{c['is_lod'] ? 'LOD' : 'manual window residue'}) has no validated Sigma " \
+                "translation: #{c['formula'].to_s.gsub(/\s+/, ' ').strip[0, 120]}",
     'options' => ['implement as a Custom SQL data-model element (kind: sql)',
                   'degrade (drop the calc; charts using it go blank)',
                   'skip this calc'],

@@ -218,6 +218,26 @@ end
 # - rows_shelf / cols_shelf: structured summary of dims/measures on each shelf
 # - is_crosstab: convenience flag — true when the worksheet is a Tableau crosstab
 #   (Text/Square mark + dims on both shelves, or Measure Names crosstab)
+# Top-level datasource calc definitions — the SOURCE OF TRUTH for a calc's
+# formula. Worksheet <datasource-dependencies> blocks carry CACHED copies that
+# go stale when the calc is later edited in the datasource (caught live on
+# WINPROBE: the funnel's [Return Rate] dependency block said SUM/COUNTD while
+# the top-level datasource — and Tableau's actual evaluation + CSV export —
+# said SUM/COUNT). Keyed by internal column name; used to OVERRIDE the
+# per-worksheet formula on name match.
+ds_calc_formulas = {}
+xml.elements.each('/workbook/datasources/datasource') do |ds|
+  ds_label = (ds.attributes['caption'] || ds.attributes['name']).to_s
+  next if ds_label.start_with?('Parameter')
+  ds.elements.each('column') do |col|
+    calc = col.elements['calculation']
+    next unless calc && calc.attributes['class'] == 'tableau'
+    f = calc.attributes['formula']
+    next if f.nil? || f.empty?
+    ds_calc_formulas[col.attributes['name'].to_s] = f
+  end
+end
+
 worksheets = {}
 xml.elements.each('//worksheet') do |ws|
   name = ws.attributes['name']
@@ -254,6 +274,19 @@ xml.elements.each('//worksheet') do |ws|
     sort_info = {
       direction: s.attributes['direction'],
       column:    s.attributes['column']
+    }
+  end
+  # "Sort field X by measure Y" lands as <computed-sort column='<dim ref>'
+  # direction='ASC|DESC' using='<measure column-instance ref>'/> — a DIFFERENT
+  # element from <sort>. Window-function worksheets (pareto / rank) rely on it:
+  # Sigma Cumulative* / Rank follow the chart's xAxis sort, so dropping the
+  # computed-sort silently re-accumulates in natural order and every cumulative
+  # value diverges. `using` is carried so build-charts can sort by the measure.
+  if sort_info.nil? && (cs = ws.elements['.//computed-sort'])
+    sort_info = {
+      direction: (cs.attributes['direction'].to_s =~ /desc/i ? 'descending' : 'ascending'),
+      column:    cs.attributes['column'],
+      using:     cs.attributes['using']
     }
   end
 
@@ -432,6 +465,13 @@ xml.elements.each('//worksheet') do |ws|
     if cls == 'bin'
       entry['bin_size'] = calc.attributes['size'] || calc.attributes['size-parameter']
       entry['bin_peg']  = calc.attributes['peg']
+    end
+    # Stale-dependency override: the top-level datasource definition wins over
+    # the worksheet's cached copy (see ds_calc_formulas above).
+    ds_f = ds_calc_formulas[col.attributes['name'].to_s]
+    if cls == 'tableau' && ds_f && ds_f != formula
+      entry['stale_dependency_formula'] = formula
+      entry['formula'] = ds_f
     end
     calcs << entry
   end

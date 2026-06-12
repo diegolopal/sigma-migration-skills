@@ -74,6 +74,13 @@ def canonicalize_dim(v)
   if (m = s.match(/\A([A-Za-z]+)\s+(\d{4})\z/)) && (mnum = MONTH_NUM[m[1].downcase])
     return format('%s-%02d', m[2], mnum)
   end
+  # "2024 Q1" (Tableau quarter label) → first-of-quarter DAY bucket so it
+  # compares equal to Sigma's DateTrunc("quarter") value ("2024-01-01T00:00:00"
+  # canonicalizes to "2024-01-01" above). Added for window-function pivots
+  # (WINPROBE MaxMin: Region × Quarter grid).
+  if (m = s.match(/\A(\d{4})\s+Q([1-4])\z/i))
+    return format('%s-%02d-01', m[1], ((m[2].to_i - 1) * 3) + 1)
+  end
   # Already-canonical "YYYY-MM"
   return s if s.match?(/\A\d{4}-\d{2}\z/)
   v

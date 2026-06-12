@@ -1,0 +1,385 @@
+Measure Names,Week of Order Date ,Measure Values
+Distinct count of Order Id,"December 31, 2023",3
+Is Returned,"December 31, 2023",0
+Return Rate,"December 31, 2023",0
+Distinct count of Order Id,"January 7, 2024",5
+Is Returned,"January 7, 2024",0
+Return Rate,"January 7, 2024",0
+Distinct count of Order Id,"January 14, 2024",4
+Is Returned,"January 14, 2024",0
+Return Rate,"January 14, 2024",0
+Distinct count of Order Id,"January 21, 2024",5
+Is Returned,"January 21, 2024",0
+Return Rate,"January 21, 2024",0
+Distinct count of Order Id,"January 28, 2024",6
+Is Returned,"January 28, 2024",1
+Return Rate,"January 28, 2024",0.166666667
+Distinct count of Order Id,"February 4, 2024",1
+Is Returned,"February 4, 2024",0
+Return Rate,"February 4, 2024",0
+Distinct count of Order Id,"February 11, 2024",3
+Is Returned,"February 11, 2024",0
+Return Rate,"February 11, 2024",0
+Distinct count of Order Id,"February 18, 2024",2
+Is Returned,"February 18, 2024",0
+Return Rate,"February 18, 2024",0
+Distinct count of Order Id,"February 25, 2024",4
+Is Returned,"February 25, 2024",0
+Return Rate,"February 25, 2024",0
+Distinct count of Order Id,"March 3, 2024",5
+Is Returned,"March 3, 2024",0
+Return Rate,"March 3, 2024",0
+Distinct count of Order Id,"March 10, 2024",4
+Is Returned,"March 10, 2024",0
+Return Rate,"March 10, 2024",0
+Distinct count of Order Id,"March 17, 2024",3
+Is Returned,"March 17, 2024",0
+Return Rate,"March 17, 2024",0
+Distinct count of Order Id,"March 24, 2024",6
+Is Returned,"March 24, 2024",0
+Return Rate,"March 24, 2024",0
+Distinct count of Order Id,"March 31, 2024",2
+Is Returned,"March 31, 2024",0
+Return Rate,"March 31, 2024",0
+Distinct count of Order Id,"April 7, 2024",2
+Is Returned,"April 7, 2024",0
+Return Rate,"April 7, 2024",0
+Distinct count of Order Id,"April 14, 2024",2
+Is Returned,"April 14, 2024",0
+Return Rate,"April 14, 2024",0
+Distinct count of Order Id,"April 21, 2024",5
+Is Returned,"April 21, 2024",0
+Return Rate,"April 21, 2024",0
+Distinct count of Order Id,"April 28, 2024",6
+Is Returned,"April 28, 2024",0
+Return Rate,"April 28, 2024",0
+Distinct count of Order Id,"May 5, 2024",4
+Is Returned,"May 5, 2024",1
+Return Rate,"May 5, 2024",0.25
+Distinct count of Order Id,"May 12, 2024",5
+Is Returned,"May 12, 2024",0
+Return Rate,"May 12, 2024",0
+Distinct count of Order Id,"May 19, 2024",1
+Is Returned,"May 19, 2024",0
+Return Rate,"May 19, 2024",0
+Distinct count of Order Id,"May 26, 2024",3
+Is Returned,"May 26, 2024",0
+Return Rate,"May 26, 2024",0
+Distinct count of Order Id,"June 2, 2024",6
+Is Returned,"June 2, 2024",0
+Return Rate,"June 2, 2024",0
+Distinct count of Order Id,"June 9, 2024",6
+Is Returned,"June 9, 2024",1
+Return Rate,"June 9, 2024",0.166666667
+Distinct count of Order Id,"June 16, 2024",5
+Is Returned,"June 16, 2024",0
+Return Rate,"June 16, 2024",0
+Distinct count of Order Id,"June 23, 2024",4
+Is Returned,"June 23, 2024",0
+Return Rate,"June 23, 2024",0
+Distinct count of Order Id,"June 30, 2024",6
+Is Returned,"June 30, 2024",0
+Return Rate,"June 30, 2024",0
+Distinct count of Order Id,"July 7, 2024",1
+Is Returned,"July 7, 2024",0
+Return Rate,"July 7, 2024",0
+Distinct count of Order Id,"July 14, 2024",3
+Is Returned,"July 14, 2024",1
+Return Rate,"July 14, 2024",0.333333333
+Distinct count of Order Id,"July 21, 2024",4
+Is Returned,"July 21, 2024",0
+Return Rate,"July 21, 2024",0
+Distinct count of Order Id,"July 28, 2024",4
+Is Returned,"July 28, 2024",0
+Return Rate,"July 28, 2024",0
+Distinct count of Order Id,"August 4, 2024",3
+Is Returned,"August 4, 2024",0
+Return Rate,"August 4, 2024",0
+Distinct count of Order Id,"August 11, 2024",4
+Is Returned,"August 11, 2024",1
+Return Rate,"August 11, 2024",0.2
+Distinct count of Order Id,"August 18, 2024",3
+Is Returned,"August 18, 2024",0
+Return Rate,"August 18, 2024",0
+Distinct count of Order Id,"August 25, 2024",4
+Is Returned,"August 25, 2024",0
+Return Rate,"August 25, 2024",0
+Distinct count of Order Id,"September 1, 2024",7
+Is Returned,"September 1, 2024",0
+Return Rate,"September 1, 2024",0
+Distinct count of Order Id,"September 8, 2024",5
+Is Returned,"September 8, 2024",0
+Return Rate,"September 8, 2024",0
+Distinct count of Order Id,"September 15, 2024",5
+Is Returned,"September 15, 2024",0
+Return Rate,"September 15, 2024",0
+Distinct count of Order Id,"September 22, 2024",2
+Is Returned,"September 22, 2024",0
+Return Rate,"September 22, 2024",0
+Distinct count of Order Id,"September 29, 2024",6
+Is Returned,"September 29, 2024",0
+Return Rate,"September 29, 2024",0
+Distinct count of Order Id,"October 6, 2024",6
+Is Returned,"October 6, 2024",0
+Return Rate,"October 6, 2024",0
+Distinct count of Order Id,"October 13, 2024",5
+Is Returned,"October 13, 2024",0
+Return Rate,"October 13, 2024",0
+Distinct count of Order Id,"October 20, 2024",3
+Is Returned,"October 20, 2024",0
+Return Rate,"October 20, 2024",0
+Distinct count of Order Id,"October 27, 2024",4
+Is Returned,"October 27, 2024",0
+Return Rate,"October 27, 2024",0
+Distinct count of Order Id,"November 3, 2024",2
+Is Returned,"November 3, 2024",0
+Return Rate,"November 3, 2024",0
+Distinct count of Order Id,"November 10, 2024",4
+Is Returned,"November 10, 2024",0
+Return Rate,"November 10, 2024",0
+Distinct count of Order Id,"November 17, 2024",3
+Is Returned,"November 17, 2024",0
+Return Rate,"November 17, 2024",0
+Distinct count of Order Id,"November 24, 2024",7
+Is Returned,"November 24, 2024",0
+Return Rate,"November 24, 2024",0
+Distinct count of Order Id,"December 1, 2024",1
+Is Returned,"December 1, 2024",0
+Return Rate,"December 1, 2024",0
+Distinct count of Order Id,"December 8, 2024",3
+Is Returned,"December 8, 2024",0
+Return Rate,"December 8, 2024",0
+Distinct count of Order Id,"December 15, 2024",3
+Is Returned,"December 15, 2024",0
+Return Rate,"December 15, 2024",0
+Distinct count of Order Id,"December 22, 2024",5
+Is Returned,"December 22, 2024",0
+Return Rate,"December 22, 2024",0
+Distinct count of Order Id,"December 29, 2024",6
+Is Returned,"December 29, 2024",0
+Return Rate,"December 29, 2024",0
+Distinct count of Order Id,"January 5, 2025",5
+Is Returned,"January 5, 2025",1
+Return Rate,"January 5, 2025",0.2
+Distinct count of Order Id,"January 12, 2025",2
+Is Returned,"January 12, 2025",0
+Return Rate,"January 12, 2025",0
+Distinct count of Order Id,"January 19, 2025",5
+Is Returned,"January 19, 2025",2
+Return Rate,"January 19, 2025",0.4
+Distinct count of Order Id,"January 26, 2025",4
+Is Returned,"January 26, 2025",0
+Return Rate,"January 26, 2025",0
+Distinct count of Order Id,"February 2, 2025",5
+Is Returned,"February 2, 2025",0
+Return Rate,"February 2, 2025",0
+Distinct count of Order Id,"February 9, 2025",4
+Is Returned,"February 9, 2025",0
+Return Rate,"February 9, 2025",0
+Distinct count of Order Id,"February 16, 2025",5
+Is Returned,"February 16, 2025",0
+Return Rate,"February 16, 2025",0
+Distinct count of Order Id,"February 23, 2025",2
+Is Returned,"February 23, 2025",0
+Return Rate,"February 23, 2025",0
+Distinct count of Order Id,"March 2, 2025",1
+Is Returned,"March 2, 2025",0
+Return Rate,"March 2, 2025",0
+Distinct count of Order Id,"March 9, 2025",5
+Is Returned,"March 9, 2025",0
+Return Rate,"March 9, 2025",0
+Distinct count of Order Id,"March 16, 2025",3
+Is Returned,"March 16, 2025",0
+Return Rate,"March 16, 2025",0
+Distinct count of Order Id,"March 23, 2025",5
+Is Returned,"March 23, 2025",1
+Return Rate,"March 23, 2025",0.2
+Distinct count of Order Id,"March 30, 2025",4
+Is Returned,"March 30, 2025",0
+Return Rate,"March 30, 2025",0
+Distinct count of Order Id,"April 6, 2025",4
+Is Returned,"April 6, 2025",0
+Return Rate,"April 6, 2025",0
+Distinct count of Order Id,"April 13, 2025",4
+Is Returned,"April 13, 2025",0
+Return Rate,"April 13, 2025",0
+Distinct count of Order Id,"April 20, 2025",2
+Is Returned,"April 20, 2025",0
+Return Rate,"April 20, 2025",0
+Distinct count of Order Id,"April 27, 2025",3
+Is Returned,"April 27, 2025",0
+Return Rate,"April 27, 2025",0
+Distinct count of Order Id,"May 4, 2025",1
+Is Returned,"May 4, 2025",0
+Return Rate,"May 4, 2025",0
+Distinct count of Order Id,"May 11, 2025",3
+Is Returned,"May 11, 2025",0
+Return Rate,"May 11, 2025",0
+Distinct count of Order Id,"May 18, 2025",5
+Is Returned,"May 18, 2025",0
+Return Rate,"May 18, 2025",0
+Distinct count of Order Id,"May 25, 2025",3
+Is Returned,"May 25, 2025",0
+Return Rate,"May 25, 2025",0
+Distinct count of Order Id,"June 1, 2025",4
+Is Returned,"June 1, 2025",0
+Return Rate,"June 1, 2025",0
+Distinct count of Order Id,"June 8, 2025",4
+Is Returned,"June 8, 2025",0
+Return Rate,"June 8, 2025",0
+Distinct count of Order Id,"June 15, 2025",5
+Is Returned,"June 15, 2025",0
+Return Rate,"June 15, 2025",0
+Distinct count of Order Id,"June 22, 2025",4
+Is Returned,"June 22, 2025",0
+Return Rate,"June 22, 2025",0
+Distinct count of Order Id,"June 29, 2025",5
+Is Returned,"June 29, 2025",1
+Return Rate,"June 29, 2025",0.2
+Distinct count of Order Id,"July 6, 2025",5
+Is Returned,"July 6, 2025",0
+Return Rate,"July 6, 2025",0
+Distinct count of Order Id,"July 13, 2025",4
+Is Returned,"July 13, 2025",1
+Return Rate,"July 13, 2025",0.25
+Distinct count of Order Id,"July 20, 2025",2
+Is Returned,"July 20, 2025",0
+Return Rate,"July 20, 2025",0
+Distinct count of Order Id,"July 27, 2025",4
+Is Returned,"July 27, 2025",0
+Return Rate,"July 27, 2025",0
+Distinct count of Order Id,"August 3, 2025",3
+Is Returned,"August 3, 2025",0
+Return Rate,"August 3, 2025",0
+Distinct count of Order Id,"August 10, 2025",3
+Is Returned,"August 10, 2025",0
+Return Rate,"August 10, 2025",0
+Distinct count of Order Id,"August 17, 2025",4
+Is Returned,"August 17, 2025",0
+Return Rate,"August 17, 2025",0
+Distinct count of Order Id,"August 24, 2025",4
+Is Returned,"August 24, 2025",0
+Return Rate,"August 24, 2025",0
+Distinct count of Order Id,"August 31, 2025",6
+Is Returned,"August 31, 2025",0
+Return Rate,"August 31, 2025",0
+Distinct count of Order Id,"September 7, 2025",3
+Is Returned,"September 7, 2025",0
+Return Rate,"September 7, 2025",0
+Distinct count of Order Id,"September 14, 2025",5
+Is Returned,"September 14, 2025",1
+Return Rate,"September 14, 2025",0.2
+Distinct count of Order Id,"September 21, 2025",3
+Is Returned,"September 21, 2025",0
+Return Rate,"September 21, 2025",0
+Distinct count of Order Id,"September 28, 2025",3
+Is Returned,"September 28, 2025",0
+Return Rate,"September 28, 2025",0
+Distinct count of Order Id,"October 5, 2025",3
+Is Returned,"October 5, 2025",0
+Return Rate,"October 5, 2025",0
+Distinct count of Order Id,"October 12, 2025",3
+Is Returned,"October 12, 2025",1
+Return Rate,"October 12, 2025",0.333333333
+Distinct count of Order Id,"October 19, 2025",3
+Is Returned,"October 19, 2025",0
+Return Rate,"October 19, 2025",0
+Distinct count of Order Id,"October 26, 2025",2
+Is Returned,"October 26, 2025",0
+Return Rate,"October 26, 2025",0
+Distinct count of Order Id,"November 2, 2025",5
+Is Returned,"November 2, 2025",0
+Return Rate,"November 2, 2025",0
+Distinct count of Order Id,"November 9, 2025",5
+Is Returned,"November 9, 2025",0
+Return Rate,"November 9, 2025",0
+Distinct count of Order Id,"November 16, 2025",5
+Is Returned,"November 16, 2025",1
+Return Rate,"November 16, 2025",0.2
+Distinct count of Order Id,"November 23, 2025",7
+Is Returned,"November 23, 2025",0
+Return Rate,"November 23, 2025",0
+Distinct count of Order Id,"November 30, 2025",5
+Is Returned,"November 30, 2025",0
+Return Rate,"November 30, 2025",0
+Distinct count of Order Id,"December 7, 2025",2
+Is Returned,"December 7, 2025",0
+Return Rate,"December 7, 2025",0
+Distinct count of Order Id,"December 14, 2025",4
+Is Returned,"December 14, 2025",0
+Return Rate,"December 14, 2025",0
+Distinct count of Order Id,"December 21, 2025",6
+Is Returned,"December 21, 2025",2
+Return Rate,"December 21, 2025",0.333333333
+Distinct count of Order Id,"December 28, 2025",5
+Is Returned,"December 28, 2025",0
+Return Rate,"December 28, 2025",0
+Distinct count of Order Id,"January 4, 2026",2
+Is Returned,"January 4, 2026",0
+Return Rate,"January 4, 2026",0
+Distinct count of Order Id,"January 11, 2026",3
+Is Returned,"January 11, 2026",0
+Return Rate,"January 11, 2026",0
+Distinct count of Order Id,"January 18, 2026",3
+Is Returned,"January 18, 2026",0
+Return Rate,"January 18, 2026",0
+Distinct count of Order Id,"January 25, 2026",4
+Is Returned,"January 25, 2026",0
+Return Rate,"January 25, 2026",0
+Distinct count of Order Id,"February 1, 2026",3
+Is Returned,"February 1, 2026",0
+Return Rate,"February 1, 2026",0
+Distinct count of Order Id,"February 8, 2026",4
+Is Returned,"February 8, 2026",0
+Return Rate,"February 8, 2026",0
+Distinct count of Order Id,"February 15, 2026",3
+Is Returned,"February 15, 2026",0
+Return Rate,"February 15, 2026",0
+Distinct count of Order Id,"February 22, 2026",3
+Is Returned,"February 22, 2026",0
+Return Rate,"February 22, 2026",0
+Distinct count of Order Id,"March 1, 2026",4
+Is Returned,"March 1, 2026",0
+Return Rate,"March 1, 2026",0
+Distinct count of Order Id,"March 8, 2026",5
+Is Returned,"March 8, 2026",0
+Return Rate,"March 8, 2026",0
+Distinct count of Order Id,"March 15, 2026",6
+Is Returned,"March 15, 2026",1
+Return Rate,"March 15, 2026",0.166666667
+Distinct count of Order Id,"March 22, 2026",4
+Is Returned,"March 22, 2026",1
+Return Rate,"March 22, 2026",0.25
+Distinct count of Order Id,"March 29, 2026",5
+Is Returned,"March 29, 2026",0
+Return Rate,"March 29, 2026",0
+Distinct count of Order Id,"April 5, 2026",3
+Is Returned,"April 5, 2026",0
+Return Rate,"April 5, 2026",0
+Distinct count of Order Id,"April 12, 2026",3
+Is Returned,"April 12, 2026",0
+Return Rate,"April 12, 2026",0
+Distinct count of Order Id,"April 19, 2026",3
+Is Returned,"April 19, 2026",0
+Return Rate,"April 19, 2026",0
+Distinct count of Order Id,"April 26, 2026",8
+Is Returned,"April 26, 2026",0
+Return Rate,"April 26, 2026",0
+Distinct count of Order Id,"May 3, 2026",37
+Is Returned,"May 3, 2026",0
+Return Rate,"May 3, 2026",0
+Distinct count of Order Id,"May 10, 2026",32
+Is Returned,"May 10, 2026",0
+Return Rate,"May 10, 2026",0
+Distinct count of Order Id,"May 17, 2026",31
+Is Returned,"May 17, 2026",0
+Return Rate,"May 17, 2026",0
+Distinct count of Order Id,"May 24, 2026",26
+Is Returned,"May 24, 2026",0
+Return Rate,"May 24, 2026",0
+Distinct count of Order Id,"May 31, 2026",32
+Is Returned,"May 31, 2026",0
+Return Rate,"May 31, 2026",0
+Distinct count of Order Id,"June 7, 2026",23
+Is Returned,"June 7, 2026",0
+Return Rate,"June 7, 2026",0
