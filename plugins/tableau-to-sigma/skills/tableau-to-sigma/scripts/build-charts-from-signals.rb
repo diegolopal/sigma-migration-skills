@@ -464,14 +464,17 @@ def translate_tableau_tc(formula)
   # (0 when there are fewer than n occurrences). Verified Sigma composition
   # (live-checked vs warehouse SQL, 2026-06-11) via the array functions:
   #   If(ArrayLength(SplitToArray(s, sub)) > n,
-  #      Len(ArrayJoin(ArraySlice(SplitToArray(s, sub), 1, n), sub)) + 1, 0)
+  #      Len(ArrayJoin(ArraySlice(SplitToArray(s, sub), 0, n), sub)) + 1, 0)
   # i.e. rejoin the first n split-segments and measure the prefix length.
+  # NB: Sigma ArraySlice's start index is 0-BASED — ArraySlice(arr, 0, n) is
+  # the first n elements; start=1 silently skips the first segment (every
+  # result lands past the (n+1)th occurrence; caught live vs SPLIT_PART SQL).
   while (m = s.match(/\bFINDNTH\s*\(\s*([^,()]*(?:\([^()]*\))?[^,()]*)\s*,\s*([^,()]+?)\s*,\s*([^,()]+?)\s*\)/i))
     str_a, sub_a, n_a = m[1].strip, m[2].strip, m[3].strip
     s = s.sub(m[0],
               "If(ArrayLength(SplitToArray(#{str_a}, #{sub_a})) > #{n_a}, " \
-              "Len(ArrayJoin(ArraySlice(SplitToArray(#{str_a}, #{sub_a}), 1, #{n_a}), #{sub_a})) + 1, 0)")
-    hints << 'FINDNTH→SplitToArray/ArraySlice/ArrayJoin composition (1-based; 0 when fewer than n occurrences)'
+              "Len(ArrayJoin(ArraySlice(SplitToArray(#{str_a}, #{sub_a}), 0, #{n_a}), #{sub_a})) + 1, 0)")
+    hints << 'FINDNTH→SplitToArray/ArraySlice/ArrayJoin composition (result 1-based; ArraySlice start 0-based; 0 when fewer than n occurrences)'
     changed = true
   end
 
@@ -524,7 +527,15 @@ end
 # element grouped by its dims, with the aggregate as its Value column); each
 # OUTER level consumes the previous helper via a cross-element ref
 # `[LOD Helper k/Value]` (relationship keyed on the shared dims), and the
-# outermost expression lands on the chart/master. decompose_nested_fixed
+# outermost expression lands on the chart/master.
+# CRITICAL (live-verified 2026-06-11): when chaining workbook elements, the
+# outer element's source MUST set `groupingId` to the inner element's grouping
+# (`source: {kind: table, elementId: <helper-k>, groupingId: <its grouping>}`).
+# Without it the child reads BASE-grain rows with the grouped aggregate
+# REPEATED per row, so Avg/Median/Count at the outer level silently come out
+# row-weighted (caught live: row-weighted 969.82 vs correct 687.81 per-customer
+# Avg on CSA.TJ.ORDER_FACT). Custom SQL `GROUP BY` subqueries per level are
+# the equivalent alternative. decompose_nested_fixed
 # returns nil for non-nested formulas (single-FIXED keeps the existing
 # hint path in translate_tableau_tc) and otherwise:
 #   { 'chain' => [{helper, dims, tableau_body, sigma_aggregate}, ...]  # innermost first
@@ -1419,7 +1430,9 @@ layout.each do |dash|
         end.join(' → ')
         warnings << "'#{cap}' nested FIXED LOD #{c['name']} → #{lod['chain'].length}-level " \
                     "helper-element chain (innermost first): #{chain_desc}; " \
-                    "final = #{lod['final']} — see the -lod-chains.json sidecar"
+                    "final = #{lod['final']} — outer levels must source the inner element " \
+                    'with groupingId (or a Custom SQL GROUP BY) or aggregates come ' \
+                    'out row-weighted — see the -lod-chains.json sidecar'
         next
       end
 
@@ -1765,7 +1778,10 @@ warnings.each { |w| warn "  WARN  #{w}" }
 # Machine-readable helper-element chains for every nested {FIXED} calc: the
 # agent builds one grouped element per chain level (innermost first; Value =
 # sigma_aggregate, grouped by dims), relates each level to the next on the
-# shared dims, and lands `final` on the consuming chart/master.
+# shared dims, and lands `final` on the consuming chart/master. Outer levels
+# MUST source the inner element at its grouping grain (`groupingId` on the
+# source) or via a Custom SQL GROUP BY — see decompose_nested_fixed's header
+# note on the row-weighted-aggregate trap.
 unless lod_chains.empty?
   lod_path = opts[:out].sub(/\.json$/, '-lod-chains.json')
   File.write(lod_path, JSON.pretty_generate(lod_chains))

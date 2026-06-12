@@ -1,0 +1,25 @@
+[
+  {
+    "story": "FY26 Performance Story",
+    "points": [
+      {
+        "id": "12",
+        "caption": "Where FY26 landed",
+        "captured_sheet": "Overview Dash",
+        "sheet_kind": "dashboard"
+      },
+      {
+        "id": "13",
+        "caption": "Regional attainment deep-dive",
+        "captured_sheet": "Attainment by Region",
+        "sheet_kind": "worksheet"
+      },
+      {
+        "id": "14",
+        "caption": "What changed in Q4",
+        "captured_sheet": "Sales Trend",
+        "sheet_kind": "worksheet"
+      }
+    ]
+  }
+]

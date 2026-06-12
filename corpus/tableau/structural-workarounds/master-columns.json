@@ -1,0 +1,7 @@
+{
+  "(?i)^region$":        { "id": "m-region",   "name": "Region" },
+  "(?i)sales":           { "id": "m-sales",    "name": "Sales" },
+  "(?i)order date":      { "id": "m-orderdate","name": "Order Date" },
+  "(?i)^customer id$":   { "id": "m-custid",   "name": "Customer Id" },
+  "(?i)target":          { "id": "m-target",   "name": "Target" }
+}
