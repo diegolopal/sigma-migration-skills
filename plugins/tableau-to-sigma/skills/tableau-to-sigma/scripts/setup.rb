@@ -47,19 +47,28 @@ print "Client Secret: "
 sec = $stdin.noecho(&:gets).chomp
 puts
 
+# The one-command orchestrators (migrate-looker.py, migrate-qlik.rb, ...) need
+# the FULL warehouse-connection UUID for DM conversion. Capturing it here (when
+# known) saves an export step on every run. Optional — Enter to skip.
+print "Connection ID (full warehouse-connection UUID, optional — Enter to skip): "
+conn = $stdin.gets.chomp
+
 settings = File.exist?(SETTINGS_PATH) ? JSON.parse(File.read(SETTINGS_PATH)) : {}
 settings["env"] ||= {}
 settings["env"]["SIGMA_BASE_URL"]      = base
 settings["env"]["SIGMA_CLIENT_ID"]     = cid
 settings["env"]["SIGMA_CLIENT_SECRET"] = sec
+settings["env"]["SIGMA_CONNECTION_ID"] = conn unless conn.empty?
 
 File.write(SETTINGS_PATH, JSON.pretty_generate(settings))
 
-upsert_neutral_env(
+pairs = {
   "SIGMA_BASE_URL"      => base,
   "SIGMA_CLIENT_ID"     => cid,
   "SIGMA_CLIENT_SECRET" => sec,
-)
+}
+pairs["SIGMA_CONNECTION_ID"] = conn unless conn.empty?
+upsert_neutral_env(pairs)
 
 puts
 puts "Credentials saved to:"

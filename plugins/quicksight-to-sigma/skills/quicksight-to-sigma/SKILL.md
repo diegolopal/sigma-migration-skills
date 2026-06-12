@@ -37,6 +37,8 @@ ruby scripts/migrate-quicksight.rb \
 
 Exit 0 = parity + hard gate green; exit 10 = a gate (converter MCP / parity collection / OPEN QUESTIONS) printed its exact resume command; exit 3 = parity fail. Each phase prints a visible header — it is not a black box. The per-script phases below remain the reference for running any stage by hand.
 
+`--folder` accepts a folder **id or exact name** (name is looked up via `/v2/files`; ambiguous names abort with candidates). Re-running the same command with the same `--out` after a mid-run crash is **idempotent**: a DM/workbook already posted by that workdir is detected (dm-readback.json / wb-id.txt), verified live, and reused — never duplicated. Use a fresh `--out` for a fresh build.
+
 ## Phase 1 — Auth
 
 **QuickSight (AWS CLI).**
@@ -173,6 +175,12 @@ ruby scripts/assert-phase6-ran.rb --workdir /tmp/<name> --workbook-id <WORKBOOK_
 **POST success ≠ working.** You MUST query-verify the built elements:
 - `sigma-mcp-v2 query` each element → confirm real rows (not blank / not all `error`).
 - True parity: compare each Sigma aggregation against the same aggregation computed from the QuickSight side (or the warehouse). `assert-phase6-ran.rb` is a hard gate — a subagent must run it and it must pass before reporting success.
+- **mcp-v2 warehouse-side (EXPECTED) queries can NOT use the raw warehouse FQN**
+  (`SELECT … FROM DB.SCHEMA.TABLE` fails): with `type=connection` the table must
+  be addressed as `"connection"."<inodeId>"`, where `<inodeId>` is the table's
+  inode from `GET /v2/connections/{connectionId}/lookup?path=…` (or a prior DM
+  spec's `source.path`). The Sigma-ACTUAL side (`type=workbook` →
+  `"workbook"."<elementId>"`) follows the same quoting pattern.
 
 ## Gotchas (carry these forward)
 - **Enterprise edition is mandatory** for the `describe-*-definition` APIs. Standard rejects them outright — there's no fallback extraction.

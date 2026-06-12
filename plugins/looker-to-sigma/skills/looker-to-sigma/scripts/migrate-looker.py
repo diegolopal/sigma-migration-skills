@@ -80,8 +80,43 @@ from build_workbook import build_field_index, disp, leaf
 HERE = os.path.dirname(os.path.abspath(__file__))
 T0 = time.time()
 MCP_TOOL = "mcp__sigma-data-model__convert_lookml_to_sigma"
+# ~/sigma-data-model-mcp FIRST: the Desktop copy is routinely a stale clone
+# (version-skew footgun, bead 8nq5) — prefer the canonical checkout and warn
+# loudly (warn_converter_skew) when whichever one resolves is behind origin/main.
 CONVERTER_HOMES = [os.path.expanduser(p) for p in
-                   ("~/Desktop/sigma-data-model-mcp", "~/sigma-data-model-mcp")]
+                   ("~/sigma-data-model-mcp", "~/Desktop/sigma-data-model-mcp")]
+
+
+def warn_converter_skew(resolved_path):
+    """Version-skew footgun (bead 8nq5): the resolved converter checkout may be
+    behind origin/main (e.g. a stale ~/Desktop clone). Compare HEAD vs
+    origin/main and warn LOUDLY — never silently convert with old rules."""
+    repo = resolved_path
+    while repo and repo != os.path.dirname(repo) and not os.path.isdir(os.path.join(repo, ".git")):
+        repo = os.path.dirname(repo)
+    if not repo or not os.path.isdir(os.path.join(repo, ".git")):
+        return
+    def _git(*args, timeout=None):
+        try:
+            p = subprocess.run(["git", "-C", repo, *args], capture_output=True,
+                               text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return None
+        return p.stdout.strip() if p.returncode == 0 else None
+    # A stale clone's LOCAL origin/main ref is stale too — refresh it (bounded;
+    # offline/slow networks fall back to the local ref, never block the run).
+    _git("fetch", "--quiet", "origin", "main", timeout=8)
+    head = _git("rev-parse", "HEAD")
+    main = _git("rev-parse", "origin/main")
+    if head and main and head != main:
+        print(f"\n   ════════ ⚠ CONVERTER VERSION SKEW ════════")
+        print(f"   converter checkout : {repo}")
+        print(f"   git HEAD           : {head[:12]}  ≠  origin/main {main[:12]}")
+        print(f"   This checkout does NOT match origin/main — converter fixes may be")
+        print(f"   missing (or unmerged local edits may be in play). Run:")
+        print(f"     git -C {repo} fetch && git -C {repo} log --oneline HEAD..origin/main")
+        print(f"   or set CONVERTER_SRC/CONVERTER_PATH at the checkout you intend to use.")
+        print("   " + "═" * 42)
 
 
 def hdr(n, total, title):
@@ -126,21 +161,52 @@ def sigma(method, path, body=None):
         raise RuntimeError(f"Sigma {method} {path} -> {e.code}: {e.read().decode()[:300]}")
 
 
+def my_documents_id():
+    """Caller's My Documents folder id via whoami (prior art:
+    migrate-tableau.rb's folderId default)."""
+    uid = json.loads(sigma("GET", "/v2/whoami"))["userId"]
+    entries = (json.loads(sigma("GET", f"/v2/members/{uid}/files")) or {}).get("entries") or []
+    entry = next((e for e in entries if e.get("path") == "My Documents"), None)
+    if entry and entry.get("parentId"):
+        return entry["parentId"]
+    entries = (json.loads(sigma("GET", "/v2/files?typeFilters=folder&limit=500")) or {}).get("entries") or []
+    entry = next((e for e in entries
+                  if e.get("path") == "My Documents" and e.get("ownerId") == uid), None)
+    return entry.get("parentId") if entry else None
+
+
 def resolve_folder(arg):
+    """--folder / SIGMA_FOLDER_ID, else an EXACT 'Looker Migrations' folder,
+    else create one under My Documents, else My Documents itself. The old
+    substring heuristic (LOOKER/MIGRATION/TEST) is gone — it happily dropped
+    Looker output into 'ThoughtSpot Migrations' (bead eqom)."""
     if arg:
         return arg
     if os.environ.get("SIGMA_FOLDER_ID"):
         return os.environ["SIGMA_FOLDER_ID"]
-    files = json.loads(sigma("GET", "/v2/files?typeFilters=folder&limit=200"))
+    files = json.loads(sigma("GET", "/v2/files?typeFilters=folder&limit=500"))
     entries = files.get("entries") or []
     pick = next((f for f in entries
-                 if any(k in (f.get("name") or "").upper()
-                        for k in ("LOOKER", "MIGRATION", "TEST"))),
-                entries[0] if entries else None)
-    if not pick:
-        sys.exit("FATAL: no writable folder found — pass --folder")
-    print(f"   no --folder supplied — using folder '{pick.get('name')}' ({pick['id']})")
-    return pick["id"]
+                 if (f.get("name") or "").strip().lower() == "looker migrations"), None)
+    if pick:
+        print(f"   no --folder supplied — using existing folder '{pick.get('name')}' ({pick['id']})")
+        return pick["id"]
+    mydocs = my_documents_id()
+    try:
+        body = {"name": "Looker Migrations", "type": "folder"}
+        if mydocs:
+            body["parentId"] = mydocs
+        created = json.loads(sigma("POST", "/v2/files", body))
+        fid = created.get("id") or created.get("fileId")
+        if fid:
+            print(f"   no --folder supplied — created folder 'Looker Migrations' ({fid})")
+            return fid
+    except Exception as ex:
+        print(f"   could not create 'Looker Migrations' folder ({str(ex)[:120]})")
+    if mydocs:
+        print(f"   no --folder supplied — using My Documents ({mydocs})")
+        return mydocs
+    sys.exit("FATAL: no writable folder found — pass --folder")
 
 
 def surface_converter_warnings(wd, warns):
@@ -406,17 +472,36 @@ def main():
           f"explore '{explore}' · {len(view_files)} view file(s), {len(measures)} measure(s) · workdir {wd}")
 
     # ── Phase 2 — RLS gate (zero overhead when clean; LOUD when not) ─────────
+    # Scoped to the model(s)/explore(s) THIS dashboard uses (bead 8nq5): RLS on
+    # other models in the same project dir is an informational note, not a stop.
     hdr(2, TOTAL, "RLS gate (detect_rls.py)")
-    p = subprocess.run(["python3", os.path.join(HERE, "detect_rls.py"), lookml_dir, "--json"],
-                       capture_output=True, text=True)
-    findings = []
+    dash_models = sorted({el.get("model") for el in dash["elements"] if el.get("model")})
+    dash_explores = sorted({e for e in explores if e} | ({explore} if explore else set()))
+    scope_args = []
+    if dash_models:
+        scope_args += ["--scope-models", ",".join(dash_models)]
+    if dash_explores:
+        scope_args += ["--scope-explores", ",".join(dash_explores)]
+    p = subprocess.run(["python3", os.path.join(HERE, "detect_rls.py"), lookml_dir,
+                        "--json"] + scope_args, capture_output=True, text=True)
+    findings, info_findings = [], []
     try:
         parsed = json.loads(p.stdout) if p.stdout.strip() else []
         findings = parsed.get("findings", parsed) if isinstance(parsed, dict) else parsed
+        info_findings = parsed.get("informational", []) if isinstance(parsed, dict) else []
     except ValueError:
         findings = []
+    if info_findings:
+        print(f"   ℹ {len(info_findings)} RLS finding(s) on OTHER model(s)/explore(s) in this "
+              f"project (dashboard uses {', '.join(dash_models or dash_explores)}) — "
+              "informational only, no gate:")
+        for f in info_findings[:5]:
+            print(f"     - [{f.get('construct')}] {f.get('source')}"
+                  + (f" explore={f.get('explore')}" if f.get("explore") else ""))
+        json.dump(info_findings, open(os.path.join(wd, "rls-out-of-scope.json"), "w"), indent=2)
     if not findings:
-        print("   no RLS constructs found — proceeding (zero-overhead happy path)")
+        print("   no RLS constructs found on this dashboard's model(s) — proceeding "
+              "(zero-overhead happy path)")
     else:
         print(f"   ⚠ {len(findings)} RLS finding(s):")
         for f in findings[:10]:
@@ -456,6 +541,9 @@ def main():
         build = os.environ.get("CONVERTER_PATH") or next(
             (os.path.join(h, "build", "lookml.js") for h in CONVERTER_HOMES
              if os.path.exists(os.path.join(h, "build", "lookml.js"))), None)
+        if src or build:
+            print(f"   converter: {src or build}")
+            warn_converter_skew(src or build)
         if src:
             repo = os.path.dirname(os.path.dirname(src))
             run(["node", "--import", "tsx/esm", os.path.join(HERE, "convert_dm.mjs"),

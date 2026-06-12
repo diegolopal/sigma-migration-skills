@@ -28,6 +28,15 @@ Usage:
     # also accepts a model JSON (e.g. from `looker_api.py raw GET
     # /lookml_models/<model>/explores/<explore>`) — its access_filters /
     # sql_always_where show up the same way.
+
+Scoping (bead 8nq5): a project dir can hold MANY models; RLS on a model the
+converted dashboard never touches must not hard-stop the migration. Pass
+    --scope-models m1,m2  and/or  --scope-explores e1,e2
+to partition findings: a finding positively attributable to ANOTHER model
+(source file `<other>.model.lkml`) or ANOTHER explore is demoted to
+informational. Un-attributable findings (e.g. Liquid user_attribute refs in a
+shared view file) stay IN scope — the safe default. With either flag, --json
+emits {"findings": [...], "informational": [...]} instead of a bare list.
 """
 import argparse
 import json
@@ -192,24 +201,63 @@ def render(findings):
     return "\n".join(lines)
 
 
+_MODEL_FILE = re.compile(r"^(.+)\.model\.(?:lkml|lookml)$")
+
+
+def split_scope(findings, models, explores):
+    """Partition findings into (in_scope, informational). A finding is demoted
+    ONLY when positively attributable to a model/explore outside the scope;
+    anything ambiguous stays in scope (never silently drop real RLS)."""
+    in_scope, info = [], []
+    for f in findings:
+        out = False
+        m = _MODEL_FILE.match(os.path.basename(str(f.get("source") or "")))
+        if models and m and m.group(1) not in models:
+            out = True
+        ex = f.get("explore")
+        if explores and ex and ex not in explores:
+            out = True
+        (info if out else in_scope).append(f)
+    return in_scope, info
+
+
 def main():
     ap = argparse.ArgumentParser(description="Scan LookML for RLS constructs (silent if none).")
     ap.add_argument("paths", nargs="+", help="LookML dir(s)/file(s) and/or model JSON")
     ap.add_argument("--json", action="store_true", help="emit findings as JSON")
+    ap.add_argument("--scope-models", help="comma-separated model name(s) the dashboard uses — "
+                    "findings on OTHER models become informational (bead 8nq5)")
+    ap.add_argument("--scope-explores", help="comma-separated explore name(s) the dashboard uses — "
+                    "findings on OTHER explores become informational")
     a = ap.parse_args()
 
     findings = scan(a.paths)
+    scoped = bool(a.scope_models or a.scope_explores)
+    informational = []
+    if scoped:
+        models = {m.strip() for m in (a.scope_models or "").split(",") if m.strip()}
+        explores = {e.strip() for e in (a.scope_explores or "").split(",") if e.strip()}
+        findings, informational = split_scope(findings, models, explores)
 
     # Zero-overhead happy path: nothing found → print nothing, exit clean.
-    if not findings:
+    if not findings and not informational:
         if a.json:
-            print("[]")
+            print(json.dumps({"findings": [], "informational": []}) if scoped else "[]")
         return 0
 
     if a.json:
-        print(json.dumps(findings, indent=2))
-    else:
+        print(json.dumps({"findings": findings, "informational": informational}, indent=2)
+              if scoped else json.dumps(findings, indent=2))
+        return 0
+    if findings:
         print(render(findings))
+    if informational:
+        print(f"\nINFORMATIONAL — {len(informational)} RLS finding(s) on model(s)/explore(s) "
+              "this dashboard does NOT use (no decision needed for THIS migration; "
+              "they matter when those models are migrated):")
+        for it in informational:
+            bits = [f"{k}={it[k]}" for k in ("explore", "field", "user_attribute", "name") if it.get(k)]
+            print(f"  - [{it['construct']}] {it['source']}: " + ("  ".join(bits) or "(matched)"))
     return 0
 
 

@@ -35,7 +35,10 @@
 // Usage:
 //   node scripts/migrate-cognos.mjs \
 //     --module <module.json> --report <report.xml> \
-//     --connection <SIGMA_CONNECTION_ID> --folder <SIGMA_FOLDER_ID> \
+//     --connection <SIGMA_CONNECTION_ID> \
+//     [--folder <SIGMA_FOLDER_ID>]     # default: YOUR My Documents, resolved
+//                                      # via whoami (list candidates with
+//                                      # GET /v2/files?typeFilters=folder)
 //     [--database CSA] [--schema TJ] [--name '<prefix for DM/workbook names>'] \
 //     [--out DIR] [--expected expected.json] [--tol 0.01] \
 //     [--reuse-dm [dataModelId]]   # opt IN to DM reuse (default: build new;
@@ -75,7 +78,8 @@ if (!opt.resume) {
   if (!opt.module) die('missing --module <module.json>');
   if (!opt.report) die('missing --report <report.xml>');
   if (!opt.connection) die('missing --connection');
-  if (!opt.folder && !opt['dry-run']) die('missing --folder (post-and-readback requires one)');
+  // --folder is optional (bead eqom): when unset, the caller's My Documents is
+  // resolved via whoami right before the first POST (see resolveFolder).
 }
 const slug = basename((opt.module || opt.out || 'cognos')).replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]/g, '-');
 const WORK = resolve(opt.out || join(homedir(), 'cognos-migration', slug));
@@ -127,6 +131,25 @@ async function api(method, path, body) {
   return { status: res.status, ok: res.ok, text, json };
 }
 
+// --folder default (bead eqom; prior art: migrate-tableau.rb's folderId
+// default). POST /v2/dataModels/spec and the workbook post both REQUIRE a
+// folderId — when none is supplied, resolve the caller's My Documents via
+// whoami and use it (never emit a folderless POST, never guess a folder).
+async function resolveFolder() {
+  const who = await api('GET', '/v2/whoami');
+  const uid = who.json?.userId;
+  if (!uid) die(`could not resolve My Documents: whoami → HTTP ${who.status} — pass --folder <id>`);
+  const mine = await api('GET', `/v2/members/${uid}/files`);
+  let entry = (mine.json?.entries || []).find((e) => e.path === 'My Documents');
+  if (!entry?.parentId) {
+    const all = await api('GET', '/v2/files?typeFilters=folder&limit=500');
+    entry = (all.json?.entries || []).find((e) => e.path === 'My Documents' && e.ownerId === uid);
+  }
+  if (!entry?.parentId) die('could not resolve the caller\'s My Documents folder id — pass --folder <id> (find one via GET /v2/files?typeFilters=folder)');
+  line(`no --folder supplied — using your My Documents (${entry.parentId})`);
+  return entry.parentId;
+}
+
 // Tiny CSV parser (quoted fields, no embedded newlines-in-quotes edge beyond basic).
 function parseCsv(text) {
   const rows = [];
@@ -173,8 +196,18 @@ async function runParity(state) {
   // Auto-actuals: export every data-bearing workbook element to CSV via REST
   // and aggregate to "<Element>/<Column>"=sum + "<Element>/rows"=count.
   const els = (state.wbElements || []).filter((e) => !['control', 'text'].includes(String(e.kind)));
+  // Duplicate display names (a Cognos report can render the same query twice —
+  // e.g. two "Sheet 1 — qMain" tables) would collide on a name-only parity key
+  // and only ONE would verify. Disambiguate dupes with an elementId suffix
+  // (bead eqom); unique names keep the plain key so existing expected.json
+  // files stay valid.
+  const nameCounts = {};
+  for (const e of els) nameCounts[e.name] = (nameCounts[e.name] || 0) + 1;
+  const keyOf = (e) => (nameCounts[e.name] > 1 ? `${e.name} [${e.id}]` : e.name);
+  const dupes = Object.entries(nameCounts).filter(([, n]) => n > 1);
   line('');
   line(`exporting ${els.length} element(s) for Sigma actuals…`);
+  if (dupes.length) line(`duplicate element name(s) ${dupes.map(([n]) => `'${n}'`).join(', ')} — parity keys get an elementId suffix: "<Name> [<elementId>]"`);
   const actuals = {};
   for (const e of els) {
     const post = await api('POST', `/v2/workbooks/${state.workbookId}/export`,
@@ -192,14 +225,15 @@ async function runParity(state) {
     const rows = parseCsv(body);
     const headers = rows[0] || [];
     const data = rows.slice(1);
-    actuals[`${e.name}/rows`] = data.length;
+    const key = keyOf(e);
+    actuals[`${key}/rows`] = data.length;
     headers.forEach((h, ci) => {
       const vals = data.map((r) => numish(r[ci])).filter((v) => v != null);
       if (vals.length === data.length && data.length > 0) {
-        actuals[`${e.name}/${h}`] = Number(vals.reduce((a, b) => a + b, 0).toFixed(6));
+        actuals[`${key}/${h}`] = Number(vals.reduce((a, b) => a + b, 0).toFixed(6));
       }
     });
-    line(`'${e.name}': ${data.length} row(s), ${headers.length} col(s)`);
+    line(`'${key}': ${data.length} row(s), ${headers.length} col(s)`);
   }
   const actualsPath = join(WORK, 'sigma-actuals.json');
   writeFileSync(actualsPath, JSON.stringify(actuals, null, 2));
@@ -258,9 +292,18 @@ if (opt.resume) {
 // Phase 1 — Convert the Data Module → Sigma DM spec (converter/cli.ts).
 // ---------------------------------------------------------------------------
 hdr(1, 'Convert data module');
-if (!existsSync(join(CONV, 'node_modules'))) {
+// One-time converter-deps preflight (bead eqom): node_modules existing is NOT
+// enough — the converter shells `node --import tsx/esm`, so require the tsx
+// binary specifically and fail with a clear, actionable error (not a cryptic
+// ERR_MODULE_NOT_FOUND three phases in).
+if (!existsSync(join(CONV, 'node_modules', '.bin', 'tsx'))) {
   line('converter deps missing — running npm install (once)…');
-  run('npm', ['install', '--silent'], { cwd: CONV });
+  const inst = run('npm', ['install', '--silent'], { cwd: CONV, allowFail: true });
+  if (inst.status !== 0 || !existsSync(join(CONV, 'node_modules', '.bin', 'tsx'))) {
+    die(`converter dependencies could not be installed automatically.\n` +
+        `  Run manually:  cd ${CONV} && npm install\n` +
+        `  (requires Node >= 18 and npm on PATH; the converter runs via tsx)`);
+  }
 }
 const modulePath = resolve(opt.module);
 const reportPath = resolve(opt.report);
@@ -381,6 +424,7 @@ if (opt['dry-run']) {
 }
 
 sigmaLogin();
+if (!opt.folder) opt.folder = await resolveFolder();
 const state = { workdir: WORK, moduleFile: modulePath, reportFile: reportPath,
   securityRules: securityDetected.length || 0 };
 
