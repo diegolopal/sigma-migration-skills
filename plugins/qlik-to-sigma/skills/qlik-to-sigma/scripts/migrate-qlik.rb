@@ -636,7 +636,12 @@ emap.select { |e| e['kind'] == 'kpi-chart' }.each do |e|
   srow = csv_rows(csv_for[e['elementId']]).first
   sval = srow && srow.split(',').first
   qn, sn = numish(qval), numish(sval)
-  status = if qn && sn && ((qn - sn).abs <= [qn.abs, sn.abs].max * 1e-6 + 1e-9)
+  # the CSV export prints a format-rounded value (e.g. percent KPIs at 5
+  # decimals): a Qlik value that rounds to EXACTLY the printed Sigma value is a
+  # MATCH, not a divergence -- compare at the precision the export carries
+  printed_dp = sval.to_s[/\A-?\d+\.(\d+)\z/, 1]&.length
+  rounded_match = qn && sn && printed_dp && (qn.round(printed_dp) - sn).abs <= 1e-9
+  status = if qn && sn && ((qn - sn).abs <= [qn.abs, sn.abs].max * 1e-6 + 1e-9 || rounded_match)
              'MATCH'
            elsif qn && sn && stale_days && stale_days >= 1
              'STALE-EXPLAINED'

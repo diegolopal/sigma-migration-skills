@@ -110,7 +110,12 @@ def gotchas(formula)
              'calcs — translate as ANSI SQL OVER(...) inside a Custom SQL element on the data model.'
   end
 
-  if formula =~ /\{\s*FIXED\b/i
+  if formula.scan(/\{\s*FIXED/i).length >= 2
+    notes << 'AUTO-DECOMPOSED (nested LOD): {FIXED…{FIXED…}} becomes a helper-element CHAIN — ' \
+             'build-charts-from-signals.rb writes the per-level plan to the -lod-chains.json sidecar ' \
+             '(innermost first); build one grouped element per level, each outer level sourcing the inner ' \
+             'element WITH groupingId (or a Custom SQL GROUP BY) or outer Avg/Median/Count come out row-weighted.'
+  elsif formula =~ /\{\s*FIXED\b/i
     notes << 'AUTO-TRANSLATED when plotted: {FIXED <dims>:<agg>} becomes a hidden two-level grouped helper element ' \
              '(visibleAsSource:false; inner grouping = the FIXED dims computing the LOD aggregate, outer grouping = ' \
              'the chart dims computing the 2nd-stage aggregate; the chart Max()es the outer calc). ' \

@@ -62,7 +62,7 @@ def build(app_name):
     MCOLS=["Net Revenue","Net Profit","Order Id","Category","Month Number","Store Region"]
     master={"id":"m-ofv","name":"OFV","kind":"table","source":{"dataModelId":DM,"elementId":DENORM,"kind":"data-model"},
             "columns":[{"id":"o%d"%i,"formula":"[Custom SQL/%s]"%c,"name":c} for i,c in enumerate(MCOLS)]}
-    def kpi(i,name,f,fmt): c="k%d"%i; return {"id":"ek%d"%i,"kind":"kpi-chart","name":name,"source":{"elementId":"m-ofv","kind":"table"},"columns":[{"id":c,"formula":f,"name":name,"format":N(fmt)}],"value":{"id":c}}
+    def kpi(i,name,f,fmt): c="k%d"%i; return {"id":"ek%d"%i,"kind":"kpi-chart","name":name,"source":{"elementId":"m-ofv","kind":"table"},"columns":[{"id":c,"formula":f,"name":name,"format":N(fmt)}],"value":{"columnId":c}}
     def ch(i,kind,name,dimf,dimn,mf):
         x="x%d"%i; y="y%d"%i; return {"id":"ec%d"%i,"kind":kind,"name":name,"source":{"elementId":"m-ofv","kind":"table"},
           "columns":[{"id":x,"formula":dimf,"name":dimn},{"id":y,"formula":mf,"name":"Net Revenue","format":N("$,.0f")}],"xAxis":{"columnId":x},"yAxis":{"columnIds":[y]}}

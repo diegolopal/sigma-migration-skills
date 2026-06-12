@@ -73,10 +73,14 @@ end
 
 def round_row(row)
   # Convert all numerics to Float-rounded so Integer 11 and Float 11.0 compare equal in the set,
-  # and canonicalize date-like dim strings so equivalent monthly buckets match.
+  # canonicalize date-like dim strings so equivalent monthly buckets match, and
+  # coerce purely-numeric STRINGS to floats (Sigma CSV exports Quarter/Year as
+  # "2024" while ThoughtSpot searchdata returns 2024.0 — same bucket).
   row.map do |v|
     if v.is_a?(Numeric)
       v.to_f.round(2)
+    elsif v.is_a?(String) && v.strip.match?(/\A-?\d+(\.\d+)?\z/)
+      v.strip.to_f.round(2)
     else
       canonicalize_dim(v)
     end
