@@ -190,7 +190,15 @@ def parse_shelf(shelf_str)
           'measure_count' => 0, 'has_measure_names' => false }
   return out if shelf_str.nil? || shelf_str.strip.empty?
   shelf_str.split('/').each do |f|
-    raw_field = f.strip
+    # Nested shelves wrap the field list in parens —
+    #   `([ds].[none:A:nk] / [ds].[none:B:nk])`
+    # — so split('/') leaves a leading '(' on the first field and a trailing
+    # ')' on the last. Strip surrounding parens/whitespace; otherwise
+    # guid_from_param / classify_shelf_field (both anchored on a trailing ']')
+    # miss, and the nested dim keeps its raw federated GUID and POSTs as a
+    # broken `[Master/<guid>:nk])` dependency. (Field refs never contain
+    # parens, so this is safe for flat and ≥2-level nested shelves alike.)
+    raw_field = f.strip.gsub(/\A[(\s]+/, '').gsub(/[)\s]+\z/, '')
     next if raw_field.empty?
     role, deriv = classify_shelf_field(raw_field)
     case role

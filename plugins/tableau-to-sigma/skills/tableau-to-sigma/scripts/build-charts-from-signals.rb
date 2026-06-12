@@ -1258,8 +1258,15 @@ def build_pivot_element(z, meta, mmap, opts, warnings, data_elements = [])
         uv['col']['formula'] = f
         warnings << "'#{cap}' pivot value '#{uv['name']}' is a Tableau User-aggregated calc — decomposed: #{f[0..120]}"
       else
-        warnings << "'#{cap}' pivot value '#{uv['name']}' is a Tableau calc that could not be auto-decomposed — " \
-                    "its emitted formula will not resolve; re-author manually. Formula: #{ws_calc['formula'].to_s.gsub(/\s+/, ' ')[0..120]}"
+        # Can't decompose → its emitted Sum([Master/<calc>]) references a
+        # column that doesn't exist and would HARD-FAIL the workbook POST
+        # ("Dependency not found"), blocking the whole migration. Drop it from
+        # the grid (same as the unvalidated-window path) so the core pivot
+        # POSTs clean and only this value is flagged for manual re-authoring.
+        cols_array.delete(uv['col'])
+        values_arr.delete(uv['col']['id'])
+        warnings << "'#{cap}' pivot value '#{uv['name']}' could not be auto-decomposed — dropped from the grid; " \
+                    "re-author manually. Formula: #{ws_calc['formula'].to_s.gsub(/\s+/, ' ')[0..120]}"
       end
     elsif plan['mode'] == 'two-stage'
       win_stage << { 'col' => uv['col'], 'plan' => plan }
