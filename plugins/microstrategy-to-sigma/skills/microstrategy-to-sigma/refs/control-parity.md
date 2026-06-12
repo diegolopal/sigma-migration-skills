@@ -91,3 +91,9 @@ Consequences:
 
 After any repair: flip-test the workbook
 (`ruby scripts/probe-controls.rb --workbook-id <id> --check-out-of-closure`).
+
+## Gotcha: list-control targets on NUMERIC columns are silently stripped
+Same class as the datetime strip: a list control whose filter target column is
+numeric returns PUT 200 but reads back `filters: null`. Fix: add a hidden
+`Text()` cast column on the target element and point the control at the cast.
+(Found live by gate 7 on the MicroStrategy retrofit, 2026-06-12.)
