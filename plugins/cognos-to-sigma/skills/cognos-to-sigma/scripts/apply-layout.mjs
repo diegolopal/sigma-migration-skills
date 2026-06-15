@@ -25,7 +25,13 @@
 // Idempotent (band elements are re-derived each run). Run it as the last step
 // of the build/verify phase.
 import { api, parseArgs } from './lib/sigma-rest.mjs';
+import { spawnSync } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const HERE = dirname(fileURLToPath(import.meta.url));
 const a = parseArgs(process.argv.slice(2));
 if (!a.workbook) { console.error('need --workbook <workbookId>'); process.exit(2); }
 
@@ -153,4 +159,23 @@ const rbLayout = rb.json?.layout || '';
 const ok = /<LayoutElement/.test(rbLayout) && /<GridContainer/.test(rbLayout);
 console.log(JSON.stringify({ workbookId: a.workbook, pagesLaidOut: pageBlocks.length, layoutOnReadback: ok }, null, 2));
 if (!ok) { console.error('FAIL: container layout did not survive readback (check elementId matches — a GridContainer with an unknown elementId is silently dropped)'); process.exit(1); }
+
+// Layout-quality lint (gate) — shared scripts/lib/layout_lint.rb, vendored
+// byte-identical across the migration plugins. Runs on the final readback spec:
+// raw-id element display names, controls orphaned outside containers on a banded
+// page, and generic Sigma auto-page titles in the header band. The Ruby lint is
+// reused as-is (cognos already shells out to ruby for find-or-pick-dm.rb).
+// --skip-layout-lint bypasses.
+if (!a['skip-layout-lint'] && rb.json) {
+  const tmp = join(tmpdir(), `cognos-layout-lint-${a.workbook}.json`);
+  writeFileSync(tmp, JSON.stringify(rb.json));
+  const lint = spawnSync('ruby', [join(HERE, 'lib', 'layout_lint.rb'), tmp], { encoding: 'utf8' });
+  if (lint.stdout) process.stderr.write(lint.stdout);
+  if (lint.stderr) process.stderr.write(lint.stderr);
+  if (lint.status !== 0) {
+    console.error('FAIL: layout-lint violations (gate) — fix the layout or re-run with --skip-layout-lint');
+    process.exit(4);
+  }
+  console.error('layout lint: clean');
+}
 console.error(`container-banded layout applied (${pageBlocks.length} page block(s))`);

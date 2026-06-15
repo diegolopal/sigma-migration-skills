@@ -213,6 +213,11 @@ the workbook and re-runs the error-column gate. **`apply-layout.mjs` then gives 
 clean 24-col grid** (controls on top, content stacked full-width with per-kind heights) —
 Sigma auto-arrange otherwise squishes every element to the same height. It writes the
 top-level `spec.layout` XML (matched to readback ids) and confirms it survives readback.
+**It then runs the shared layout-quality lint as a gate** (`scripts/lib/layout_lint.rb`,
+vendored byte-identical; cognos shells out to ruby) on the final readback spec — flags
+raw-id element display names, controls orphaned outside containers, and generic Sigma
+auto-page titles (e.g. a `"Page1"` header) — exit 4 on violations; `--skip-layout-lint`
+bypasses.
 
 ## Phase 4 — Verify parity (hard gate — the real proof)
 
