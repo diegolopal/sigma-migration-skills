@@ -596,6 +596,9 @@ def main():
     elements, layout_items = [], []
     scatter_srcs = []   # hidden grouped SOURCE tables for measure-vs-measure scatters
                         # (one row per point dim); parked on the Data page, no layout slot
+    merge_srcs = []     # hidden grouped SOURCE tables for Looker merged-results tiles
+                        # (secondary explore pre-grouped to the join-key grain; the
+                        # primary tile Lookup()s into them — see attach_merge)
 
     # API-created dashboards that were never arranged in the Looker UI have
     # layout components with NULL row/column/width/height — auto-flow those
@@ -611,6 +614,86 @@ def main():
                             "Looker dashboard (API-created, never arranged in the UI) — "
                             "auto-flowed to a 2-across grid")
         return L
+
+    def attach_merge(el, base, kind, ex):
+        """Auto-join a Looker merged-results tile's SECONDARY sources onto the
+        primary tile via the validated Sigma blend pattern: pre-group each
+        secondary explore to its join-key grain in a hidden source, then add a
+        Max(Lookup(...)) measure column on the primary tile keyed on the merge
+        field (Max because the looked-up value is constant within a group, so it
+        survives the chart's group-by without fanning out). Falls back to a loud
+        warn (primary-only, never a silent partial blend) when a secondary can't
+        be resolved to a DM element, the tile kind can't carry an extra measure,
+        or the join keys don't map. Verified live: order_fact ⋈ customer_dim on
+        region → West $40,862.33 / 9 customers."""
+        sec = el.get("_merge_sec")
+        if not sec:
+            return
+        def sec_resolvable(sx):
+            n = _norm(sx)
+            return any(_norm(e.get("name") or "") in (n, n + "view") for e in dm_elements)
+        def sec_measure_formula(field, sx):
+            if leaf(field) == "count" and not is_measure(field):
+                return "Count()"               # Looker auto-count (not in the .lkml)
+            return formula_for(field, sx)
+        joined, skipped = [], []
+        for s in sec:
+            sx = s.get("explore")
+            mfs = [mf for mf in (s.get("mergeFields") or []) if mf.get("sourceField") and mf.get("refField")]
+            meas = [f for f in (s.get("fields") or []) if is_measure(f) or leaf(f) == "count"]
+            if not (sx and mfs and meas and sec_resolvable(sx)
+                    and kind in ("bar-chart", "area-chart", "line-chart", "table")):
+                skipped.append(s); continue
+            sm = master_of(sx)                       # secondary passthrough master (sources its DM element)
+            gid = sid("msrc"); gname = f"Merge {disp(sx)} {gid[-5:]}"
+            gcols, group_ids, calc_ids, keymap, ok = [], [], [], {}, True
+            for mf in mfs:
+                kd = col_display(mf["sourceField"], sx)      # join key on the secondary
+                rd = col_display(mf["refField"], ex)         # same key on the primary
+                if not kd or not rd:
+                    ok = False; break
+                need(kd, sx); need(rd, ex)
+                kid = sid("k")
+                gcols.append({"id": kid, "formula": f"[{sm['name']}/{kd}]", "name": kd})
+                group_ids.append(kid); keymap[rd] = kd
+            if not ok:
+                skipped.append(s); continue
+            meas_out = []
+            for mfield in meas:
+                mid = sid("m"); mname = disp(leaf(mfield))
+                # the measure's base column must exist on the secondary master so its
+                # aggregate (e.g. CountDistinct([Master/Customer Key])) resolves.
+                mcd = col_display(mfield, sx)
+                if mcd:
+                    need(mcd, sx)
+                gcols.append(apply_fmt({"id": mid, "formula": sec_measure_formula(mfield, sx), "name": mname}, mfield))
+                calc_ids.append(mid); meas_out.append((mname, mfield))
+            merge_srcs.append({
+                "id": gid, "name": gname, "kind": "table",
+                "source": {"kind": "table", "elementId": sm["id"]},
+                "columns": gcols,
+                "groupings": [{"id": sid("g"), "groupBy": group_ids, "calculations": calc_ids}],
+                "visibleAsSource": False})
+            key_args = ", ".join(f"[{master_of(ex)['name']}/{rd}], [{gname}/{kd}]"
+                                 for rd, kd in keymap.items())
+            for mname, mfield in meas_out:
+                lid = sid("ml")
+                base["columns"].append(apply_fmt(
+                    {"id": lid, "formula": f"Max(Lookup([{gname}/{mname}], {key_args}))", "name": mname}, mfield))
+                if kind in ("bar-chart", "area-chart", "line-chart"):
+                    base.setdefault("yAxis", {}).setdefault("columnIds", []).append(lid)
+                elif kind == "table" and base.get("groupings"):
+                    base["groupings"][0].setdefault("calculations", []).append(lid)
+            joined.append((s, [m[0] for m in meas_out]))
+        for s, names in joined:
+            keys = ", ".join(mf["refField"] for mf in s["mergeFields"])
+            warnings.append(f"✅ tile '{el['name']}': merged-results secondary '{s.get('explore')}' "
+                            f"AUTO-JOINED via Sigma blend (Max(Lookup) keyed on {keys}) → added {', '.join(names)}")
+        for s in skipped:
+            keys = ", ".join(f"{mf.get('sourceField')}={mf.get('refField')}" for mf in (s.get("mergeFields") or []))
+            warnings.append(f"⚠⚠ tile '{el['name']}': merged-results secondary '{s.get('explore')}' NOT "
+                            f"auto-joined (no resolvable DM element / unsupported tile kind / unmapped keys: {keys}) — "
+                            "rendered primary-only; add the join in Sigma. Never a silent partial blend.")
 
     for el in dash["elements"]:
         # Text/markdown tiles → Sigma text element (kind: "text"). No query, no
@@ -636,32 +719,30 @@ def main():
             continue
         kind = TILE_KIND.get(el["tileType"])
         if not kind:
-            warnings.append(f"tile '{el['name']}' type '{el['tileType']}' has no Sigma mapping — skipped")
-            continue
+            # A merged-results tile sometimes carries no resolvable vis_config.type
+            # (Looker stores it on the merge query / set in the UI). Never DROP it —
+            # default to bar when it has a dim, else a table — so the merged data
+            # still renders and the merge warning below fires.
+            if el.get("merge") and el["fields"]:
+                kind = "bar-chart" if any(not is_measure(f) for f in el["fields"]) else "table"
+                warnings.append(f"tile '{el['name']}': merged-results tile with no vis type — defaulted to {kind}")
+            else:
+                warnings.append(f"tile '{el['name']}' type '{el['tileType']}' has no Sigma mapping — skipped")
+                continue
         # ── merged-results tile (Looker merge_result_id) ──────────────────────
-        # Discovery captured the full merge; we render the PRIMARY source here.
-        # Secondary sources need a Sigma join (cross-explore) — flag them loudly
-        # with the exact join keys so the tile is never silently partial.
+        # Discovery captured the full merge; render the PRIMARY source here and
+        # DEFER the secondary join until the tile's columns/axes are built (the
+        # join adds Lookup measure columns). attach_merge() runs after the
+        # kind-specific block below.
         mrg = el.get("merge")
+        el["_merge_sec"] = None
         if mrg and mrg.get("sourceQueries"):
-            sec = [s for s in mrg["sourceQueries"] if not s.get("isPrimary")]
             if mrg.get("error"):
                 warnings.append(f"⚠⚠ tile '{el['name']}': merged-results query could not be "
                                 f"fetched ({mrg['error']}) — rendered from its primary query only; "
                                 "verify the merged columns in Sigma.")
-            elif sec:
-                joins = "; ".join(
-                    f"{s.get('explore') or '?'} on " +
-                    ", ".join(f"{mf['sourceField']}={mf['refField']}" for mf in (s.get("mergeFields") or [])
-                              if mf.get("sourceField"))
-                    for s in sec)
-                secfields = ", ".join(f for s in sec for f in (s.get("fields") or []))
-                warnings.append(
-                    f"⚠⚠ tile '{el['name']}' is a Looker MERGED-RESULTS tile ({len(mrg['sourceQueries'])} "
-                    f"sources). Rendered from the PRIMARY explore '{el.get('explore')}'. Secondary source(s) "
-                    f"[{joins}] are NOT auto-joined yet — add a Sigma join/relationship on those keys and "
-                    f"surface the merged field(s) [{secfields}]. (Cross-explore merge auto-build is the "
-                    "documented next step; the data shown is primary-only, never a silent partial blend.)")
+            else:
+                el["_merge_sec"] = [s for s in mrg["sourceQueries"] if not s.get("isPrimary")] or None
         ex = el["explore"]
         ms = [f for f in el["fields"] if is_measure(f)]
         ds = [f for f in el["fields"] if not is_measure(f)]
@@ -888,6 +969,10 @@ def main():
             if el.get("pivots"):
                 warnings.append(f"tile '{el['name']}': pivot {el['pivots']} flattened to columns — "
                                 f"rebuild as a Sigma pivot-table for true cross-tab")
+
+        # merged-results auto-join (Looker merge_result_id) — adds the secondary
+        # explore's measure(s) as Max(Lookup(...)) columns now that base is built.
+        attach_merge(el, base, kind, ex)
 
         # tile-level hard filters → element filters (string values; date/numeric → warn)
         for fld, val in (el.get("filters") or {}).items():
@@ -1221,7 +1306,7 @@ def main():
     } for (ex, _lset), sc in scope_tables.items()]
     # scatter grouped sources (one row per point dim) live on the Data page next
     # to the masters — visibleAsSource:False, so they need no layout slot.
-    spec["pages"][0]["elements"] = master_elements + scope_elements + scatter_srcs
+    spec["pages"][0]["elements"] = master_elements + scope_elements + scatter_srcs + merge_srcs
 
     open(a.out, "w").write(json.dumps(spec, indent=2))
     # intended-scope contract for the control-coverage lint — MUST be the
