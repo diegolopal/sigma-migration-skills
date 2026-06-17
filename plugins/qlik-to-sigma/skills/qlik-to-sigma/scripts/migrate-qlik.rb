@@ -127,6 +127,8 @@ OptionParser.new do |o|
   o.on('--answers JSON')      { |v| opts[:answers]  = v }
   o.on('--yes')               {     opts[:yes]      = true }
   o.on('--from-discovery DIR'){ |v| opts[:from]     = File.expand_path(v) }
+  o.on('--reuse-dm ID')       { |v| opts[:reuse_dm] = v }
+  o.on('--no-reuse')          {     opts[:no_reuse] = true }
   o.on('--dry-run')           {     opts[:dry_run]  = true }
   o.on('--skip-layout-lint')  {     opts[:skip_layout_lint] = true }
 end.parse!
@@ -356,6 +358,10 @@ mark('phase2-convert')
 hdr('2.5', TOTAL, 'DM-reuse scan')
 if opts[:dry_run]
   puts '   skipped (--dry-run: no Sigma access)'
+elsif opts[:reuse_dm]
+  puts "   explicit --reuse-dm #{opts[:reuse_dm]} — scan skipped, will reuse that DM"
+elsif opts[:no_reuse]
+  puts '   --no-reuse — scan skipped, building new'
 else
   begin
     sig_path = File.join(WORK, 'dm-signature.json')
@@ -364,12 +370,20 @@ else
           '--database', opts[:database], '--schema', opts[:schema], '--out', sig_path])
     match_path = File.join(WORK, 'dm-match.json')
     fp_cmd = ['ruby', File.join(HERE, 'vendor', 'find-or-pick-dm.rb'),
-              '--workbook-signature', sig_path, '--out', match_path]
+              '--workbook-signature', sig_path, '--out', match_path,
+              '--auto-pick', '--auto-pick-threshold', '0.5']
     cache_path = File.join(WORK, 'dm-specs-cache.json')
     fp_cmd += ['--specs-cache', cache_path] if File.exist?(cache_path)
     _, _fp_st = Open3.capture2e(*fp_cmd) # exit 1 = no candidate ≥ min-score (normal)
-    cands = ((JSON.parse(File.read(match_path))['candidates'] rescue nil) || []).first(3)
-    if cands.any?
+    match = (JSON.parse(File.read(match_path)) rescue {}) || {}
+    cands = (match['candidates'] || []).first(3)
+    # reuse-first: the picker sets auto_picked ONLY when the top candidate covers
+    # ALL of this app's source tables (a safe superset) and collapses dup-DM ties.
+    if match['auto_picked'] && match['recommended_dm_id']
+      opts[:reuse_dm] = match['recommended_dm_id']
+      puts "   DM-REUSE (auto): #{match['rationale']}"
+      puts "   WARNING: #{match['warning']}" if match['warning']
+    elsif cands.any?
       puts '   top candidate(s) — default is BUILD NEW; to reuse, follow SKILL.md Phase 2.5:'
       cands.each { |c| puts "     score #{format('%.2f', c['score'] || 0)}  #{c['dm_id']}  '#{c['dm_name']}'" }
     else
@@ -510,23 +524,58 @@ run!(['python3', File.join(HERE, 'gen-denorm-sql.py'),
       '--reconcile', reconcile, '--database', opts[:database], '--schema', opts[:schema],
       '--connection', opts[:conn], '--out', denorm_out])
 
-dm_cmd = ['python3', File.join(HERE, 'build-sigma-dm.py'),
-          '--converter-out', conv_out_path, '--reconcile', reconcile,
-          '--denorm', denorm_out, '--measures', File.join(WORK, 'measures.json'),
-          '--name', "#{base_name} (Qlik→Sigma)",
-          '--out', File.join(WORK, 'dm-result.json'), '--spec-out', File.join(WORK, 'dm-spec.json')]
-# --folder: explicit flag wins; else the folder pre-resolved concurrently with
-# discovery (identical preference order), saving build-sigma-dm.py the lookup.
-if (fid = opts[:folder] || prep[:folder_id])
-  dm_cmd += ['--folder', fid]
+# Resolve the reuse denorm element UP FRONT so an unsuitable reuse DM falls back
+# to building fresh instead of binding the workbook to the wrong element. The
+# Qlik workbook is built against ONE denormalized all-columns element — the
+# custom-SQL element (build-sigma-dm.py names it so Sigma auto-labels it
+# "Custom SQL"). A reused DM that lacks it (a star-shaped or non-Qlik-origin DM,
+# even if it covers the same tables) has no safe single element to bind to, so we
+# DON'T reuse it — `els.first` there would silently pick a dimension element.
+reuse_denorm_eid = nil
+reuse_star_count = 0
+if opts[:reuse_dm] && !opts[:dry_run]
+  require 'sigma_rest'
+  els = (Sigma.request(:get, "/v2/dataModels/#{opts[:reuse_dm]}/elements")['entries'] rescue []) || []
+  cs = els.find { |e| e['name'] == 'Custom SQL' }
+  eid = cs && (cs['elementId'] || cs['id'])
+  if eid
+    reuse_denorm_eid = eid
+    reuse_star_count = [els.size - 1, 0].max
+  else
+    puts "   WARNING: reuse DM #{opts[:reuse_dm]} has no 'Custom SQL' denorm element " \
+         "(elements: #{els.map { |e| e['name'] }.compact.join(', ')}) — not a Qlik-shaped " \
+         "DM; building a fresh DM instead"
+    opts[:reuse_dm] = nil
+  end
 end
-dm_cmd << '--dry-run' if opts[:dry_run]
-run!(dm_cmd)
-dm_res = JSON.parse(File.read(File.join(WORK, 'dm-result.json')))
-DM_ID = dm_res['dataModelId']
-puts "   dataModelId = #{DM_ID || '(dry-run)'}  denorm element #{dm_res['denormElementId']}  " \
-     "#{dm_res['starElements']} star element(s), #{dm_res['metricsKept']} metric(s)" \
-     "#{dm_res['metricsDropped'].to_a.any? ? "; dropped: #{dm_res['metricsDropped'].join(', ')}" : ''}"
+
+if reuse_denorm_eid
+  # REUSE path — skip the DM POST and build against the existing denorm element.
+  dm_res = { 'dataModelId' => opts[:reuse_dm], 'denormElementId' => reuse_denorm_eid,
+             'folderId' => (opts[:folder] || prep[:folder_id]),
+             'starElements' => reuse_star_count, 'metricsKept' => nil,
+             'metricsDropped' => [], 'reused' => true }
+  DM_ID = opts[:reuse_dm]
+  puts "   REUSING DM #{DM_ID}  ·  denorm element 'Custom SQL' (#{reuse_denorm_eid})  — convert + POST skipped"
+else
+  dm_cmd = ['python3', File.join(HERE, 'build-sigma-dm.py'),
+            '--converter-out', conv_out_path, '--reconcile', reconcile,
+            '--denorm', denorm_out, '--measures', File.join(WORK, 'measures.json'),
+            '--name', "#{base_name} (Qlik→Sigma)",
+            '--out', File.join(WORK, 'dm-result.json'), '--spec-out', File.join(WORK, 'dm-spec.json')]
+  # --folder: explicit flag wins; else the folder pre-resolved concurrently with
+  # discovery (identical preference order), saving build-sigma-dm.py the lookup.
+  if (fid = opts[:folder] || prep[:folder_id])
+    dm_cmd += ['--folder', fid]
+  end
+  dm_cmd << '--dry-run' if opts[:dry_run]
+  run!(dm_cmd)
+  dm_res = JSON.parse(File.read(File.join(WORK, 'dm-result.json')))
+  DM_ID = dm_res['dataModelId']
+  puts "   dataModelId = #{DM_ID || '(dry-run)'}  denorm element #{dm_res['denormElementId']}  " \
+       "#{dm_res['starElements']} star element(s), #{dm_res['metricsKept']} metric(s)" \
+       "#{dm_res['metricsDropped'].to_a.any? ? "; dropped: #{dm_res['metricsDropped'].join(', ')}" : ''}"
+end
 mark('phase3-dm')
 
 # ---------------------------------------------------------------------------
