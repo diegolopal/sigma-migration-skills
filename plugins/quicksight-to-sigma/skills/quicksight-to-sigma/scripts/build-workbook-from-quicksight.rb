@@ -148,7 +148,10 @@ dm_el_obj =
 abort 'no DM elements in readback' unless dm_el_obj
 dm_el = dm_el_obj['id']
 DMEL = dm_el_obj['name'] || 'Custom SQL'   # DM element name — master refs cols as [DMEL/Col]
-M = opts[:mname] || 'Orders'               # master element name (used in [M/Col] refs from charts)
+# Master element name (used in [M/Col] refs from charts). Default to the DM element's
+# own name — not the fixture leftover 'Orders', which is wrong for any non-Orders
+# dashboard and confused the Arine healthcare migration (RCA #10, bead 3goo.13).
+M = opts[:mname] || DMEL
 
 def nid(p = 'el'); "#{p}-" + SecureRandom.hex(5); end
 NUM = ->(fs) { { 'kind' => 'number', 'formatString' => fs } }
@@ -189,17 +192,41 @@ end
 calc = {}
 (defn['CalculatedFields'] || []).each { |c| calc[c['Name']] = c['Expression'] }
 
+# A QS visual title may be plain (`Title.FormatText.PlainText`) OR rich text
+# (`Title.FormatText.RichText` = `<visual-title>Weekly Tasks</visual-title>` / inline
+# styling spans). The builder previously read PlainText only, so every rich-text title
+# fell back to the raw VisualId GUID as the element name (RCA #8, bead 3goo.8). Parse
+# both, strip tags, unescape entities.
+def qs_visual_title(inner, vtype)
+  ft = (inner['Title'] || {})['FormatText'] || {}
+  raw = ft['PlainText'] || ft['RichText']
+  if raw && !raw.to_s.strip.empty?
+    s = raw.gsub(/<[^>]+>/, '')
+    { '&amp;' => '&', '&lt;' => '<', '&gt;' => '>', '&nbsp;' => ' ',
+      '&#39;' => "'", '&quot;' => '"', " " => ' ' }.each { |k, val| s = s.gsub(k, val) }
+    s = s.strip
+    return s unless s.empty?
+  end
+  (inner.is_a?(Hash) ? inner['VisualId'] : nil) || vtype
+end
+
 def field_role(f)
   if (mf = f['NumericalMeasureField'])
     [:meas, mf['Column']['ColumnName'], (mf.dig('AggregationFunction', 'SimpleNumericalAggregation') || 'SUM')]
   elsif (mf = f['CategoricalMeasureField'])
-    [:meas, mf['Column']['ColumnName'], 'COUNT']
+    # AggregationFunction here is a PLAIN STRING ('DISTINCT_COUNT' / 'COUNT'), not the
+    # nested SimpleNumericalAggregation shape. Honor it — hardcoding COUNT silently turned
+    # every QS DISTINCT_COUNT(TASK_ID) KPI into a non-distinct Count (RCA #2, bead 3goo.2).
+    [:meas, mf['Column']['ColumnName'], (mf['AggregationFunction'] || 'COUNT').to_s.upcase]
   elsif (df = f['CategoricalDimensionField'])
     [:dim, df['Column']['ColumnName'], nil]
   elsif (df = f['DateDimensionField'])
     # 4th tuple slot carries the QS DateGranularity (YEAR/QUARTER/MONTH/WEEK/DAY/...)
     # so a date x-axis can be truncated to that grain (D20 line-chart monthly).
-    [:dim, df['Column']['ColumnName'], nil, df['DateGranularity']]
+    # QS frequently omits DateGranularity on a date dim but still renders it at DAY
+    # grain; absent a default, a raw DATETIME on a pivot Columns shelf explodes into one
+    # column per millisecond (RCA #6, bead 3goo.6). Default to DAY.
+    [:dim, df['Column']['ColumnName'], nil, (df['DateGranularity'] || 'DAY')]
   end
 end
 
@@ -552,6 +579,10 @@ def master_ref(colname, calc, master_cols, dmel)
 end
 
 def dim_col(role, calc, mc, dmel, m)
+  # A date dimension (4th tuple slot = granularity, defaulted to DAY in field_role) must
+  # be truncated — a raw DATETIME on a pivot Columns shelf otherwise explodes into one
+  # column per timestamp and the crosstab looks empty (RCA #6, bead 3goo.6).
+  return date_dim_col(role, calc, mc, dmel, m) if role[3]
   ref = master_ref(role[1], calc, mc, dmel); id = nid('d')
   [{ 'id' => id, 'formula' => "[#{m}/#{ref['name']}]", 'name' => ref['name'] }, id]
 end
@@ -643,6 +674,85 @@ QS_FILTER_COL = {}
   end
 end
 
+# RCA #1 / bead 3goo.1 — PER-VISUAL FilterGroups. A QS FilterGroup whose
+# ScopeConfiguration scopes it to specific VisualIds (SheetVisualScopingConfigurations
+# with Scope==SELECTED_VISUALS) is an ELEMENT-LEVEL filter on exactly those visuals.
+# Dropping these silently produced 5 identical KPIs on the Arine dashboard — each was
+# DISTINCT_COUNT(TASK_ID) distinguished ONLY by a TASK_STATUS CategoryFilter. We index
+# VisualId -> [{col, values, mode}] and apply them as Sigma element `filters[]` so each
+# element sees the same rows QuickSight scoped it to.
+VISUAL_FILTERS = Hash.new { |h, k| h[k] = [] }
+(defn['FilterGroups'] || []).each do |fg|
+  next unless (fg['Status'] || 'ENABLED').to_s.upcase == 'ENABLED'
+  scopes = fg.dig('ScopeConfiguration', 'SelectedSheets', 'SheetVisualScopingConfigurations') || []
+  vids = scopes.select { |s| (s['Scope'] || '').to_s.upcase == 'SELECTED_VISUALS' }
+              .flat_map { |s| s['VisualIds'] || [] }.uniq
+  next if vids.empty?
+  (fg['Filters'] || []).each do |flt|
+    cf = flt.is_a?(Hash) ? (flt['CategoryFilter'] || flt.values.first) : nil
+    next unless cf.is_a?(Hash)
+    col = cf.dig('Column', 'ColumnName')
+    cfg = cf['Configuration'] || {}
+    inner = cfg['FilterListConfiguration'] || cfg['CustomFilterListConfiguration'] ||
+            cfg['CustomFilterConfiguration'] || {}
+    vals = inner['CategoryValues'] || (inner['CategoryValue'] ? [inner['CategoryValue']] : [])
+    next if col.nil? || vals.empty?
+    mop  = (inner['MatchOperator'] || 'CONTAINS').to_s.upcase
+    mode = mop.start_with?('DOES_NOT') ? 'exclude' : 'include'
+    vids.each { |vid| VISUAL_FILTERS[vid] << { 'col' => col, 'values' => vals, 'mode' => mode } }
+  end
+end
+
+# Attach a visual's scoped FilterGroups (above) to its built Sigma element as element
+# `filters[]`. The filtered column must exist ON the element (filter columnId references
+# an element column), so we add it via dim_col (reusing one if already present, e.g. a
+# pivot already grouping by that column). Filters scope rows BEFORE aggregation — so a
+# KPI's CountDistinct then equals QuickSight's filtered distinct count.
+def apply_visual_filters(el, vid, calc, master_cols, dmel, m)
+  return unless el
+  flts = VISUAL_FILTERS[vid]
+  return if flts.nil? || flts.empty?
+  el['columns'] ||= []
+  flts.each do |f|
+    dc, did = dim_col([:dim, f['col'], nil], calc, master_cols, dmel, m)
+    existing = el['columns'].find { |c| c['formula'] == dc['formula'] }
+    if existing
+      cid = existing['id']
+    else
+      el['columns'] << dc
+      cid = did
+    end
+    (el['filters'] ||= []) << { 'id' => nid('flt'), 'columnId' => cid,
+                                'kind' => 'list', 'mode' => f['mode'], 'values' => f['values'] }
+  end
+end
+
+# RCA #18 / bead 3goo.15: a QS sheet-level TextBox carries HTML in `Content`. Sigma text
+# `body` is Markdown + light inline HTML. Strip QS markup to plain paragraphs (the
+# explanatory annotations — x-axis/metric definitions — were silently dropped because the
+# builder only walked `Visuals`, never `TextBoxes`).
+def qs_textbox_to_markdown(html)
+  s = html.to_s.dup
+  s = s.gsub(%r{<br\s*/?>}i, "\n").gsub(%r{</p>}i, "\n\n").gsub(%r{</div>}i, "\n\n")
+  s = s.gsub(/<[^>]+>/, '')
+  { '&amp;' => '&', '&lt;' => '<', '&gt;' => '>', '&nbsp;' => ' ',
+    '&#39;' => "'", '&quot;' => '"', " " => ' ' }.each { |k, v| s = s.gsub(k, v) }
+  paras = s.split("\n").map(&:strip).reject(&:empty?)
+  # QS wraps each styled run (e.g. a bold word) in its own block, so a single sentence
+  # fragments into several "paragraphs" ("The x-axis represents the" / "starting date" /
+  # "of the timeframe..."). Re-join a SHORT fragment that doesn't end a sentence into the
+  # next paragraph, so captions read as prose instead of clipped stubs (RCA #18 polish).
+  merged = []
+  paras.each do |p|
+    if !merged.empty? && merged.last.length < 40 && merged.last !~ /[.!?:]\s*$/
+      merged[-1] = "#{merged.last} #{p}".strip
+    else
+      merged << p
+    end
+  end
+  merged.join("\n\n").strip
+end
+
 # Column-typed parameter? (ParameterDeclaration whose default came from a column.) We map
 # a ParameterControl to a column only when the analysis associates it with one; otherwise
 # it's a what-if scalar (inlined as a constant) and gets no list control.
@@ -721,6 +831,7 @@ control_scope = []      # CONTRACT rows for control_lint.rb gate (c)
 control_unbound = []     # manual/duplicate/unbound signals (loud, never silent)
 control_seen_cols = {}   # raw col -> ctl_id (dedupe; QS associative = global, like qlik)
 n_control_signals = 0    # QS filter/parameter control objects encountered (sourceFilterSignals)
+n_textboxes = 0          # QS sheet-level TextBoxes emitted as Sigma text elements (bead 3goo.15)
 
 # MULTI-SHEET -> MULTI-PAGE (the big fidelity fix): every QuickSight SHEET becomes its
 # own Sigma PAGE (page name = sheet name), each page holding only that sheet's visuals.
@@ -733,7 +844,7 @@ defn['Sheets'].each_with_index do |sh, sheet_idx|
   elements = []
   (sh['Visuals'] || []).each do |v|
     vtype, inner = v.first
-    title = (inner.dig('Title', 'FormatText', 'PlainText') || (inner.is_a?(Hash) ? inner['VisualId'] : nil) || vtype)
+    title = qs_visual_title(inner, vtype)
     kind = KIND[vtype]
     is_fallback = false
     unless kind
@@ -986,6 +1097,8 @@ defn['Sheets'].each_with_index do |sh, sheet_idx|
     end
     # carry the visual's QS SortConfiguration (CategorySort/RowSort) when present
     apply_qs_sorts(el, inner, kind, title, build_warnings) if el
+    # RCA #1 / bead 3goo.1: apply this visual's scoped QS FilterGroups as element filters
+    apply_visual_filters(el, inner['VisualId'], calc, master_cols, DMEL, M) if el
     elements << el if el
   end
   # C-gap: QuickSight sheet-level FilterControls + ParameterControls -> Sigma list
@@ -1000,6 +1113,17 @@ defn['Sheets'].each_with_index do |sh, sheet_idx|
       elements.unshift(ctl)   # controls render at the top of the page band
       vis_map[ctl['controlId']] = ctl['id']   # layout step can place it if QS gives coords
     end
+  end
+  # RCA #18 / bead 3goo.15: QS sheet-level TextBoxes -> Sigma text elements. Skip the one
+  # whose text is just the sheet title (the layout header band already renders it).
+  (sh['TextBoxes'] || []).each do |tb|
+    body = qs_textbox_to_markdown(tb['Content'])
+    next if body.empty?
+    next if body.casecmp?(sh['Name'].to_s)   # title duplicate -> header band already has it
+    tid = nid('txt')
+    elements << { 'id' => tid, 'kind' => 'text', 'name' => 'Text', 'body' => body }
+    vis_map[tb['TextBoxId']] = tid if tb['TextBoxId']
+    n_textboxes += 1
   end
   # one Sigma page per QS sheet (skip a sheet that produced zero elements)
   pid = sheet_idx.zero? ? 'page-dash' : "page-sheet-#{sheet_idx}"
