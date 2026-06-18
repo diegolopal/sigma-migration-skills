@@ -100,6 +100,14 @@ python3 scripts/migrate-looker.py --lookml-dir /path/to/lookml \
   `QUICKSTARTS.LOOKER_RETAIL_ANALYTICS.*`), pass
   `--source-swap FROM_DB.FROM_SCHEMA=TO_DB.TO_SCHEMA` (repeatable). A not-yet-indexed
   schema (catalog miss) self-heals — `post_dm.py` auto-syncs and retries once.
+  Don't know the FROM? `--auto-source-swap-to TO_DB.TO_SCHEMA` asks Looker what
+  DB.SCHEMA the explore's connection targets (`GET /connections`) and builds the
+  swap for you (production-safe; needs `~/.looker/looker.ini`).
+- **No local checkout? `--project <id>`** pulls the LookML over the Looker REST API
+  (model + views) instead of `--lookml-dir`. Requires DEVELOP permission on the
+  project (Looker only serves raw LookML in the dev workspace); without it the
+  command fails loud and tells you to clone the Git repo and use `--lookml-dir`.
+  `scripts/looker_project.py` is the standalone helper (`pull` / `connection`).
 - **Converter paths:** `CONVERTER_SRC` (patched `src/lookml.ts` via tsx) or
   `CONVERTER_PATH` (`build/lookml.js`) — both auto-located; with neither, the
   command writes `<workdir>/convert-request.json` (the exact

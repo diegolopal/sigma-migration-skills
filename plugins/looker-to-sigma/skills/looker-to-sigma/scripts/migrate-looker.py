@@ -420,7 +420,11 @@ def expected_live(el, measures=None, want_label=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--lookml-dir", required=True, help="LookML project dir (model + views)")
+    ap.add_argument("--lookml-dir", help="LookML project dir (model + views). "
+                    "Omit when using --project (pulled via the Looker API).")
+    ap.add_argument("--project", help="Looker project id — pull its LookML over the "
+                    "REST API instead of using a local --lookml-dir (needs DEVELOP "
+                    "permission on the project; see looker_project.py).")
     ap.add_argument("--dashboard", help="offline: a .dashboard.lookml file")
     ap.add_argument("--dashboard-id", help="live: Looker dashboard id (needs ~/.looker/looker.ini)")
     ap.add_argument("--explore", help="explore to convert (default: the contract's most-used)")
@@ -434,6 +438,11 @@ def main():
                     help="FROM_DB.FROM_SCHEMA=TO_DB.TO_SCHEMA — repoint warehouse "
                          "source paths when the LookML sql_table_name differs from "
                          "the Sigma connection's catalog. Repeatable.")
+    ap.add_argument("--auto-source-swap-to", metavar="TO_DB.TO_SCHEMA",
+                    help="Resolve the FROM_DB.FROM_SCHEMA automatically from the "
+                         "Looker connection (GET /connections) and repoint it to "
+                         "this target. Saves hand-writing --source-swap; needs the "
+                         "Looker API (~/.looker/looker.ini).")
     ap.add_argument("--reuse-auto", action="store_true",
                     help="allow Phase 3.5 to AUTO-adopt a reusable DM (reuse-first). "
                          "Default OFF: candidates are printed and the safe default is "
@@ -443,10 +452,26 @@ def main():
     a = ap.parse_args()
     if not a.dashboard and not a.dashboard_id:
         ap.error("--dashboard (offline .dashboard.lookml) or --dashboard-id (live) required")
+    if not a.lookml_dir and not a.project:
+        ap.error("--lookml-dir (local checkout) or --project (pull via Looker API) required")
     offline = not a.dashboard_id
-    lookml_dir = os.path.abspath(os.path.expanduser(a.lookml_dir))
     wd = os.path.abspath(os.path.expanduser(a.workdir or "./looker-migration"))
     os.makedirs(wd, exist_ok=True)
+
+    # ── --project: pull the LookML over the Looker REST API (no local checkout).
+    # Needs DEVELOP permission on the project (raw LookML is only served in the dev
+    # workspace); on a permission/API failure, fail loud with the --lookml-dir hint.
+    if a.project and not a.lookml_dir:
+        import looker_project
+        pulled = os.path.join(wd, "lookml")
+        print(f"── pulling LookML for project '{a.project}' via the Looker API → {pulled} ──")
+        try:
+            files = looker_project.pull_project(a.project, pulled)
+            print(f"   pulled {len(files)} .lkml file(s)")
+        except Exception as ex:
+            sys.exit(f"FATAL: --project pull failed: {ex}")
+        a.lookml_dir = pulled
+    lookml_dir = os.path.abspath(os.path.expanduser(a.lookml_dir))
     prefix = (a.name.strip() + " ") if a.name else ""
     ensure_sigma_env()
     if not a.dry_run:
@@ -478,6 +503,24 @@ def main():
     measures, _dims, view_pk, _formats, _yesno, _dim_groups = build_field_index(view_files)
     print(f"   '{dash['title']}': {len(dash['elements'])} tile(s), {len(dash['filters'])} filter(s), "
           f"explore '{explore}' · {len(view_files)} view file(s), {len(measures)} measure(s) · workdir {wd}")
+
+    # ── --auto-source-swap-to: ask Looker what DB.SCHEMA this explore's connection
+    # targets (the FROM) and build the swap to the requested TARGET. Removes the
+    # postmortem's hand-written --source-swap. Production-safe (no develop perm).
+    if a.auto_source_swap_to:
+        import looker_project
+        model = next((el.get("model") for el in dash["elements"] if el.get("model")), None)
+        conn, fdb, fsch = (looker_project.explore_connection_target(model, explore)
+                           if model and explore else (None, None, None))
+        if fdb and fsch:
+            swap = f"{fdb}.{fsch}={a.auto_source_swap_to}"
+            if swap not in a.source_swap:
+                a.source_swap.append(swap)
+            print(f"   auto-source-swap: Looker connection '{conn}' targets {fdb}.{fsch} "
+                  f"→ repointing to {a.auto_source_swap_to}")
+        else:
+            print(f"   ⚠ --auto-source-swap-to: could not resolve the Looker connection "
+                  f"target for model={model} explore={explore} — pass --source-swap explicitly")
 
     # ── Phase 2 — RLS gate (zero overhead when clean; LOUD when not) ─────────
     # Scoped to the model(s)/explore(s) THIS dashboard uses (bead 8nq5): RLS on

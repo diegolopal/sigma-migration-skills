@@ -550,6 +550,46 @@ def main():
             out.append(rm)
         return out
 
+    # ── Drop tile fields that don't map to any DM column ─────────────────────
+    # A dashboard can reference a field that the --lookml-dir checkout doesn't
+    # define (e.g. the dashboard was built against newer LookML — live dashboard
+    # 11 referenced order_fact.gross_margin_pct / distinct_order_count that aren't
+    # in the local views). The converter never emits such a column, so emitting a
+    # workbook ref to it POSTs 400 "Dependency not found" and sinks the WHOLE
+    # workbook. Drop these fields with a loud warning instead — same philosophy as
+    # the sort-field skip below and post_dm's join-key drop (never crash on one
+    # dangling ref). Resolvable = a known measure / dimension / dimension_group /
+    # primary key in the view files (the converter's own source of truth).
+    def field_resolvable(f):
+        if not f or "." not in f:
+            return True                      # synthetic/unqualified — leave alone
+        if is_measure(f) or f in dims:
+            return True
+        if dimgroup_display(f) is not None:
+            return True
+        view, lf = f.split(".")[0], leaf(f)
+        return bool(view_pk.get(view)) and lf == view_pk[view]
+
+    for el in dash["elements"]:
+        if el.get("tileType") == "text":
+            continue
+        for key in ("fields", "pivots"):
+            vals = el.get(key)
+            if not vals:
+                continue
+            kept = [f for f in vals if field_resolvable(f)]
+            for f in vals:
+                if f not in kept:
+                    warnings.append(
+                        f"tile '{el.get('name')}': field '{f}' has no matching DM column "
+                        "(not defined in the --lookml-dir views) — dropped to avoid a "
+                        "dangling workbook ref. If the dashboard expects it, the LookML "
+                        "checkout is stale vs. the live dashboard (try --project).")
+            el[key] = kept
+        # tile-level hard-filters on an absent field can't bind either — drop them.
+        if el.get("filters"):
+            el["filters"] = {fld: v for fld, v in el["filters"].items() if field_resolvable(fld)}
+
     # ── master columns: every dim col used + every measure base col + filter cols ──
     def need(display, explore):
         nd = master_of(explore)["needed"]
