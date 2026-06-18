@@ -155,6 +155,30 @@ the converter emits a deterministic SQL element reproducing the grid. Read
 the live validation, so the bundled fixture runs end-to-end without a
 Strategy One instance.)
 
+## Phase 2.6 — Reuse an existing DM? (avoid sprawl — mirrors tableau Phase 1.5 / cognos Phase 1.5)
+
+Before POSTing a new data model, score the org's existing Sigma DMs against this
+dossier's tables/columns and reuse on a strong match — don't create a 4th
+near-identical model:
+
+```bash
+python3 scripts/mstr-dm-signature.py --dm-spec sigma_dm_spec.json --out dm-signature.json
+eval "$(scripts/get-token.sh)"
+ruby scripts/find-or-pick-dm.rb --workbook-signature dm-signature.json \
+  --out dm-match.json [--auto-pick]
+```
+
+`mstr-dm-signature.py` derives `{warehouse_tables, referenced_columns, measures}`
+from the Phase-2 `sigma_dm_spec.json`. `find-or-pick-dm.rb` scores each existing
+DM (0.7·column + 0.2·table + 0.1·metric overlap):
+
+- **Score ≥ 0.6** → **ASK the user** reuse-vs-new: surface the candidate name,
+  matched cols (N/M), and the inherited-extras warning from `dm-match.json`. On
+  reuse, **skip the Phase 3 POST** and point Phase 4's workbook at the reused
+  `dataModelId`.
+- **Below threshold** → build new (continue to Phase 3). Non-destructive; never
+  auto-reuses without confirmation unless `--auto-pick` (with tie-window safety).
+
 ## Phase 3 — POST the data model + read back ids (hard gate)
 
 ```bash

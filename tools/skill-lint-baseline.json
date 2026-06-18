@@ -1,7 +1,3 @@
 {
-  "_comment": "Known, accepted converter-gate gaps. Each shows as a tracked WARN (not a CI failure). Clear an entry by fixing the skill and deleting the line. Adding new entries should be rare and reviewed — the point is to drive this list to empty.",
-  "microstrategy-to-sigma": {
-    "reuse-check": "REAL GAP (skill-governance baseline): microstrategy-to-sigma has no C3 DM-reuse check (no find-or-pick-dm.rb; its Phase 2.5 is AE row-collapse, not reuse). TODO: port find-or-pick-dm.rb into mstr (file a bead).",
-    "phase-schema-coverage": "REAL GAP (skill-governance baseline): microstrategy-to-sigma is not a column in docs/phase-schema.md's mapping table. TODO: add an mstr column to the Rosetta stone."
-  }
+  "_comment": "Known, accepted converter-gate gaps. Each shows as a tracked WARN (not a CI failure). Clear an entry by fixing the skill and deleting the line. Adding new entries should be rare and reviewed — the point is to drive this list to empty."
 }

@@ -40,6 +40,24 @@ has been edited since).
 | C9 Security/RLS | "Security: RLS/CLS" section (unnumbered) | "Security: RLS/CLS" section | "Security: RLS/CLS" section | "Security: RLS/CLS" section | Phase 1d scan + Phase 1.5 RLS decision gate (before building) | "Security: RLS/CLS" section | "Security: RLS/CLS" section |
 | C10 Enhance | **Phase E (opt-in)** — `--enhance` on migrate-tableau.rb (shared enhance-scan/apply engine) | **Phase E (opt-in)** — `--enhance` on migrate-powerbi.rb (same shared engine) + Phase 7 Bookmarks | — | — | Phase 5 — Enhance (UI-only features) | — | — |
 
+### microstrategy-to-sigma
+
+MicroStrategy uses "Phase" numbering and is documented here rather than as an
+8th table column (it joined after the table was set). Its local mapping:
+
+| Canonical | microstrategy-to-sigma |
+|---|---|
+| C1 Assess | microstrategy-assessment skill |
+| C2 Discover | Phase 0 — Discover + Phase 1 — Extract the bundle |
+| C3 Reuse-check | Phase 2.6 — Reuse an existing DM? (mstr-dm-signature.py + find-or-pick-dm.rb) |
+| C4 Convert | Phase 2 — Convert → Sigma specs |
+| C5 Post-DM gate | Phase 3 — POST + read back ids (hard gate) |
+| C6 Build workbook | Phase 4 — Re-emit with real ids, POST |
+| C7 Layout | within Phase 4 (`put-layout.rb`, LAST write) |
+| C8 Parity hard gate | Phase 5 — Verify parity (hard gate) + Phase 6 finalize |
+| C9 Security/RLS | "Security: RLS/CLS" section |
+| C10 Enhance | — |
+
 Notes:
 
 - **Looker runs the RLS gate early** (before building, C9 ahead of C4) by
