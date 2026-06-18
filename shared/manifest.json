@@ -1,0 +1,168 @@
+{
+  "description": "Canonical shared infra files. Edit the canonical copy under shared/, then run tools/sync-shared.rb. CI (tools/check-shared.rb) fails if any target drifts from canonical (exceptions excluded).",
+  "shared": [
+    {
+      "canonical": "shared/lib/sigma_rest.rb",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/lib/sigma_rest.rb",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/lib/sigma_rest.rb",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/lib/sigma_rest.rb",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/lib/sigma_rest.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/lib/sigma_rest.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/vendor/lib/sigma_rest.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/lib/sigma_rest.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/lib/sigma_rest.rb",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/lib/sigma_rest.rb"
+      ]
+    },
+    {
+      "canonical": "shared/lib/preflight_lint.rb",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/lib/preflight_lint.rb",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/lib/preflight_lint.rb",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/lib/preflight_lint.rb",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/lib/preflight_lint.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/lib/preflight_lint.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/lib/preflight_lint.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/lib/preflight_lint.rb",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/lib/preflight_lint.rb"
+      ]
+    },
+    {
+      "canonical": "shared/lib/layout_lint.rb",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/lib/layout_lint.rb",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/lib/layout_lint.rb",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/lib/layout_lint.rb",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/lib/layout_lint.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/lib/layout_lint.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/lib/layout_lint.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/lib/layout_lint.rb",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/lib/layout_lint.rb"
+      ]
+    },
+    {
+      "canonical": "shared/lib/control_lint.rb",
+      "targets": [
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/lib/control_lint.rb",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/lib/control_lint.rb",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/lib/control_lint.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/lib/control_lint.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/lib/control_lint.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/lib/control_lint.rb",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/lib/control_lint.rb"
+      ]
+    },
+    {
+      "canonical": "shared/lib/tableau_rest.rb",
+      "targets": [
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/lib/tableau_rest.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/vendor/lib/tableau_rest.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/lib/tableau_rest.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/lib/tableau_rest.rb"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/escalate-gap.py",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/escalate-gap.py",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/escalate-gap.py",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/escalate-gap.py",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/escalate-gap.py",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/escalate-gap.py",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/escalate-gap.py",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/escalate-gap.py"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/probe-controls.rb",
+      "targets": [
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/probe-controls.rb",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/probe-controls.rb",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/probe-controls.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/probe-controls.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/probe-controls.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/probe-controls.rb",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/probe-controls.rb"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/enhance-scan.rb",
+      "targets": [
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/enhance-scan.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/enhance-scan.rb"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/enhance-apply.rb",
+      "targets": [
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/enhance-apply.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/enhance-apply.rb"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/sigma-export-png.py",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/sigma-export-png.py",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/sigma-export-png.py",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/sigma-export-png.py",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/sigma-export-png.py",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/sigma-export-png.py",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/sigma-export-png.py",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/sigma-export-png.py"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/find-or-pick-dm.rb",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/find-or-pick-dm.rb",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/find-or-pick-dm.rb",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/find-or-pick-dm.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/vendor/find-or-pick-dm.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/find-or-pick-dm.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/find-or-pick-dm.rb",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/find-or-pick-dm.rb"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/assert-phase6-ran.rb",
+      "targets": [
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/assert-phase6-ran.rb",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/assert-phase6-ran.rb",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/assert-phase6-ran.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/assert-phase6-ran.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/assert-phase6-ran.rb",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/assert-phase6-ran.rb"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/get-token.sh",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/get-token.sh",
+        {
+          "path": "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/get-token.sh",
+          "exception": "Intentional: credential sanity-check additions (looker postmortem 2026-06-18)."
+        },
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/get-token.sh",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/get-token.sh",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/vendor/get-token.sh",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/get-token.sh",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/get-token.sh",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-assessment/scripts/get-token.sh",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/get-token.sh"
+      ]
+    },
+    {
+      "canonical": "shared/assessment/dup-dashboards.py",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-assessment/scripts/dup-dashboards.py",
+        "plugins/looker-to-sigma/skills/looker-assessment/scripts/dup-dashboards.py",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-assessment/scripts/dup-dashboards.py",
+        "plugins/powerbi-to-sigma/skills/powerbi-assessment/scripts/dup-dashboards.py",
+        "plugins/qlik-to-sigma/skills/qlik-assessment/scripts/dup-dashboards.py",
+        "plugins/quicksight-to-sigma/skills/quicksight-assessment/scripts/dup-dashboards.py",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-assessment/scripts/dup-dashboards.py"
+      ]
+    }
+  ]
+}

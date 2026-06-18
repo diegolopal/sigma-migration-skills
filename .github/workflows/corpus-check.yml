@@ -56,6 +56,31 @@ jobs:
           echo "checked: $(git ls-files '*.rb' | wc -l) rb, $(git ls-files '*.py' | wc -l) py, $(git ls-files '*.sh' | wc -l) sh"
           exit $fail
 
+  shared-libs:
+    name: shared-lib drift gate (canonical == every vendored copy)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no vendored shared file has drifted from its canonical
+        # Vendored shared infra (lib/sigma_rest.rb, the lints, escalate-gap.py,
+        # etc.) must stay byte-identical to shared/. Edit the canonical copy,
+        # run tools/sync-shared.rb, commit the fan-out. Intentional forks are
+        # allowlisted in shared/manifest.json. Creds-free, stdlib ruby only.
+        run: ruby tools/check-shared.rb
+
+  skill-lint:
+    name: skill conformance (mandatory gates documented)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint every converter SKILL.md for the mandatory arc gates
+        # Each converter must document the C3 reuse / C5 readback / C7 layout /
+        # C8 parity / C9 RLS gates and appear in docs/phase-schema.md. Known
+        # gaps are tracked in tools/skill-lint-baseline.json (WARN, not fail).
+        run: ruby tools/lint-skills.rb
+
   unit-tests:
     name: offline unit/regression tests (creds-free)
     runs-on: ubuntu-24.04
