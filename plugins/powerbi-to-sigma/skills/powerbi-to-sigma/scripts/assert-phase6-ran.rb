@@ -107,22 +107,22 @@ OptionParser.new do |p|
   p.on('--control-scope PATH')       { |v| opts[:control_scope] = v }
   p.on('--min-layout-elements N', Integer) { |v| opts[:min_layout_elements] = v }
   p.on('--allow-missing-tiles N', Integer, 'tolerate N unmatched dashboard zones in the tile census') { |v| opts[:allow_missing_tiles] = v }
-  p.on('--skip-parity-gate REASON', 'waive gate 1 (Phase 6 DAX parity) — REQUIRED reason string. Use ONLY when DAX parity is genuinely unavailable (e.g. no Power BI workspace/dataset access). The reason MUST be named in your migration report.') { |v| opts[:skip_parity] = v }
+  p.on('--skip-parity-gate REASON', 'waive gate 1 (Phase 6 source-parity) — REQUIRED reason string. Use ONLY when source parity is genuinely unavailable (e.g. no source workspace/dataset/warehouse access). The reason MUST be named in your migration report.') { |v| opts[:skip_parity] = v }
 end.parse!
 abort('--workdir (or --tableau) required') unless opts[:tab]
 
 summary_path = File.join(opts[:tab], 'parity-final.json')
 
 if opts[:skip_parity]
-  puts "[SKIP] gate 1/7: Phase 6 DAX parity WAIVED via --skip-parity-gate (#{opts[:skip_parity]})."
-  puts "       This waiver MUST be named in the migration report — the workbook was NOT numerically verified vs Power BI."
+  puts "[SKIP] gate 1/7: Phase 6 source-parity WAIVED via --skip-parity-gate (#{opts[:skip_parity]})."
+  puts "       This waiver MUST be named in the migration report — the workbook was NOT numerically verified vs the source."
 else
   unless File.exist?(summary_path)
     warn "[FAIL] Phase 6 skipped — #{summary_path} does not exist."
     warn "       Run: ruby scripts/phase6-parity.rb --tableau #{opts[:tab]} --workbook-id <id>"
     warn "       then collect actuals via mcp__sigma-mcp-v2__query and re-run with --finalize."
     warn "       See SKILL.md Phase 6. This is the hard gate (beads-sigma-4pm)."
-    warn "       If PBI parity is genuinely unavailable (no workspace/dataset access), waive"
+    warn "       If source parity is genuinely unavailable (no workspace/dataset/warehouse access), waive"
     warn "       with --skip-parity-gate \"<reason>\" and name it in the report."
     exit 1
   end

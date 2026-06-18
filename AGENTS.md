@@ -50,6 +50,20 @@ Layout → Parity → Security → Enhance arc, with the per-skill phase-number
 mapping, is in [`docs/phase-schema.md`](docs/phase-schema.md). Never renumber
 a skill's phases.
 
+## Governance (keep skills consistent)
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md). Enforced by CI:
+
+- **Shared infra** lives in [`shared/`](shared/) (single source of truth) and is
+  vendored byte-identical into each plugin. Edit the canonical copy, then
+  `ruby tools/sync-shared.rb`. `tools/check-shared.rb` fails CI on drift.
+- **Mandatory arc gates** (reuse / readback / layout-last / parity / RLS) are
+  linted in every converter `SKILL.md` by `tools/lint-skills.rb` (canonical arc:
+  [`docs/phase-schema.md`](docs/phase-schema.md)).
+- **New skills:** `ruby tools/new-skill.rb <tool> "<Display Name>"`.
+- **Parallel sessions:** claim work in beads at plugin granularity; one PR = one
+  plugin; shared-lib changes are their own PR.
+
 ## Corpus (regression fixtures)
 
 `corpus/` holds per-tool source artifacts + golden converter outputs + a
