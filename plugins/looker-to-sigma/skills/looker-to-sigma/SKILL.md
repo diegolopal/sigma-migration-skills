@@ -90,10 +90,16 @@ python3 scripts/migrate-looker.py --lookml-dir /path/to/lookml \
   runs first — RLS findings STOP the command (exit 10, nothing posted) until you
   either port them via `apply_sigma_rls.py` (Phase 1.5) or re-run with `--yes`
   (proceed WITHOUT RLS — loud + recorded). The DM-reuse check (Phase 2.5) always
-  runs and PRINTS candidates+scores; it is **reuse-first** — auto-reuses an
-  existing DM that covers all the dashboard's warehouse table(s) (collapsing
-  duplicate-DM sprawl, skipping the POST). Opt out with `--skip-dm-reuse-check`
-  or pin one with `--reuse-dm <id>`. The folder is auto-resolved and printed.
+  runs and PRINTS candidates+scores. **Default is BUILD-NEW** — reuse only when
+  you pin one with `--reuse-dm <id>`. (Auto-reuse keyed on *table* coverage could
+  adopt a DM missing a *column* the workbook needs → the workbook POST then 400s
+  `Dependency not found`; that footgun is now opt-in via `--reuse-auto`.) Skip the
+  scan entirely with `--skip-dm-reuse-check`. The folder is auto-resolved + printed.
+- **Source repointing:** if the LookML `sql_table_name` points at a DB.SCHEMA the
+  Sigma connection doesn't serve (e.g. dev `CSA.TJ.*` vs the connection's
+  `QUICKSTARTS.LOOKER_RETAIL_ANALYTICS.*`), pass
+  `--source-swap FROM_DB.FROM_SCHEMA=TO_DB.TO_SCHEMA` (repeatable). A not-yet-indexed
+  schema (catalog miss) self-heals — `post_dm.py` auto-syncs and retries once.
 - **Converter paths:** `CONVERTER_SRC` (patched `src/lookml.ts` via tsx) or
   `CONVERTER_PATH` (`build/lookml.js`) — both auto-located; with neither, the
   command writes `<workdir>/convert-request.json` (the exact
@@ -747,7 +753,7 @@ declaring Phase 4 green.
 | Converter dropped all view fields after an `html:` dim | Stale build predating BUG4 fix | Use the patched source path; the `;;`-block pre-extraction now includes `html`/`sql_on`/etc. |
 | Metric formula contains `${...}` literals or `0 *` | Stale build predating BUG1/BUG3 fixes | Patched source resolves `${dim}`/`${measure}` refs and preserves `1.0` |
 | `metric()` returns "Missing Metric" in a Sigma query | Known Sigma quirk | Verify via raw aggregate (`Sum`/`CountDistinct`), not `metric()` |
-| `Source not found: warehouse table …` on DM POST | Short connectionId, or table not in Sigma's static catalog | Use the FULL connection UUID; if still failing, source via a Custom SQL DM element (`kind: "sql"`) |
+| `Source not found: warehouse table …` on DM POST | (a) connection catalog hasn't indexed the schema yet, OR (b) the LookML `sql_table_name` DB.SCHEMA differs from what the connection serves, OR (c) short connectionId | `post_dm.py` now AUTO-SYNCs the named schema (`POST /v2/connections/{id}/sync`) and retries once — (a) self-heals. For (b) pass `--source-swap FROM_DB.FROM_SCHEMA=TO_DB.TO_SCHEMA`. For (c) use the FULL connection UUID. Last resort: a Custom SQL DM element (`kind: "sql"`) |
 | `jq: parse error: Invalid numeric literal` | Sigma spec endpoints return YAML | Never pipe spec responses to `jq` / `json.load` |
 | `Invalid kind: "control"` on workbook POST | Control element missing its own `id` (separate from `controlId`) | Add a distinct `id` |
 | KPI POSTs 400 with `value.id` / donut POSTs 400 with `value.columnId` | The two element types use different value keys | KPI → `value.columnId`; donut/pie → `value.id` |
