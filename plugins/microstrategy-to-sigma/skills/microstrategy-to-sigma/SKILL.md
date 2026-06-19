@@ -205,14 +205,22 @@ python3 scripts/convert.py ... --data-model-id <dataModelId> \
 curl -s -X POST "$SIGMA_BASE_URL/v2/workbooks/spec" \
   -H "Authorization: Bearer $SIGMA_API_TOKEN" -H "Content-Type: application/json" \
   -d @sigma_workbook_spec.json      # -> workbookId
+# MANDATORY run-each-time gap-scout gate (bead beads-sigma-5l5e): the converter
+# passes metric function names through, so a function with no Sigma equivalent
+# surfaces HERE as a type=error column. This script STOPS (exit 11) on any
+# UNSCOUTED error column — spawn a gap-scout per the printed --gap-id (see
+# scripts/gap-scout.md), re-run the gate, and only proceed when it exits 0.
+python3 scripts/scout-gate-readback.py --workbook-id <workbookId> --workdir <out-dir>
 ruby scripts/put-layout.rb --workbook <workbookId> --layout layout.xml
 ```
 
 The layout PUT applies the banded layout (header band titled from the
 chapter/dossier name, controls band, full-width tables) the converter emitted
 — without it the workbook renders as Sigma's single-column stack and gates
-4/6 fail. Read the workbook spec back the same way and confirm no
-`type: error` columns. (Workbook DELETE, if you need to retry, is
+4/6 fail. The `scout-gate-readback.py` step above is the **mechanical** version
+of the old "confirm no `type: error` columns" check — do NOT skip it; a broken
+metric must be scouted (translated or escalated) before the workbook ships, not
+waved through. (Workbook DELETE, if you need to retry, is
 `DELETE /v2/files/<id>` — not `/v2/workbooks/<id>`.)
 
 ## Phase 5 — Verify parity (hard gate — the real proof)
