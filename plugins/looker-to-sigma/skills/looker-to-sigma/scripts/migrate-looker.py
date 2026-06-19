@@ -75,7 +75,7 @@ import argparse, csv, glob, io, json, os, re, statistics, subprocess, sys, time
 import urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from build_workbook import build_field_index, disp, leaf
+from build_workbook import build_field_index, parse_join_aliases, disp, leaf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 T0 = time.time()
@@ -500,7 +500,8 @@ def main():
     if not os.path.isdir(views_dir):
         views_dir = lookml_dir
     view_files = sorted(glob.glob(os.path.join(views_dir, "*.view.lkml")))
-    measures, _dims, view_pk, _formats, _yesno, _dim_groups = build_field_index(view_files)
+    _aliases = parse_join_aliases(glob.glob(os.path.join(lookml_dir, "*.model.lkml")))
+    measures, _dims, view_pk, _formats, _yesno, _dim_groups = build_field_index(view_files, _aliases)
     print(f"   '{dash['title']}': {len(dash['elements'])} tile(s), {len(dash['filters'])} filter(s), "
           f"explore '{explore}' · {len(view_files)} view file(s), {len(measures)} measure(s) · workdir {wd}")
 

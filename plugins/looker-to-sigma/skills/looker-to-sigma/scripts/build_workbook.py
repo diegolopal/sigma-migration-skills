@@ -166,7 +166,31 @@ def looker_cat_palette(color):
 
 
 # ── parse view files: classify fields as measure (agg + base col) or dimension ──
-def build_field_index(view_files):
+def parse_join_aliases(model_files):
+    """Map a Looker explore join's alias to its underlying view via `from:`.
+      explore: order_fact { join: order_date { from: date_dim ... } }
+    → {"order_date": "date_dim"}. A dashboard field references the join ALIAS
+    (order_date.order_month), but the view file defines the dim under the VIEW
+    name (date_dim). Without this map the field can't be resolved to a DM column
+    and the tile gets dropped (the `from:`-alias gap). Aliases without `from:`
+    (alias == view) are skipped — they already resolve."""
+    aliases = {}
+    for path in model_files:
+        try:
+            txt = re.sub(r"#[^\n]*", "", open(path).read())
+        except OSError:
+            continue
+        # join: <alias> { ... from: <view> ... }  (brace-bounded so a later
+        # join's from: can't bleed into an earlier alias)
+        for m in re.finditer(r"join:\s*(\w+)\s*\{(.*?)\}", txt, re.DOTALL):
+            alias, body = m.group(1), m.group(2)
+            fm = re.search(r"\bfrom:\s*(\w+)", body)
+            if fm and fm.group(1) != alias:
+                aliases[alias] = fm.group(1)
+    return aliases
+
+
+def build_field_index(view_files, aliases=None):
     measures = {}   # "view.field" -> (agg_type, base_display_or_None, sql, filters)
     formats = {}    # "view.field" -> Sigma format dict (or None)
     dims = set()    # "view.field"
@@ -254,6 +278,23 @@ def build_field_index(view_files):
                     measures[key] = (agg, disp(tc.group(2)),
                                      f"{tc.group(1)}(${{TABLE}}.{tc.group(2)})", mfilters)
                     formats.setdefault(key, tfmt)
+    # Register every view's fields under its join ALIAS too, so dashboard refs
+    # that use the alias (order_date.order_month) resolve to the underlying view's
+    # columns (date_dim's `order` dim_group). The converter already emits the
+    # denorm columns under the alias, so this aligns the two sides.
+    for alias, view in (aliases or {}).items():
+        for f in [k for k in measures if k.startswith(view + ".")]:
+            measures.setdefault(f"{alias}.{f.split('.', 1)[1]}", measures[f])
+        for f in [k for k in dims if k.startswith(view + ".")]:
+            dims.add(f"{alias}.{f.split('.', 1)[1]}")
+        for f in [k for k in formats if k.startswith(view + ".")]:
+            formats.setdefault(f"{alias}.{f.split('.', 1)[1]}", formats[f])
+        for f in [k for k in yesno if k.startswith(view + ".")]:
+            yesno.add(f"{alias}.{f.split('.', 1)[1]}")
+        for g in [k for k in dim_groups if k.startswith(view + ".")]:
+            dim_groups.setdefault(f"{alias}.{g.split('.', 1)[1]}", dim_groups[g])
+        if view in view_pk:
+            view_pk.setdefault(alias, view_pk[view])
     return measures, dims, view_pk, formats, yesno, dim_groups
 
 def main():
@@ -279,7 +320,13 @@ def main():
     a = ap.parse_args()
 
     dash = json.load(open(a.contract))
-    measures, dims, view_pk, formats, yesno_dims, dim_groups = build_field_index(sorted(glob.glob(os.path.join(a.views, "*.view.lkml"))))
+    # Model files live alongside or one level above the views dir — read their
+    # join `from:` aliases so alias-qualified dashboard fields resolve.
+    model_files = (glob.glob(os.path.join(a.views, "*.model.lkml"))
+                   + glob.glob(os.path.join(a.views, "..", "*.model.lkml")))
+    aliases = parse_join_aliases(model_files)
+    measures, dims, view_pk, formats, yesno_dims, dim_groups = build_field_index(
+        sorted(glob.glob(os.path.join(a.views, "*.view.lkml"))), aliases)
     warnings = []
 
     # ── per-explore masters ────────────────────────────────────────────────────
