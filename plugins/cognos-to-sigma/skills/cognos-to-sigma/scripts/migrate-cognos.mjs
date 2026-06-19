@@ -57,6 +57,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync } from 'no
 import { homedir } from 'node:os';
 import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as scoutGate from './lib/scout_gate.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONV = join(HERE, '..', 'converter');
@@ -388,6 +389,37 @@ if (securityDetected.length) {
     default: 'proceed (port security via apply_sigma_rls.py after the post)',
   });
 }
+// ---------------------------------------------------------------------------
+// RUN-EACH-TIME GAP-SCOUT GATE (bead beads-sigma-5l5e). A flagged expression's
+// default answer is "proceed ... close via gap-scout later" — but --yes would
+// otherwise let the agent skip the scout entirely and ship the placeholder. So
+// every expression_flagged gap must be SCOUTED first: the gap-scout attempts a
+// Sigma translation (scripts/gap-scout.md → scout-validate-and-persist.mjs,
+// which records to <WORK>/scout-ledger.jsonl). --yes does NOT skip this gate; it
+// only accepts gaps the scout already tried (validated locally, or escalated).
+// An unscouted flagged expression always STOPS, before any Sigma object exists.
+// (skipped under --dry-run: it ships nothing to Sigma and the scout needs a live
+// connection to validate — the real build below is what the gate must guard.)
+const exprGaps = opt['dry-run'] ? [] : questions.filter((q) => q.id === 'expression_flagged');
+if (exprGaps.length) {
+  const gid = (q) => 'expr:' + String(q.detail).replace(/\s+/g, ' ').trim().slice(0, 80);
+  const gapIds = [...new Set(exprGaps.map(gid))];
+  const buckets = scoutGate.classify(WORK, gapIds);
+  if (buckets.unscouted.length) {
+    console.log('\n==================== GAP-SCOUT REQUIRED ====================');
+    console.log(`${buckets.unscouted.length} of ${gapIds.length} flagged expression(s) have NOT been scouted —`);
+    console.log('the gap-scout must attempt a Sigma translation before the placeholder is accepted:');
+    buckets.unscouted.forEach((id) => console.log(`  --gap-id '${id}'`));
+    console.log('');
+    console.log('Spawn one gap-scout per expression (scripts/gap-scout.md), passing the exact --gap-id');
+    console.log(`above plus --workdir ${WORK}, then re-run. --yes does NOT skip this gate.`);
+    console.log('===========================================================');
+    console.log('No Sigma objects were created.');
+    process.exit(11);
+  }
+  line(`gap-scout: all ${gapIds.length} flagged expression(s) accounted for (validated or escalated)`);
+}
+
 let answers = null;
 if (opt.answers) { try { answers = JSON.parse(opt.answers); } catch { die('--answers is not valid JSON'); } }
 if (questions.length && !opt.yes && !answers) {

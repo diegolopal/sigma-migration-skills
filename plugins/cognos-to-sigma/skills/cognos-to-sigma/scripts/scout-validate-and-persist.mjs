@@ -14,13 +14,20 @@
 //     --template 'CumulativeSum([$1])' \
 //     --test-formula 'CumulativeSum([Net Revenue])' \
 //     --connection <connId> --table-path CSA.TJ.ORDER_FACT \
-//     --folder <folderId> [--description '...'] [--hint '...']
+//     --folder <folderId> [--description '...'] [--hint '...'] \
+//     [--gap-id '<expr:... from migrate-cognos.mjs GAP-SCOUT REQUIRED>'] [--workdir <dir>]
+//
+// --gap-id + --workdir feed the run-each-time gap-scout gate (bead beads-sigma-5l5e):
+// the result (validated|escalated) is appended to <workdir>/scout-ledger.jsonl keyed
+// by --gap-id, so migrate-cognos.mjs's OPEN-QUESTIONS gate sees the flagged
+// expression as scouted and stops blocking it on the re-run.
 //
 // Output (JSON): { status: "validated"|"escalated", rule_path?, escalation? , ... }
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { api, extractId, parseArgs } from './lib/sigma-rest.mjs';
+import * as scoutGate from './lib/scout_gate.mjs';
 
 const a = parseArgs(process.argv.slice(2));
 for (const k of ['feature', 'template', 'test-formula', 'connection', 'table-path', 'folder']) {
@@ -66,11 +73,15 @@ if (resolved) {
   rules.push({ feature: a.feature, pattern: a.pattern || a['test-formula'], template: a.template, flags: 'gi', description: a.description || '', hint: a.hint || '', validatedAt: new Date().toISOString() });
   mkdirSync(join(homedir(), '.cognos-to-sigma'), { recursive: true });
   writeFileSync(RULES, JSON.stringify(rules, null, 2));
+  // Record to the run-each-time gap-scout ledger (bead beads-sigma-5l5e) so
+  // migrate-cognos.mjs's OPEN-QUESTIONS gate sees this gap as scouted.
+  scoutGate.record(a.workdir, { gapId: a['gap-id'], feature: a.feature, status: 'validated' });
   console.log(JSON.stringify({ status: 'validated', feature: a.feature, rule_path: RULES, detail }, null, 2));
   process.exit(0);
 }
 
 // escalation (opt-in; this script does NOT file — it hands back the command)
 const dry = `python3 scripts/escalate-gap.py --skill cognos-to-sigma --category converter --feature ${JSON.stringify(a.feature)} --description ${JSON.stringify(a.description || '')} --source-pattern ${JSON.stringify(a.pattern || '')} --template-attempted ${JSON.stringify(a.template)} --test-formula ${JSON.stringify(a['test-formula'])} --sigma-response ${JSON.stringify(detail)}`;
+scoutGate.record(a.workdir, { gapId: a['gap-id'], feature: a.feature, status: 'escalated' });
 console.log(JSON.stringify({ status: 'escalated', feature: a.feature, detail, escalation: { dry_run_cmd: dry, file_cmd: dry + ' --yes' } }, null, 2));
 process.exit(0);
