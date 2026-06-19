@@ -56,6 +56,7 @@ require 'optparse'
 require 'fileutils'
 require 'open3'
 require 'time'
+require_relative 'lib/scout_gate'
 
 $stdout.sync = true # lane/foreground progress lines interleave correctly
 
@@ -465,6 +466,33 @@ end
 answers = nil
 if opts[:answers]
   answers = (JSON.parse(opts[:answers]) rescue abort('FATAL: --answers is not valid JSON'))
+end
+
+# RUN-EACH-TIME GAP-SCOUT GATE (bead beads-sigma-5l5e). Untranslated measures
+# are scout-eligible — the gap-scout must ATTEMPT a Sigma translation for each
+# before the degradation is accepted. --yes does NOT skip this; it only accepts
+# measures already scouted (validated or escalated). Recorded to the ledger by
+# scout-validate.py via lib/scout_gate.py.
+scout_gaps = questions.select { |q| q['id'] == 'measure_no_sigma_equiv' }
+unless scout_gaps.empty?
+  gid = ->(q) { 'measure:' + (q['measure'] || q['detail'].to_s.gsub(/\s+/, ' ').strip[0, 80]).to_s }
+  gap_ids = scout_gaps.map { |q| gid.call(q) }.uniq
+  buckets = ScoutGate.classify(WORK, gap_ids)
+  if buckets[:unscouted].any?
+    puts
+    puts '==================== GAP-SCOUT REQUIRED ===================='
+    puts "#{buckets[:unscouted].size} of #{gap_ids.size} untranslated measure(s) have NOT been scouted —"
+    puts 'the gap-scout must attempt a Sigma translation before the degradation is accepted:'
+    buckets[:unscouted].each { |id| puts "  --gap-id '#{id}'" }
+    puts ''
+    puts "Spawn one gap-scout per measure (scripts/gap-scout.md), passing the exact --gap-id above"
+    puts "plus --workdir #{WORK}, then re-run. --yes does NOT skip this gate."
+    puts '======================================================='
+    puts 'No Sigma objects were created.'
+    phase_summary
+    exit 11
+  end
+  puts "   gap-scout: all #{gap_ids.size} untranslated measure(s) accounted for (validated or escalated)"
 end
 
 if questions.any? && !opts[:yes] && answers.nil?

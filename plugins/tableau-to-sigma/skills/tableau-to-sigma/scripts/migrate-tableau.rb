@@ -76,6 +76,7 @@ require 'fileutils'
 require 'open3'
 require 'date'
 require 'time'
+require_relative 'lib/scout_gate'
 
 $stdout.sync = true # progress lines interleave correctly when piped/captured
 
@@ -761,23 +762,55 @@ end
 # degradation explicitly via --force. (auto/hint/manual statuses flow into the
 # decisions checkpoint below instead.)
 unhandled_gaps = gaps.select { |g| g['status'].to_s == 'unhandled' }
-if unhandled_gaps.any? && !opts[:force]
-  puts
-  puts '==================== GAP-SCAN STOP ===================='
-  puts "#{unhandled_gaps.size} ❌-unhandled feature(s) detected — these do NOT migrate:"
-  unhandled_gaps.each { |g| puts "  - #{g['name']} (×#{g['count']}): #{g['blurb']}" }
-  puts ''
-  puts "Full report: #{gap_report_md || '(see workdir *gaps-report.md)'}"
-  puts 'Options: close the gap via the gap-scout subagent (scripts/gap-scout.md),'
-  puts 'restructure the workbook in Tableau, or re-run with --force to accept the'
-  puts 'degradation (the features above will be missing from the Sigma workbook).'
-  puts '======================================================='
-  puts 'No Sigma objects were created.'
-  mark('phase1-join')
-  phase_summary
-  exit 11
-elsif unhandled_gaps.any?
-  line "--force: proceeding past #{unhandled_gaps.size} ❌-unhandled feature(s) — they will NOT migrate"
+if unhandled_gaps.any?
+  # RUN-EACH-TIME GATE (bead 5l5e): the gap-scout must have run for EVERY
+  # ❌-unhandled feature before the conversion proceeds. scout-validate-and-
+  # persist.rb records each scouted gap to <WORK>/scout-ledger.jsonl as
+  # {gap_id, status: validated|escalated}. --force is NOT a blanket skip: it
+  # only accepts gaps the scout actually tried and escalated — never a gap the
+  # scout never ran for.
+  # Gap-id = the gap-report row name; the scout records under --gap-id '<name>'.
+  by_name = unhandled_gaps.each_with_object({}) { |g, h| h[g['name'].to_s] = g }
+  buckets = ScoutGate.classify(WORK, unhandled_gaps.map { |g| g['name'].to_s })
+  unscouted = buckets[:unscouted].map { |id| by_name[id] }
+  escalated = buckets[:escalated].map { |id| by_name[id] }
+
+  if unscouted.any?
+    puts
+    puts '==================== GAP-SCAN STOP (scout required) ===================='
+    puts "#{unscouted.size} of #{unhandled_gaps.size} ❌-unhandled feature(s) have NOT been scouted:"
+    unscouted.each { |g| puts "  - #{g['name']} (×#{g['count']}): #{g['blurb']}" }
+    puts ''
+    puts "Full report: #{gap_report_md || '(see workdir *gaps-report.md)'}"
+    puts 'Spawn ONE gap-scout subagent per row (scripts/gap-scout.md), passing'
+    puts "  --gap-id '<the row name above>' --workdir #{WORK}"
+    puts 'so each scout records its result to the ledger. Then re-run this command.'
+    puts '--force does NOT skip this gate — it only accepts gaps the scout tried'
+    puts 'and could not auto-translate (escalated).'
+    puts '======================================================='
+    puts 'No Sigma objects were created.'
+    mark('phase1-join')
+    phase_summary
+    exit 11
+  elsif escalated.any? && !opts[:force]
+    puts
+    puts '==================== GAP-SCAN STOP (escalated gaps) ===================='
+    puts "All #{unhandled_gaps.size} unhandled feature(s) were scouted; #{escalated.size} could NOT be"
+    puts 'auto-translated and were escalated (recorded locally; file an issue via escalate-gap.py):'
+    escalated.each { |g| puts "  - #{g['name']} (×#{g['count']})" }
+    puts ''
+    puts 'Re-run with --force to accept these as manual — they will be MISSING/flagged'
+    puts 'in the Sigma workbook. (The validated ones still migrate.)'
+    puts '======================================================='
+    puts 'No Sigma objects were created.'
+    mark('phase1-join')
+    phase_summary
+    exit 11
+  elsif escalated.any?
+    line "--force: proceeding past #{escalated.size} scouted-but-escalated feature(s) — they will NOT migrate"
+  else
+    line "gap-scout: all #{unhandled_gaps.size} ❌-unhandled feature(s) resolved via validated rules"
+  end
 end
 
 # EMPTY-VIEW-CSV preflight (honesty stop): a view whose CSV exported 0 data rows

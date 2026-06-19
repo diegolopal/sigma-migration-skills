@@ -53,7 +53,14 @@ PROCEDURE
      --folder-id <folder-id> \
      --description '<one-line>' \
      --hint '<post-publish caveat, e.g., "non-grouping context only">' \
-     --example-from '<which analysis/field>'
+     --example-from '<which analysis/field>' \
+     --gap-id '<the EXACT --gap-id printed by the GAP-SCOUT REQUIRED gate>' \
+     --workdir '<the conversion working dir printed by the gate>'
+   ⚠ `--gap-id` + `--workdir` are REQUIRED for the run-each-time gate (bead
+   5l5e): they record this scout to `<workdir>/scout-ledger.jsonl` so
+   migrate-quicksight can confirm EVERY degraded calc was scouted before it
+   proceeds. Copy the `--gap-id` value verbatim from the gate output; omitting
+   them means the gate will still see the calc as unscouted and stop again.
 4. Parse the JSON result.
    - status=validated → success; rule is now in the customer's local YAML
    - status=escalated → propose a different candidate (up to 3 attempts). After

@@ -36,7 +36,8 @@ Env:
 """
 import argparse, json, os, re, ssl, subprocess, sys, time, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import yaml, ts_common, apply_layouts
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import yaml, ts_common, apply_layouts, scout_gate
 yaml.SafeLoader.add_constructor("tag:yaml.org,2002:value", lambda l, n: l.construct_scalar(n))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -193,6 +194,40 @@ def post_workbook(spec, wd):
         f.write(json.dumps({"id": wb, "name": spec.get("name")}) + "\n")
     return wb
 
+def error_column_gate(wb, wd, display):
+    """RUN-EACH-TIME GAP-SCOUT GATE (bead beads-sigma-5l5e). The ThoughtSpot
+    converter passes TML calc expressions through optimistically (no convert-time
+    degrade signal — same as Looker); a TML function with no Sigma equivalent
+    surfaces HERE as a type=error column at workbook readback. Each such column is
+    scout-eligible: the gap-scout must ATTEMPT a Sigma translation (scripts/
+    gap-scout.md → scout-validate.py, which records to <wd>/scout-ledger.jsonl via
+    lib/scout_gate.py) before a broken column ships. An UNSCOUTED error column
+    always STOPS (exit 11) — there is no --yes/--force escape; once scouted
+    (validated or escalated) the column is accounted for and the build proceeds."""
+    cols = json.loads(sigma("GET", f"/v2/workbooks/{wb}/columns"))
+    entries = cols.get("entries") or []
+    errs = [c for c in entries if (c.get("type") or {}).get("type") == "error"]
+    if not errs:
+        return
+    print(f"   workbook '{display}': {len(errs)} ERROR-typed column(s) at readback")
+    for c in errs[:6]:
+        print(f"     [{c.get('elementId')}] {c.get('label')}: {c.get('formula')}")
+    gid = lambda c: "errcol:%s/%s" % (c.get("elementId"), c.get("label"))
+    gap_ids = list(dict.fromkeys(gid(c) for c in errs))
+    bk = scout_gate.classify(wd, gap_ids)
+    if bk["unscouted"]:
+        print("\n==================== GAP-SCOUT REQUIRED ====================")
+        print("%d of %d ERROR-typed column(s) have NOT been scouted — the gap-scout must"
+              % (len(bk["unscouted"]), len(gap_ids)))
+        print("attempt a Sigma translation before a broken column ships:")
+        for i in bk["unscouted"]:
+            print("  --gap-id '%s'" % i)
+        print("\nSpawn one gap-scout per column (scripts/gap-scout.md) with the exact --gap-id")
+        print("above plus --workdir %s, then re-run. --yes does NOT skip this gate." % wd)
+        print("===========================================================")
+        sys.exit(11)
+    print("   gap-scout: all %d error column(s) accounted for (validated or escalated)" % len(gap_ids))
+
 def render_page_png(wb, page_id, out, w=1800, h=1000):
     """Render one workbook PAGE to a PNG via the REST export API (token explicit
     via the same SIGMA_API_TOKEN the rest of the run uses). Returns True on a
@@ -280,6 +315,7 @@ def migrate_liveboard(lb_doc, dm, denorm_id, denorm_name, resolver, prefix, fall
             "pages": [{"id": "p-data", "name": "Data", "elements": data_elems},
                       {"id": "p-main", "name": display[:40], "elements": controls + elements}]}
     wb = post_workbook(spec, wd)
+    error_column_gate(wb, wd, display)             # run-each-time gap-scout gate (bead beads-sigma-5l5e)
     tiles = lb_tiles(lb, viz_specs, elements)
     control_ids = [c["id"] for c in controls]
     apply_layouts.apply(wb, tiles=tiles, controls=control_ids)
@@ -347,6 +383,7 @@ def migrate_answer(ans_id, dm, denorm_id, denorm_name, resolver, prefix, folder,
             "pages": [{"id": "p-data", "name": "Data", "elements": data_elems},
                       {"id": "p-main", "name": display[:40], "elements": [main_el]}]}
     wb = post_workbook(spec, wd)
+    error_column_gate(wb, wd, display)             # run-each-time gap-scout gate (bead beads-sigma-5l5e)
     apply_layouts.apply(wb)
     visual_qa(wb, spec, wd, display)               # Phase-5b: render full-page PNG (non-fatal)
     return wb, display
