@@ -65,6 +65,7 @@ require 'set'
 
 HERE = __dir__
 $LOAD_PATH.unshift File.expand_path('lib', HERE)
+require 'scout_gate' # run-each-time gap-scout gate (bead beads-sigma-5l5e)
 
 opts = { db: '', schema: '' }
 OptionParser.new do |o|
@@ -419,6 +420,33 @@ unless opts[:conn]
   questions << { 'id' => 'connection', 'severity' => 'required',
                  'detail' => 'No Sigma --connection supplied; required to point the DM at the warehouse',
                  'options' => ['supply --connection <id>'], 'default' => nil }
+end
+
+# RUN-EACH-TIME GAP-SCOUT GATE (bead beads-sigma-5l5e). Flagged DAX measures
+# (⛔ no-equivalent → degrade to Null; ⚠ restructure-needed) are scout-eligible —
+# the gap-scout must ATTEMPT a Sigma translation for each before we accept the
+# degradation. --yes does NOT skip this; it only accepts gaps the scout already
+# tried (validated locally, or escalated). The scout records each to
+# <WORK>/scout-ledger.jsonl via scout-validate.py + lib/scout_gate.py.
+dax_gaps = questions.select { |q| %w[dax_no_equivalent dax_needs_restructure].include?(q['id']) }
+unless dax_gaps.empty?
+  gid = ->(q) { 'dax:' + q['detail'].to_s.gsub(/\s+/, ' ').strip[0, 80] }
+  gap_ids = dax_gaps.map { |q| gid.call(q) }.uniq
+  buckets = ScoutGate.classify(WORK, gap_ids)
+  if buckets[:unscouted].any?
+    puts
+    puts '==================== GAP-SCOUT REQUIRED ===================='
+    puts "#{buckets[:unscouted].size} of #{gap_ids.size} flagged DAX measure(s) have NOT been scouted —"
+    puts 'the gap-scout must attempt a Sigma translation before the degradation is accepted:'
+    buckets[:unscouted].each { |id| puts "  --gap-id '#{id}'" }
+    puts ''
+    puts "Spawn one gap-scout per measure (scripts/gap-scout.md), passing the exact --gap-id above"
+    puts "plus --workdir #{WORK}, then re-run. --yes does NOT skip this gate."
+    puts '======================================================='
+    puts 'No Sigma objects were created.'
+    exit 11
+  end
+  puts "   gap-scout: all #{gap_ids.size} flagged DAX measure(s) accounted for (validated or escalated)"
 end
 
 answers = nil
