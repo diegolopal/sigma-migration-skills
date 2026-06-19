@@ -349,6 +349,34 @@ def parse_fixed_lod(formula, columns_by_guid = {})
   { 'dims' => dims, 'agg' => m[2].upcase, 'measure' => meas }
 end
 
+# Parse a RELATIVE LOD — {INCLUDE [dims]: AGG([m])} or {EXCLUDE [dims]: AGG([m])}
+# — which (unlike FIXED) is evaluated relative to the chart's VIEW grain. Returns
+# { 'type'=>'INCLUDE'|'EXCLUDE', 'dims'=>[...], 'agg'=>'SUM'|..., 'measure'=>name }.
+# Supports multiple dims and the full agg set (the WOW case is a multi-dim
+# EXCLUDE MAX). The caller composes grain from the chart's plotted dims.
+def parse_relative_lod(formula, columns_by_guid = {})
+  s = formula.to_s.gsub(/\s+/, ' ').strip
+  m = s.match(/\A\{\s*(INCLUDE|EXCLUDE)\s+(\[[^\]]+\](?:\s*,\s*\[[^\]]+\])*)\s*:\s*(SUM|AVG|MIN|MAX|MEDIAN|COUNTD|COUNT)\s*\(\s*\[([^\]]+)\]\s*\)\s*\}\z/i)
+  return nil unless m
+  resolve = lambda do |ref|
+    if ref =~ /\A[0-9a-f\-]{36}\z/i
+      info = columns_by_guid[ref]
+      info && info['caption'] && info['caption'].strip
+    else
+      ref.strip
+    end
+  end
+  dims = m[2].scan(/\[([^\]]+)\]/).flatten.map { |d| resolve.call(d) }
+  meas = resolve.call(m[4])
+  return nil if dims.empty? || dims.any?(&:nil?) || meas.nil?
+  { 'type' => m[1].upcase, 'dims' => dims, 'agg' => m[3].upcase, 'measure' => meas }
+end
+
+# Aggregations where agg-of-agg == agg, so a two-level grouped helper reproduces
+# the relative-LOD value exactly (Max of per-group Maxes = global Max, etc.).
+# AVG / MEDIAN / COUNTD are NOT composable this way — those stay flagged.
+LOD_COMPOSABLE_AGGS = %w[SUM MAX MIN COUNT].freeze
+
 # Strip the aggregation/date-part prefix off a Tableau CSV header so it can be
 # matched against a worksheet calc name ("Avg. Customer LTV LOD" -> "Customer
 # LTV LOD"). Mirrors auto-parity-plan's header_base.
@@ -661,8 +689,13 @@ def translate_tableau_tc(formula)
   # Tableau bounds are (first, last) offsets; Sigma Moving* takes (back[, fwd])
   # as POSITIVE counts. Forward-only / shifted windows (first > 0 or last < 0)
   # and FIRST()/LAST() bounds have no validated mapping — leave untouched.
+  # NOTE: 'STDEV'/'VAR' here are the SAMPLE variants — Tableau WINDOW_STDEV /
+  # WINDOW_VAR map to Sigma MovingStdDev / MovingVariance. The population forms
+  # WINDOW_STDEVP / WINDOW_VARP stay manual (no `\bWINDOW_VAR\s*\(` match on
+  # "WINDOW_VARP(" — the P breaks the word boundary, so they fall through).
   { 'AVG' => 'MovingAvg', 'SUM' => 'MovingSum', 'MAX' => 'MovingMax',
-    'MIN' => 'MovingMin', 'COUNT' => 'MovingCount', 'STDEV' => 'MovingStdDev' }.each do |tfn, sfn|
+    'MIN' => 'MovingMin', 'COUNT' => 'MovingCount',
+    'STDEV' => 'MovingStdDev', 'VAR' => 'MovingVariance' }.each do |tfn, sfn|
     while (m = s.match(/\bWINDOW_#{tfn}\s*\(\s*((?:[^(),]|\([^()]*\)|\([^()]*\([^()]*\)[^()]*\))+?)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\)/))
       lo, hi = m[2].to_i, m[3].to_i
       break if lo > 0 || hi < 0 # shifted window — unvalidated, keep Tableau form
@@ -835,14 +868,21 @@ def translate_tableau_tc(formula)
     hints << "FIXED-no-dim LOD → workbook scalar metric #{sigma_agg}([Master/#{m}]) (no group by)"
     changed = true
   end
-  if s =~ /\{\s*INCLUDE\s+\[([^\]]+)\]\s*:\s*(SUM|AVG)\s*\(\[([^\]]+)\]\)\s*\}/i
-    dim, agg, m = $1, $2.upcase, $3
-    hints << "INCLUDE LOD on [#{dim}] → add [Master/#{dim}] to chart grouping, use plain #{agg}([Master/#{m}])"
+  if (mi = s.match(/\{\s*INCLUDE\s+((?:\[[^\]]+\]\s*,?\s*)+):\s*(SUM|AVG|MIN|MAX|MEDIAN|COUNTD|COUNT)\s*\(\[([^\]]+)\]\)\s*\}/i))
+    dims, agg = mi[1].scan(/\[([^\]]+)\]/).flatten.join(', '), mi[2].upcase
+    hints << "INCLUDE LOD on [#{dims}] → AUTO-BUILT as a hidden grouped helper when plotted as a chart measure " \
+             "(inner = INCLUDE dims below the view, 2nd-stage agg at view grain); elsewhere add [#{dims}] to the grouping"
     changed = true
   end
-  if s =~ /\{\s*EXCLUDE\s+\[([^\]]+)\]\s*:\s*(SUM|AVG)\s*\(\[([^\]]+)\]\)\s*\}/i
-    dim, agg, m = $1, $2.upcase, $3
-    hints << "EXCLUDE LOD on [#{dim}] → remove [Master/#{dim}] from chart grouping, use plain #{agg}([Master/#{m}])"
+  if (me = s.match(/\{\s*EXCLUDE\s+((?:\[[^\]]+\]\s*,?\s*)+):\s*(SUM|AVG|MIN|MAX|MEDIAN|COUNTD|COUNT)\s*\(\[([^\]]+)\]\)\s*\}/i))
+    dims, agg = me[1].scan(/\[([^\]]+)\]/).flatten.join(', '), me[2].upcase
+    composable = %w[SUM MAX MIN COUNT].include?(agg)
+    hints << if composable
+               "EXCLUDE LOD on [#{dims}] (#{agg}) → AUTO-BUILT as a hidden grouped helper when plotted (value at " \
+               'view minus the excluded dims, broadcast); composable agg, exact'
+             else
+               "EXCLUDE LOD on [#{dims}] uses #{agg} (not composable as agg-of-agg) → STAYS MANUAL: re-author at the coarser grain"
+             end
     changed = true
   end
 
@@ -884,17 +924,20 @@ end
 # 'Unknown function' in every spec context — never emit those.
 #
 # STAYS MANUAL (flagged, never guessed): WINDOW_MEDIAN / WINDOW_PERCENTILE /
-# WINDOW_CORR / WINDOW_COVAR(P) / WINDOW_VAR(P) / WINDOW_STDEVP,
-# PREVIOUS_VALUE, SIZE(), FIRST()/LAST(), RANK_UNIQUE / RANK_MODIFIED, and any
+# WINDOW_CORR / WINDOW_COVAR(P) / WINDOW_VARP (population) / WINDOW_STDEVP,
+# PREVIOUS_VALUE, SIZE(), FIRST()/LAST(), RANK_MODIFIED, and any
 # compute-using/addressing override beyond the default Table(Across) / simple
 # partition ("restart every", pane-relative, compute-along-non-axis-dim).
+# NOW MAPPED (2026-06-18): RANK_UNIQUE→RowNumber (sort-following, like INDEX),
+# WINDOW_VAR (sample)→MovingVariance — Sigma shipped MovingVariance; the
+# population variant WINDOW_VARP has no validated Sigma window fn, stays manual.
 WINDOW_SIGMA_FNS = %w[
   CumulativeSum CumulativeAvg CumulativeMax CumulativeMin CumulativeCount
-  MovingAvg MovingSum MovingMax MovingMin MovingCount MovingStdDev
+  MovingAvg MovingSum MovingMax MovingMin MovingCount MovingStdDev MovingVariance
   Rank RankDense RankPercentile RowNumber Lag Lead PercentOfTotal
 ].freeze
 
-WINDOW_MANUAL_RE = /\b(?:WINDOW_(?:MEDIAN|PERCENTILE|CORR|COVARP?|VARP?|STDEVP)|PREVIOUS_VALUE|RANK_(?:UNIQUE|MODIFIED))\s*\(|\b(?:SIZE|FIRST|LAST)\s*\(\s*\)/i
+WINDOW_MANUAL_RE = /\b(?:WINDOW_(?:MEDIAN|PERCENTILE|CORR|COVARP?|VARP|STDEVP)|PREVIOUS_VALUE|RANK_MODIFIED)\s*\(|\b(?:SIZE|FIRST|LAST)\s*\(\s*\)/i
 
 # Case-SENSITIVE on purpose: .twb formulas carry canonical UPPERCASE Tableau
 # function names, and the post-rewrite leftover check must not match the
@@ -2044,6 +2087,63 @@ layout.each do |dash|
                     "#{lod_parse['agg']}(#{lod_parse['measure']})}) — auto-built hidden grouped helper '#{src_name}' " \
                     "(inner grain = FIXED dims, 2nd-stage #{stage2} at chart grain) ⚠ exact iff the chart dims are " \
                     'functionally dependent on the FIXED dims — verify in Sigma'
+      elsif (rel = lod_calc && parse_relative_lod(lod_calc['formula'], meta['columns_by_guid'] || {}))
+        # INCLUDE / EXCLUDE LOD — relative to the chart's VIEW grain.
+        map_name = ->(capn) { (mm = map_column(capn, mmap)) ? mm['name'] : capn }
+        rel_meas  = map_name.call(rel['measure'])
+        value_name = header_base(meas_hdr)
+        view_dims = [{ 'name' => dim['name'], 'formula' => dim_formula }]
+        view_dims << { 'name' => color_col_obj['name'], 'formula' => color_col_obj['formula'] } if color_col_obj
+        value_formula = render_agg(LOD_INNER_AGG[rel['agg']], "[Master/#{rel_meas}]")
+        if rel['type'] == 'INCLUDE'
+          # INCLUDE adds dims BELOW the view: inner = INCLUDE dims (nested under
+          # the view), outer = view dims, 2nd stage = the view's aggregation.
+          inner_keys = rel['dims'].map { |d| n = map_name.call(d); { 'name' => n, 'formula' => "[Master/#{n}]" } }
+          stage2 = (SIGMA_AGG[agg_label] unless %w[None User].include?(agg_label.to_s)) || 'Avg'
+          helper, src_name, s2_name = build_two_stage_helper(
+            el_id: el_id, master_id: opts[:master_id], value_name: value_name,
+            value_formula: value_formula, inner_keys: inner_keys,
+            outer_dims: view_dims, stage2_agg: stage2)
+          data_elements << helper
+          chart_source_eid = helper['id']
+          dim_col_obj['formula'] = "[#{src_name}/#{dim['name']}]"
+          color_col_obj['formula'] = "[#{src_name}/#{color_col_obj['name']}]" if color_col_obj
+          measure_formula = "Max([#{src_name}/#{s2_name}])"
+          warnings << "'#{cap}' measure '#{meas_hdr}' is an INCLUDE LOD ({INCLUDE #{rel['dims'].join(', ')} : " \
+                      "#{rel['agg']}(#{rel['measure']})}) — auto-built hidden grouped helper '#{src_name}' " \
+                      "(inner = INCLUDE dims below the view, 2nd-stage #{stage2} at view grain) ⚠ verify in Sigma"
+        else
+          # EXCLUDE removes dims from the view → value at (view − excluded),
+          # broadcast across the excluded dims. Exact only for composable aggs
+          # (SUM/MAX/MIN/COUNT, where agg-of-agg == agg).
+          present = view_dims.select { |d| rel['dims'].map { |x| map_name.call(x) }.include?(d['name']) }
+          if !LOD_COMPOSABLE_AGGS.include?(rel['agg'])
+            warnings << "'#{cap}' EXCLUDE LOD uses #{rel['agg']} (not composable as agg-of-agg) — STAYS MANUAL: " \
+                        're-author at the coarser grain in Sigma'
+          elsif present.empty?
+            # the excluded dims aren't plotted here → EXCLUDE reduces to a plain
+            # aggregate at the view grain.
+            measure_formula = value_formula
+            warnings << "'#{cap}' EXCLUDE LOD on [#{rel['dims'].join(', ')}] — none of those dims are in this view, " \
+                        "so it reduces to #{rel['agg']}(#{rel['measure']}) at view grain"
+          else
+            outer_dims = view_dims.reject { |d| present.any? { |p| p['name'] == d['name'] } }
+            inner_keys = present.map { |d| { 'name' => d['name'], 'formula' => "[Master/#{d['name']}]" } }
+            stage2 = { 'SUM' => 'Sum', 'MAX' => 'Max', 'MIN' => 'Min', 'COUNT' => 'Sum' }[rel['agg']]
+            helper, src_name, s2_name = build_two_stage_helper(
+              el_id: el_id, master_id: opts[:master_id], value_name: value_name,
+              value_formula: value_formula, inner_keys: inner_keys,
+              outer_dims: outer_dims, stage2_agg: stage2)
+            data_elements << helper
+            chart_source_eid = helper['id']
+            dim_col_obj['formula'] = "[#{src_name}/#{dim['name']}]"
+            color_col_obj['formula'] = "[#{src_name}/#{color_col_obj['name']}]" if color_col_obj
+            measure_formula = "Max([#{src_name}/#{s2_name}])"
+            warnings << "'#{cap}' measure '#{meas_hdr}' is an EXCLUDE LOD ({EXCLUDE #{rel['dims'].join(', ')} : " \
+                        "#{rel['agg']}(#{rel['measure']})}) — auto-built hidden grouped helper '#{src_name}' " \
+                        "(value at view minus [#{rel['dims'].join(', ')}], broadcast via #{stage2}) ⚠ verify in Sigma"
+          end
+        end
       elsif sigma_agg == 'Avg' && meas['grain'] &&
             dim['formula'].nil? && dim_trunc.nil? && (aliases_for_dim.nil? || aliases_for_dim.empty?) &&
             dim['grain'] && dim['grain']['element'] == meas['grain']['element'] &&
