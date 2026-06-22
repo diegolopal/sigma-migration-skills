@@ -75,6 +75,8 @@ import argparse, csv, glob, io, json, os, re, statistics, subprocess, sys, time
 import urllib.request, urllib.error
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib"))
+import scout_gate
 from build_workbook import build_field_index, parse_join_aliases, disp, leaf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -807,6 +809,31 @@ console.error('stats:', JSON.stringify(res.stats));
           + (f" — {len(errs)} ERROR-typed" if errs else ""))
     for c in errs[:6]:
         print(f"     [{c.get('elementId')}] {c.get('label')}: {c.get('formula')}")
+
+    # RUN-EACH-TIME GAP-SCOUT GATE (bead beads-sigma-5l5e). Looker's converter
+    # passes calc expressions through optimistically (no convert-time degrade
+    # signal); a calc that has no Sigma equivalent surfaces HERE as a type=error
+    # column at readback. Each such column is scout-eligible — the gap-scout must
+    # ATTEMPT a Sigma translation before we accept a broken column. --yes only
+    # accepts columns the scout already tried (validated or escalated); an
+    # unscouted error column always stops. Recorded to the ledger by
+    # scout-validate.py via lib/scout_gate.py.
+    if errs:
+        gid = lambda c: "errcol:%s/%s" % (c.get("elementId"), c.get("label"))
+        gap_ids = list(dict.fromkeys(gid(c) for c in errs))
+        bk = scout_gate.classify(wd, gap_ids)
+        if bk["unscouted"]:
+            print("\n==================== GAP-SCOUT REQUIRED ====================")
+            print("%d of %d ERROR-typed column(s) have NOT been scouted — the gap-scout must"
+                  % (len(bk["unscouted"]), len(gap_ids)))
+            print("attempt a Sigma translation before a broken column ships:")
+            for i in bk["unscouted"]:
+                print("  --gap-id '%s'" % i)
+            print("\nSpawn one gap-scout per column (scripts/gap-scout.md) with the exact --gap-id")
+            print("above plus --workdir %s, then re-run. --yes does NOT skip this gate." % wd)
+            print("===========================================================")
+            sys.exit(11)
+        print("   gap-scout: all %d error column(s) accounted for (validated or escalated)" % len(gap_ids))
 
     # ── Phase 4c — Visual QA: render each content page to a FULL-PAGE PNG ─────
     # so the layout (applied inline by build_workbook.py and POSTed above) can be

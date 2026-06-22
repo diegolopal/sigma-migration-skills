@@ -42,6 +42,7 @@ require 'open3'
 require 'shellwords'
 require 'time'
 require_relative 'learned-rules'
+require_relative 'lib/scout_gate'
 
 opts = { max_attempts: 1 }
 OptionParser.new do |p|
@@ -57,9 +58,16 @@ OptionParser.new do |p|
   p.on('--example-from S')         { |v| opts[:example_from] = v }
   p.on('--max-attempts N', Integer){ |v| opts[:max_attempts] = v }
   p.on('--chart-kind S')           { |v| opts[:chart_kind] = v }
+  # Run-each-time gate (bead 5l5e) — see scout_gate.rb.
+  p.on('--gap-id S')               { |v| opts[:gap_id] = v }
+  p.on('--workdir S')              { |v| opts[:workdir] = v }
 end.parse!
 
 %i[feature pattern template test_formula dm_id el_id].each { |k| abort("missing --#{k.to_s.tr('_','-')}") unless opts[k] }
+
+def record_ledger(opts, status)
+  ScoutGate.record(opts[:workdir], gap_id: opts[:gap_id], feature: opts[:feature], status: status)
+end
 
 VALIDATE = File.join(__dir__, 'validate-sigma-formula.rb')
 
@@ -94,6 +102,7 @@ if result['status'] == 'ok'
     'confidence'         => 'validated'
   }
   path = LearnedRules.append(rule)
+  record_ledger(opts, 'validated')
   puts JSON.pretty_generate({
     'status'      => 'validated',
     'rule_path'   => path,
@@ -114,6 +123,7 @@ else
     'escalated_at'    => Time.now.utc.iso8601
   }
   esc_path = LearnedRules.escalate(payload)
+  record_ledger(opts, 'escalated')
 
   # Opt-in escalation (NOT automatic). We record the gap locally and hand the
   # main agent a ready-to-run command for the shared filer. The agent shows the

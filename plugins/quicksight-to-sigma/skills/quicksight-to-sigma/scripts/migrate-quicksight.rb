@@ -48,6 +48,7 @@ require 'json'
 require 'optparse'
 require 'fileutils'
 require 'open3'
+require_relative 'lib/scout_gate'
 
 HERE = __dir__
 $LOAD_PATH.unshift File.expand_path('lib', HERE)
@@ -289,6 +290,32 @@ unless opts[:folder]
   questions << { 'id' => 'folder', 'severity' => 'required',
                  'detail' => 'No Sigma --folder supplied; DM + workbook will land in My Documents',
                  'options' => ['supply --folder <id>', 'proceed into My Documents'], 'default' => 'proceed into My Documents' }
+end
+
+# RUN-EACH-TIME GAP-SCOUT GATE (bead beads-sigma-5l5e). Degraded calcs are
+# scout-eligible — the gap-scout must ATTEMPT a Sigma translation for each
+# before we accept the Null degradation. --yes does NOT skip this; it only
+# accepts calcs the scout already tried (validated locally, or escalated). The
+# scout records each to <WORK>/scout-ledger.jsonl via scout-validate-and-persist.
+calc_gaps = questions.select { |q| q['id'] == 'calc_degraded' }
+unless calc_gaps.empty?
+  gid = ->(q) { "calc:" + q['detail'].to_s.gsub(/\s+/, ' ').strip[0, 80] }
+  gap_ids = calc_gaps.map { |q| gid.call(q) }.uniq
+  buckets = ScoutGate.classify(WORK, gap_ids)
+  if buckets[:unscouted].any?
+    puts
+    puts '==================== GAP-SCOUT REQUIRED ===================='
+    puts "#{buckets[:unscouted].size} of #{gap_ids.size} degraded calc(s) have NOT been scouted —"
+    puts 'the gap-scout must attempt a Sigma translation before the degradation is accepted:'
+    buckets[:unscouted].each { |id| puts "  --gap-id '#{id}'" }
+    puts ''
+    puts "Spawn one gap-scout per calc (scripts/gap-scout.md), passing the exact --gap-id above"
+    puts "plus --workdir #{WORK}, then re-run. --yes does NOT skip this gate."
+    puts '======================================================='
+    puts 'No Sigma objects were created.'
+    exit 11
+  end
+  puts "   gap-scout: all #{gap_ids.size} degraded calc(s) accounted for (validated or escalated)"
 end
 
 answers = nil

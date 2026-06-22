@@ -55,7 +55,16 @@ PROCEDURE
      --folder-id <folder-id> \
      --description '<one-line>' \
      --hint '<post-publish caveat, e.g., "non-grouping context only">' \
-     --example-from '<which workbook/line>'
+     --example-from '<which workbook/line>' \
+     --gap-id '<the gap-report ROW NAME you are addressing>' \
+     --workdir '<the conversion working dir, e.g. /tmp/<name> — printed in the GAP-SCAN STOP>'
+   ⚠ `--gap-id` + `--workdir` are REQUIRED for the run-each-time gate (bead
+   5l5e). They record this scout to `<workdir>/scout-ledger.jsonl` so
+   migrate-tableau can confirm EVERY unhandled gap was scouted before it
+   proceeds. The gap-id must match the gap-report row name exactly (e.g.
+   "Window calcs with NO validated Sigma mapping"), NOT the function-level
+   --feature. Omitting them means the gate will still see the gap as unscouted
+   and stop again.
 4. Parse the JSON result.
    - status=validated  → success; rule is now in the customer's local YAML
    - status=escalated  → propose a different candidate (up to 3 attempts).

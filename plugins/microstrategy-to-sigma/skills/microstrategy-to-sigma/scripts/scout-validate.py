@@ -1,24 +1,28 @@
 #!/usr/bin/env python3
-"""scout-validate — gap-scout validation primitive (Power BI → Sigma).
+"""scout-validate — gap-scout validation primitive (MicroStrategy → Sigma).
 
 Validates a candidate Sigma formula against a real data-model element by building a
 throwaway test workbook, checking the column resolves (type != "error"), and — on
 success — persisting the rule to the customer-local learned-rules.yaml. Generic across
 skills via --home.
 
+The MSTR converter (convert.py metric_formula) passes metric function names through
+optimistically — a function with no Sigma equivalent surfaces as a type=error column
+when the workbook is read back. Use this to confirm a candidate replacement resolves.
+
     python3 scout-validate.py \
-      --formula 'Rank([Master/Net Revenue])' \
+      --formula 'CumulativeSum([Master/Net Revenue])' \
       --data-model-id <dm> --element-id <denorm-elem-id> --folder-id <folder> \
-      --feature 'RANKX' --pattern '\\bRANKX\\s*\\(' \
-      --template 'Rank([Master/\\1])' --hint 'grouped-element context' \
-      --description 'DAX RANKX -> Sigma Rank' --home ~/.powerbi-to-sigma
+      --feature 'RunningSum' --pattern '\\bRunningSum\\s*\\(' \
+      --template 'CumulativeSum([Master/\\1])' --hint 'date-grouped element' \
+      --description 'MSTR RunningSum -> Sigma CumulativeSum' --home ~/.microstrategy-to-sigma
 
 To feed the run-each-time gap-scout gate (bead beads-sigma-5l5e), also pass the
-flagged DAX gap's gate id and the conversion working dir — the result is appended
-to <workdir>/scout-ledger.jsonl so migrate-powerbi.rb's OPEN-QUESTIONS gate sees
-the gap as scouted (validated → ok; error → escalated):
+error column's gate id and the conversion working dir — the result is appended to
+<workdir>/scout-ledger.jsonl so scout-gate-readback.py sees the gap as scouted
+(validated → ok; error → escalated):
 
-      --gap-id 'dax:<first 80 chars of the converter warning>' --workdir <wd>
+      --gap-id 'errcol:<elementId>/<label>' --workdir <wd>
 
 Env: SIGMA_BASE_URL, SIGMA_API_TOKEN (eval get-token.sh first).
 Prints JSON: {status: validated|error, workbook_id, error, ...}. Cleans up the test workbook.
@@ -96,9 +100,9 @@ def main():
     ap.add_argument("--hint", default=""); ap.add_argument("--description", default="")
     ap.add_argument("--example-from", default="")
     ap.add_argument("--kind", default="kpi-chart", choices=["kpi-chart","table"])
-    ap.add_argument("--home", default=os.path.expanduser("~/.powerbi-to-sigma"))
+    ap.add_argument("--home", default=os.path.expanduser("~/.microstrategy-to-sigma"))
     ap.add_argument("--skill", default="", help="skill name for issue routing (default: derived from --home)")
-    ap.add_argument("--gap-id", default="", help="flagged DAX gap this scout addressed (gate ledger; e.g. dax:<warning[:80]>)")
+    ap.add_argument("--gap-id", default="", help="error column this scout addressed (gate ledger; e.g. errcol:<elementId>/<label>)")
     ap.add_argument("--workdir", default="", help="conversion working dir; ledger written here")
     a = ap.parse_args()
 
@@ -158,7 +162,7 @@ def main():
     # cleanup test workbook
     api("DELETE", f"/v2/files/{wb}")
     # record to the run-each-time gap-scout ledger (bead beads-sigma-5l5e) so the
-    # migrate-powerbi.rb OPEN-QUESTIONS gate sees this flagged DAX gap as scouted.
+    # scout-gate-readback.py type=error gate sees this gap as scouted.
     scout_gate.record(a.workdir, a.gap_id, a.feature, "validated" if status == "validated" else "escalated")
     print(json.dumps({**result,"status":status}, indent=2))
 
