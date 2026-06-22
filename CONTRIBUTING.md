@@ -58,6 +58,19 @@ registers the shared infra, and adds a `docs/phase-schema.md` stub. Then do the
 printed human TODOs: marketplace entry, `AGENTS.md` row, a `corpus/` case, and
 fill the SKILL.md prose.
 
+## Local hooks (recommended — catch gate failures before you push)
+
+Enable the repo's git hooks once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`pre-commit` and `pre-push` then run the same creds-free governance checks CI
+runs (`tools/check-shared.rb` + `tools/lint-skills.rb`, ~1s) so shared-lib drift
+or a missing gate is caught locally. Bypass with `--no-verify` if you must — CI
+still enforces.
+
 ## Regression: the corpus
 
 Changing a converter/builder? Run `./corpus/run-corpus.sh --check` and reconvert
