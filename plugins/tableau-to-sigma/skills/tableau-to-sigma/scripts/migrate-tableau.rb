@@ -1499,6 +1499,26 @@ p6 = ['ruby', File.join(HERE, 'phase6-parity.rb'),
 p6 += ['--extract-mode', '--extract-tol', '0.30'] if has_extracts
 sigma_run!(p6)
 
+# Phase 6f-visual — tiles whose Tableau data export came back EMPTY (action-
+# filter-gated etc.) were BUILT from .twb signals and have no actuals to value-
+# diff. Stage an IMAGE comparison (Tableau view image vs Sigma element render)
+# so they're verified visually instead of silently passing parity.
+vv_sidecar = File.join(WORK, 'visual-verify-tiles.json')
+vv_tiles = File.exist?(vv_sidecar) ? (JSON.parse(File.read(vv_sidecar)) rescue []) : []
+if vv_tiles.any?
+  line "Phase 6f-visual: #{vv_tiles.size} tile(s) had EMPTY data exports / inferred chart kinds — staging per-tile image comparison"
+  sigma_run!(['ruby', File.join(HERE, 'verify-visual-tiles.rb'),
+              '--workbook', wb_id, '--tableau-dir', WORK], allow_fail: true)
+end
+
+# Phase 6f — FULL-DASHBOARD ground truth: stage the source Tableau dashboard
+# image next to the Sigma page render per dashboard, so the mandatory whole-page
+# visual comparison (and the repair loop: diff → fix → re-render) has both sides
+# ready. Writes visual-qa/compare-manifest.json (agent sets visual_match).
+line 'Phase 6f-visual: staging full-dashboard source-vs-Sigma image pairs for the repair loop'
+sigma_run!(['ruby', File.join(HERE, 'verify-dashboard-visual.rb'),
+            '--workbook', wb_id, '--tableau-dir', WORK], allow_fail: true)
+
 puts
 puts '================ RESULT (pass 1 — parity PENDING) ================'
 puts "dataModelId : #{dm_id}#{reuse_dm_id ? '  (REUSED existing DM)' : ''}"
@@ -1511,6 +1531,15 @@ end
 puts 'PARITY      : PENDING — the pooled collector filled parity-actuals.json for every'
 puts '              exportable chart; run the REMAINING mcp-v2 queries printed above'
 puts "              (if any), merge into #{File.join(WORK, 'parity-actuals.json')}, then:"
+puts 'VISUAL      : FULL-DASHBOARD comparison staged — READ each source vs Sigma pair under'
+puts "              #{File.join(WORK, 'visual-qa')}/ (<dash>.source.png vs <dash>.sigma.png). Diff layout,"
+puts '              chart kinds, sizing; fix the spec + re-render for any divergence; set "visual_match":true'
+puts '              per dashboard in compare-manifest.json (the repair loop).'
+if vv_tiles.any?
+  puts "              ALSO #{vv_tiles.size} per-tile pair(s) under #{File.join(WORK, 'visual-verify')}/ — tiles with"
+  puts '              EMPTY data exports or INFERRED chart kinds (no value-diff possible). Confirm each and set'
+  puts '              "visual_verified": true in visual-verify/manifest.json (gate 9 blocks GREEN until done).'
+end
 finalize_cmd = "  ruby scripts/migrate-tableau.rb #{opts[:wb_id] ? "--workbook-id #{opts[:wb_id]}" : "--workbook \"#{opts[:wb_name]}\""}" \
                "#{opts[:out] ? " --out #{WORK}" : ''} \\\n    --finalize --actuals #{File.join(WORK, 'parity-actuals.json')}"
 puts finalize_cmd
