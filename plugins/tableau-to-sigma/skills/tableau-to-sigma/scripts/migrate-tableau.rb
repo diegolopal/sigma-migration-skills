@@ -118,6 +118,9 @@ OptionParser.new do |o|
   # --finalize with --enhance-accept <id,id,...> or 'all-low-risk'.
   o.on('--enhance')          {     opts[:enhance] = true }
   o.on('--enhance-accept L') { |v| opts[:enhance_accept] = v }
+  o.on('--converter MODE', %w[local hosted], "converter backend: 'local' (default; no data egress — " \
+       "needs TABLEAU_MCP_BUILD) or 'hosted' (sends the .twb to sigma-data-model-mcp.onrender.com — " \
+       'explicit consent to upload customer schema/SQL).') { |v| opts[:converter] = v }
 end.parse!
 
 abort 'missing --workbook or --workbook-id' unless opts[:wb_name] || opts[:wb_id]
@@ -259,6 +262,27 @@ if opts[:finalize]
     puts "  2. If it was a RENAME, re-run pass 1 with --rename plumbed via phase6-parity; OR"
     puts "  3. If the zone is legitimately unbuildable, re-run --finalize with"
     puts "     --allow-missing-tiles #{unmatched.size} and NAME the zone(s) in your report."
+    puts '============================================================================='
+  end
+
+  if gst.exitstatus == 10
+    puts
+    puts '==================== VISUAL STOP (agent action required) ===================='
+    puts 'Phase 6f visual verification has not run: no Sigma render PNG exists in the'
+    puts 'workdir. CSV parity passing does NOT mean the workbook renders correctly'
+    puts '(overlaps, dead zones, dropped log scale, missing labels, wrong chart kind).'
+    puts 'Do this, then re-run this exact --finalize command:'
+    puts "  1. Render the full page(s) of workbook #{wb_id}:"
+    puts "       python3 scripts/sigma-export-png.py --workbook #{wb_id} \\"
+    puts "         --page <pageId> --out #{File.join(WORK, 'sigma-render.png')}"
+    puts "  2. READ #{File.join(WORK, 'sigma-render.png')} with the Read tool and compare it"
+    puts "     side-by-side against the source dashboard PNG in #{WORK} (Phase 1d)."
+    puts '     Fix any visual divergence (re-PUT the spec) and re-render until they match.'
+    puts '  3. Record screenshot_path (and visual_checked:true) in parity-final.json so the'
+    puts '     gate confirms the comparison ran, then re-run --finalize.'
+    puts '  If the workbook genuinely cannot be rendered (export API unavailable), the gate'
+    puts '  can be waived ONLY via assert-phase6-ran.rb --skip-visual-gate "<reason>" —'
+    puts '  name the reason in your migration report.'
     puts '============================================================================='
   end
 
@@ -517,7 +541,8 @@ if specs_path && File.exist?(specs_path)
 end
 
 # Mechanical converter run (the default). Requires the .twb (parse-twb-layout
-# already gated on have_twb above) and the local build/tableau.js converter.
+# already gated on have_twb above) and a converter backend — local build by
+# default, hosted MCP only on explicit consent (see backend resolution below).
 mechanical = !have_specs
 conv = nil
 if mechanical
@@ -531,11 +556,39 @@ if mechanical
       workbook.
     MSG
   end
-  mcp_build = ENV['TABLEAU_MCP_BUILD'] || %w[
-    /Users/tjwells/Desktop/sigma-data-model-mcp/build/tableau.js
-    /Users/tjwells/sigma-data-model-mcp/build/tableau.js
-  ].find { |p| File.exist?(p) }
-  abort 'FATAL: cannot locate build/tableau.js (set TABLEAU_MCP_BUILD)' unless mcp_build
+  # Converter backend — LOCAL-FIRST, never silently upload customer data. The
+  # .twb holds customer schema / SQL / calc formulas; the hosted converter MCP
+  # would send it to a third-party server, which many customers cannot allow.
+  #   1. LOCAL (default, no egress): TABLEAU_MCP_BUILD → a local build/tableau.js
+  #      (or a locally-run sigma-data-model MCP). Data never leaves the machine.
+  #   2. HOSTED (sigma-data-model-mcp.onrender.com) ONLY on explicit consent
+  #      (--converter hosted or SIGMA_CONVERTER_ALLOW_HOSTED=1) — the .twb is
+  #      uploaded off-box.
+  #   3. Otherwise STOP with both options — NEVER fall back to hosted silently.
+  mcp_build = ENV['TABLEAU_MCP_BUILD']
+  if mcp_build && !File.exist?(mcp_build)
+    line "WARN: TABLEAU_MCP_BUILD=#{mcp_build} does not exist — ignoring"
+    mcp_build = nil
+  end
+  allow_hosted = opts[:converter] == 'hosted' || ENV['SIGMA_CONVERTER_ALLOW_HOSTED'] == '1'
+  if mcp_build
+    line "converter: LOCAL build #{mcp_build} (no data leaves this machine)"
+  elsif allow_hosted
+    line 'converter: HOSTED MCP (sigma-data-model-mcp.onrender.com) — NOTE: the .twb is uploaded'
+    line '           to this third-party server (opted in via --converter hosted / SIGMA_CONVERTER_ALLOW_HOSTED).'
+  else
+    sleep 0.1 until lane_done.call # reap the background lane before aborting
+    print_lane_log.call
+    abort <<~MSG
+      FATAL: no local Tableau→Sigma converter, and hosted conversion was not consented to.
+      The .twb holds customer schema/SQL/formulas, so this skill will NOT upload it to the
+      hosted converter without explicit consent. Choose one:
+        • LOCAL (no data egress): set TABLEAU_MCP_BUILD to a local build/tableau.js (or run the
+          sigma-data-model MCP locally), then re-run. See QUICKSTART "Converter backend".
+        • HOSTED (uploads the .twb to sigma-data-model-mcp.onrender.com): re-run with
+          --converter hosted (or SIGMA_CONVERTER_ALLOW_HOSTED=1) to consent.
+    MSG
+  end
   conv = MechanicalSpecs.run_converter(
     twb_path: twb, conn: opts[:conn], db: (opts[:db] || 'CSA'),
     schema: (opts[:schema] || 'TJ'), mcp_build: mcp_build, workdir: WORK)

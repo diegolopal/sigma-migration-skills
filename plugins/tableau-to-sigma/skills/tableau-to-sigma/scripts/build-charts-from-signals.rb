@@ -569,6 +569,19 @@ end
 layout = JSON.parse(File.read(opts[:layout]))
 mmap   = JSON.parse(File.read(opts[:mmap]))
 meta   = opts[:meta] ? JSON.parse(File.read(opts[:meta])) : { 'worksheets' => {}, 'shared_filters' => [] }
+# Caption → Tableau formula for every calculated field the workbook defines
+# (deduped across worksheets; first definition wins). Lets the shared-filter
+# control builder tell a calc-field filter ("Team Bucket", "Tier") apart
+# from a genuinely-missing column, and surface the calc's formula so it can be
+# materialized on the master rather than silently dropped.
+calc_formula_by_caption = {}
+(meta['worksheets'] || {}).each_value do |w|
+  (w['calculations'] || []).each do |c|
+    cap = (c['caption'] || c['name']).to_s.gsub(/^\[|\]$/, '').strip
+    next if cap.empty? || c['formula'].to_s.empty?
+    calc_formula_by_caption[cap] ||= c['formula'].to_s
+  end
+end
 # Customer-learned rules (~/.tableau-to-sigma/learned-rules.yaml). Empty list
 # is normal for first-time customers — rules accumulate as the gap-scout
 # subagent validates translations.
@@ -969,14 +982,16 @@ def translate_window_calc(formula, mmap, columns_by_guid = {})
   norm = ->(x) { x.to_s.gsub(/\s+/, '').downcase }
   tx_agg = ->(a) { translate_user_agg_formula(a, mmap, {}) }
 
-  # Unbounded share-of-total: AGG / WINDOW_SUM(AGG) on the SAME aggregate.
-  if (m = s.match(%r{\A\s*(#{agg_src})\s*/\s*WINDOW_SUM\s*\(\s*(#{agg_src})\s*\)\s*\z}i)) &&
+  # Unbounded share-of-total: AGG / WINDOW_SUM(AGG) or AGG / TOTAL(AGG) on the
+  # SAME aggregate. Both denominators are the grand total of the partition; the
+  # `TOTAL(SUM(x))` form is how Tableau authors most often write share-of-total.
+  if (m = s.match(%r{\A\s*(#{agg_src})\s*/\s*(?:WINDOW_SUM|TOTAL)\s*\(\s*(#{agg_src})\s*\)\s*\z}i)) &&
      norm.call(m[1]) == norm.call(m[2])
     inner = tx_agg.call(m[1])
     return { 'mode' => 'manual', 'note' => 'share-of-total whose inner aggregate did not translate' } unless inner
     return { 'mode' => 'inline', 'follows_sort' => false,
              'formula' => %(PercentOfTotal(#{inner}, "grand_total")),
-             'note' => 'agg/WINDOW_SUM(agg) → PercentOfTotal(agg, "grand_total")' }
+             'note' => 'agg/WINDOW_SUM(agg) or agg/TOTAL(agg) → PercentOfTotal(agg, "grand_total")' }
   end
 
   # Pareto: RUNNING_SUM(AGG) / TOTAL(AGG) on the SAME aggregate.
@@ -1146,7 +1161,7 @@ def remap_param_branch(expr, mmap, columns_by_guid)
     info = (columns_by_guid || {})[Regexp.last_match(1)]
     info && info['caption'] ? "[#{info['caption'].strip}]" : Regexp.last_match(0)
   end
-  s.gsub(/\[([^\/\]]+)\]/) do
+  s = s.gsub(/\[([^\/\]]+)\]/) do
     inner = Regexp.last_match(1).strip
     if inner.start_with?('ctl-') || inner.include?('/')
       Regexp.last_match(0)
@@ -1160,6 +1175,15 @@ def remap_param_branch(expr, mmap, columns_by_guid)
       "[Master/#{m ? m['name'] : inner}]"
     end
   end
+  # A measure-branch Switch (e.g. THEN SUM([X])) carries Tableau aggregate
+  # function names; Sigma's library has Sum/Avg/CountDistinct/…, not SUM/COUNTD,
+  # so an untranslated branch fails: "references function(s) not in Sigma's
+  # library: SUM". Translate the common aggregate/function names (COUNTD before
+  # COUNT so it isn't partially matched).
+  { 'COUNTD' => 'CountDistinct', 'SUM' => 'Sum', 'AVG' => 'Avg', 'MIN' => 'Min',
+    'MAX' => 'Max', 'MEDIAN' => 'Median', 'COUNT' => 'Count', 'STDEV' => 'StdDev',
+    'IIF' => 'If' }.each { |t, sg| s = s.gsub(/\b#{t}\s*\(/i, "#{sg}(") }
+  s
 end
 
 def translate_case_on_param(formula, param_captions, mmap = nil, columns_by_guid = {})
@@ -1407,6 +1431,42 @@ def build_pivot_element(z, meta, mmap, opts, warnings, data_elements = [])
     next unless ws_calc
     plan = translate_window_calc(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
     if plan.nil?
+      # Parameter-driven Switch value (the "Switch Metric" class): a pivot value
+      # like IF [Parameters].[X] = … THEN SUM([A]) ELSE SUM([B]) END becomes a
+      # Switch over the parameter's CONTROL. Translate it (else it falls through
+      # to the drop path and the workbook ships without the param control, since
+      # nothing references [ctl-param-…]). Materialize the [Master/Y] branch refs
+      # as hidden sibling columns on the pivot and rewrite to [Y] — a [Master/Y]
+      # nested inside Switch() doesn't resolve standalone (same rule as charts).
+      pv_param_caps = (meta['parameters'] || []).map { |p| p['caption'] }.compact
+      pv_cbg = meta['columns_by_guid'] || {}
+      # The Switch translators match a parameter by CAPTION, but a formula often
+      # references it by internal NAME ([Parameters].[Parameter 5]). Normalize
+      # name→caption first (same fix as the parser's parameter_refs) so the
+      # translator recognizes it and builds the right [ctl-param-<caption>] ref.
+      pv_pmap = {}
+      (meta['parameters'] || []).each do |p|
+        cap = p['caption']; nm = p['name'].to_s.gsub(/^\[|\]$/, '')
+        pv_pmap[nm] = cap if cap && !nm.empty?
+      end
+      pv_formula = ws_calc['formula'].to_s.gsub(/(\[Parameters?\]\s*\.\s*\[)([^\]]+)(\])/i) do
+        "#{Regexp.last_match(1)}#{pv_pmap[Regexp.last_match(2)] || Regexp.last_match(2)}#{Regexp.last_match(3)}"
+      end
+      pv_switch = translate_case_on_param(pv_formula, pv_param_caps, mmap, pv_cbg) ||
+                  translate_if_chain_on_param(pv_formula, pv_param_caps, mmap, pv_cbg)
+      if pv_switch
+        existing_names = cols_array.map { |c| c['name'] }.compact
+        pv_switch.scan(/\[Master\/([^\]]+)\]/).flatten.uniq.each do |bn|
+          next if existing_names.include?(bn)
+          bid = "pvsw-#{bn.downcase.gsub(/\W+/, '-')[0..36]}".sub(/-$/, '')
+          cols_array << { 'id' => bid, 'name' => bn, 'formula' => "[Master/#{bn}]" }
+          existing_names << bn
+        end
+        uv['col']['formula'] = pv_switch.gsub(/\[Master\/([^\]]+)\]/) { "[#{Regexp.last_match(1)}]" }
+        warnings << "'#{cap}' pivot value '#{uv['name']}' → parameter-driven Switch over the control: " \
+                    "#{uv['col']['formula'].gsub(/\s+/, ' ')[0..100]}"
+        next
+      end
       f = translate_user_agg_formula(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
       if f
         uv['col']['formula'] = f
@@ -1424,8 +1484,19 @@ def build_pivot_element(z, meta, mmap, opts, warnings, data_elements = [])
       end
     elsif plan['mode'] == 'two-stage'
       win_stage << { 'col' => uv['col'], 'plan' => plan }
+    elsif plan['mode'] == 'inline' && plan['formula']
+      # VALIDATED live 2026-06-24 (wb cd9058fe): Sigma accepts window functions
+      # (PercentOfTotal(…, "grand_total"), CumulativeSum(…)) as pivot-table value
+      # columns — they compile clean and render real values. Emit the translated
+      # window formula as the pivot value instead of dropping it (the old
+      # conservative "UNVALIDATED in pivot context" behaviour lost real measures
+      # like share-of-total and running-total from migrated crosstabs).
+      uv['col']['formula'] = plan['formula']
+      sort_note = plan['follows_sort'] ? ' (accumulates along the pivot sort — verify order vs Tableau)' : ''
+      warnings << "'#{cap}' pivot value '#{uv['name']}' → window formula in grid: " \
+                  "#{plan['formula'].gsub(/\s+/, ' ')[0..100]}#{sort_note}"
     else
-      note = plan['mode'] == 'inline' ? 'cumulative/moving window formulas are UNVALIDATED inside a pivot grid' : plan['note']
+      note = plan['note'] || 'window aggregate did not translate'
       cols_array.delete(uv['col'])
       values_arr.delete(uv['col']['id'])
       warnings << "'#{cap}' pivot value '#{uv['name']}' STAYS MANUAL (#{note}) — dropped from the grid; " \
@@ -2781,8 +2852,18 @@ layout.each do |dash|
       # remapped onto [Master/…] (else they leak raw Tableau UUIDs / sibling
       # calc names that validate-spec rejects as non-sibling).
       cbg = meta['columns_by_guid'] || {}
-      translated = translate_case_on_param(formula, param_caps, mmap, cbg) ||
-                   translate_if_chain_on_param(formula, param_caps, mmap, cbg)
+      # Normalize param-by-name → caption so the Switch translators (which match
+      # on caption) recognize formulas that reference a param by internal name.
+      pnmap = {}
+      (meta['parameters'] || []).each do |p|
+        c = p['caption']; n = p['name'].to_s.gsub(/^\[|\]$/, '')
+        pnmap[n] = c if c && !n.empty?
+      end
+      formula_pn = formula.gsub(/(\[Parameters?\]\s*\.\s*\[)([^\]]+)(\])/i) do
+        "#{Regexp.last_match(1)}#{pnmap[Regexp.last_match(2)] || Regexp.last_match(2)}#{Regexp.last_match(3)}"
+      end
+      translated = translate_case_on_param(formula_pn, param_caps, mmap, cbg) ||
+                   translate_if_chain_on_param(formula_pn, param_caps, mmap, cbg)
       if translated
         calc_name = c['name'].to_s.gsub(/^\[|\]$/, '')
         # Sigma resolves a STANDALONE `[Master/X]` passthrough column against the
@@ -3084,7 +3165,29 @@ if opts[:auto_controls]
     end
     m = map_column(cap, mmap)
     if m.nil?
-      warnings << "shared filter on '#{cap}' has no master-map entry — add a regex to master-columns.json"
+      # No master-map regex matched. If the caption names a CALCULATED field,
+      # that's expected — a calc dim ("Team Bucket", "Tier") has no raw column
+      # and must be materialized on the master before a control can target it.
+      # Don't drop it silently: record a needs-materialization entry and surface
+      # the calc's translated Sigma formula so the agent adds the column + a
+      # master-columns.json regex, then re-runs.
+      if (tab_formula = calc_formula_by_caption[cap.to_s.strip])
+        sigma_formula = (translate_dim_calc(tab_formula, mmap, meta['columns_by_guid'] || {}) rescue nil)
+        slug = cap.downcase.gsub(/\W+/, '-').sub(/-$/, '')
+        control_scope_records << {
+          'controlId' => "ctl-#{slug}", 'name' => cap.strip, 'mechanism' => 'filters',
+          'source_signal' => "tableau shared-view quick filter '#{cap}' (bound to a calculated field)",
+          'status' => 'needs-materialization',
+          'tableau_formula' => tab_formula,
+          'sigma_formula' => sigma_formula
+        }
+        warnings << "shared filter on '#{cap}' binds to a CALCULATED field, not a raw column — " \
+                    'materialize it on the master, then add a master-columns.json regex so the control binds. ' \
+                    "Tableau: #{tab_formula}" +
+                    (sigma_formula ? " → Sigma: #{sigma_formula}" : ' (auto-translation unavailable — translate by hand)')
+      else
+        warnings << "shared filter on '#{cap}' has no master-map entry — add a regex to master-columns.json"
+      end
       next
     end
     slug = cap.downcase.gsub(/\W+/, '-').sub(/-$/, '')
