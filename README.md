@@ -17,6 +17,7 @@ shared `~/.sigma-migration/env` under any agent.
 
 ```text
 /plugin marketplace add twells89/sigma-migration-skills
+/plugin install sigma-authoring@sigma-migration-skills      # companion Sigma spec — install alongside any converter
 /plugin install tableau-to-sigma@sigma-migration-skills
 /plugin install powerbi-to-sigma@sigma-migration-skills
 /plugin install qlik-to-sigma@sigma-migration-skills
@@ -35,6 +36,12 @@ skill folders; [`AGENTS.md`](AGENTS.md) maps each task to its skill. For example
 git clone https://github.com/twells89/sigma-migration-skills
 cortex skill add sigma-migration-skills/plugins/tableau-to-sigma/skills/tableau-to-sigma
 ```
+
+**Connect the Sigma MCP server (required).** These skills drive your Sigma org through the
+**Sigma MCP server** — connect it in your coding agent following Sigma's official guide:
+**[Use the Sigma MCP server](https://help.sigmacomputing.com/docs/use-sigma-mcp-server)**.
+It's how the agent reads/queries Sigma (e.g. the parity gate) and builds + validates the
+migrated data model and workbook. Install it alongside the plugins, before running a migration.
 
 Then just describe what you want migrated — e.g. *"migrate this Power BI report to Sigma"* —
 and the skill drives discovery → translation → build → parity.
@@ -94,7 +101,9 @@ corpus/run-corpus.sh --check      # no creds needed; CI-safe
 
 ## Requirements
 
-- **A coding agent that runs skills** (Claude Code, Cursor, Cortex Code, …) with the [Sigma data model converter MCP](https://github.com/twells89/sigma-data-model-mcp) available (provides the `convert_*_to_sigma` tools).
+- **A coding agent that runs skills** (Claude Code, Cursor, Cortex Code, …).
+- The **[Sigma MCP server](https://help.sigmacomputing.com/docs/use-sigma-mcp-server)** connected in your agent — how the agent reads/queries your Sigma org and builds + validates the migrated data model and workbook. Follow Sigma's setup guide.
+- The **[Sigma data model converter MCP](https://github.com/twells89/sigma-data-model-mcp)** available (provides the `convert_*_to_sigma` tools that translate the source spec).
 - A **Sigma API token** and a Sigma **connection** pointing at the same warehouse as the source content (needed for the parity gate).
 - Per-tool source access — see each plugin's `refs/connection.md` (e.g. `qlik-cli` for Qlik; device-code / Fabric `getDefinition` for Power BI).
 
