@@ -69,10 +69,19 @@ end
 # Filter columns use a column-instance level reference like
 #   `[federated.X].[none:c2ec6b07-...:qk]`
 # where `none` is the derivation and `qk`/`nk` is pivot/key qualifier. Strip
-# both and extract the GUID.
+# both and extract the column id.
+#
+# Two id shapes occur:
+#   - raw warehouse columns → a 36-char hex GUID (`c2ec6b07-...`)
+#   - CALCULATED fields      → the calc's internal id (`Calculation_<digits>`)
+# Both are registered in COL_BY_GUID (the latter keyed by its `Calculation_…`
+# head), so resolving either form lets a filter bound to a calc field surface a
+# real caption instead of being silently dropped by the auto-control builder
+# ("shared filter has no resolvable column_caption"). The raw-GUID behaviour is
+# unchanged — we only add the calc-id alternative.
 def guid_from_param(param)
   return nil if param.nil? || param.empty?
-  m = param.match(/\.\[(?:[a-z\-]+:)?([0-9a-f\-]{36})(?::[a-z]+)?\]$/i)
+  m = param.match(/\.\[(?:[a-z\-]+:)?([0-9a-f\-]{36}|Calculation_\d+)(?::[a-z]+)?\]$/i)
   m && m[1]
 end
 
@@ -877,19 +886,34 @@ end
 
 # Detect which worksheet calcs reference a parameter so the build script knows
 # which calcs to translate via Switch(). A calc references a parameter when its
-# formula contains `[Parameters].[X]` OR a bare `[X]` whose caption matches a
-# known parameter caption.
-param_caption_set = parameters.map { |p| p['caption'] }.compact.to_set rescue parameters.map { |p| p['caption'] }
+# formula contains `[Parameters].[X]` OR a bare `[X]` matching a known param.
+#
+# X may be the parameter's CAPTION ("Switch Metric") or its internal NAME
+# ("[Parameter 5]") depending on the .twb version. The auto-control builder keys
+# its orphan check on the caption, so a calc that references a param by name was
+# previously misflagged "orphan parameter" and its control silently skipped.
+# Resolve every ref — by name or caption — to the canonical caption so the
+# builder sees the param as referenced.
+param_caption_to_caption = {}
+parameters.each do |p|
+  cap = p['caption']
+  next if cap.nil? || cap.to_s.empty?
+  param_caption_to_caption[cap] = cap
+  nm = p['name'].to_s.gsub(/^\[|\]$/, '')
+  param_caption_to_caption[nm] = cap unless nm.empty?
+end
 worksheets.each do |_ws_name, w|
   next unless w[:calculations]
   w[:calculations].each do |c|
     f = c['formula'].to_s
     refs = []
-    # Explicit `[Parameters].[X]` references
-    f.scan(/\[Parameters?(?:\s*\([^)]*\))?\]\s*\.\s*\[([^\]]+)\]/i).flatten.each { |x| refs << x }
-    # Bare bracket-refs that match a parameter caption verbatim
+    # Explicit `[Parameters].[X]` references — X may be name or caption.
+    f.scan(/\[Parameters?(?:\s*\([^)]*\))?\]\s*\.\s*\[([^\]]+)\]/i).flatten.each do |x|
+      refs << (param_caption_to_caption[x] || x)
+    end
+    # Bare bracket-refs that resolve to a known parameter (by name or caption).
     f.scan(/\[([^\]\/]+)\]/).flatten.each do |x|
-      refs << x if param_caption_set.include?(x)
+      refs << param_caption_to_caption[x] if param_caption_to_caption.key?(x)
     end
     c['parameter_refs'] = refs.uniq unless refs.empty?
   end

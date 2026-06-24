@@ -569,6 +569,19 @@ end
 layout = JSON.parse(File.read(opts[:layout]))
 mmap   = JSON.parse(File.read(opts[:mmap]))
 meta   = opts[:meta] ? JSON.parse(File.read(opts[:meta])) : { 'worksheets' => {}, 'shared_filters' => [] }
+# Caption → Tableau formula for every calculated field the workbook defines
+# (deduped across worksheets; first definition wins). Lets the shared-filter
+# control builder tell a calc-field filter ("Team Bucket", "Tier") apart
+# from a genuinely-missing column, and surface the calc's formula so it can be
+# materialized on the master rather than silently dropped.
+calc_formula_by_caption = {}
+(meta['worksheets'] || {}).each_value do |w|
+  (w['calculations'] || []).each do |c|
+    cap = (c['caption'] || c['name']).to_s.gsub(/^\[|\]$/, '').strip
+    next if cap.empty? || c['formula'].to_s.empty?
+    calc_formula_by_caption[cap] ||= c['formula'].to_s
+  end
+end
 # Customer-learned rules (~/.tableau-to-sigma/learned-rules.yaml). Empty list
 # is normal for first-time customers — rules accumulate as the gap-scout
 # subagent validates translations.
@@ -969,14 +982,16 @@ def translate_window_calc(formula, mmap, columns_by_guid = {})
   norm = ->(x) { x.to_s.gsub(/\s+/, '').downcase }
   tx_agg = ->(a) { translate_user_agg_formula(a, mmap, {}) }
 
-  # Unbounded share-of-total: AGG / WINDOW_SUM(AGG) on the SAME aggregate.
-  if (m = s.match(%r{\A\s*(#{agg_src})\s*/\s*WINDOW_SUM\s*\(\s*(#{agg_src})\s*\)\s*\z}i)) &&
+  # Unbounded share-of-total: AGG / WINDOW_SUM(AGG) or AGG / TOTAL(AGG) on the
+  # SAME aggregate. Both denominators are the grand total of the partition; the
+  # `TOTAL(SUM(x))` form is how Tableau authors most often write share-of-total.
+  if (m = s.match(%r{\A\s*(#{agg_src})\s*/\s*(?:WINDOW_SUM|TOTAL)\s*\(\s*(#{agg_src})\s*\)\s*\z}i)) &&
      norm.call(m[1]) == norm.call(m[2])
     inner = tx_agg.call(m[1])
     return { 'mode' => 'manual', 'note' => 'share-of-total whose inner aggregate did not translate' } unless inner
     return { 'mode' => 'inline', 'follows_sort' => false,
              'formula' => %(PercentOfTotal(#{inner}, "grand_total")),
-             'note' => 'agg/WINDOW_SUM(agg) → PercentOfTotal(agg, "grand_total")' }
+             'note' => 'agg/WINDOW_SUM(agg) or agg/TOTAL(agg) → PercentOfTotal(agg, "grand_total")' }
   end
 
   # Pareto: RUNNING_SUM(AGG) / TOTAL(AGG) on the SAME aggregate.
@@ -1424,8 +1439,19 @@ def build_pivot_element(z, meta, mmap, opts, warnings, data_elements = [])
       end
     elsif plan['mode'] == 'two-stage'
       win_stage << { 'col' => uv['col'], 'plan' => plan }
+    elsif plan['mode'] == 'inline' && plan['formula']
+      # VALIDATED live 2026-06-24 (wb cd9058fe): Sigma accepts window functions
+      # (PercentOfTotal(…, "grand_total"), CumulativeSum(…)) as pivot-table value
+      # columns — they compile clean and render real values. Emit the translated
+      # window formula as the pivot value instead of dropping it (the old
+      # conservative "UNVALIDATED in pivot context" behaviour lost real measures
+      # like share-of-total and running-total from migrated crosstabs).
+      uv['col']['formula'] = plan['formula']
+      sort_note = plan['follows_sort'] ? ' (accumulates along the pivot sort — verify order vs Tableau)' : ''
+      warnings << "'#{cap}' pivot value '#{uv['name']}' → window formula in grid: " \
+                  "#{plan['formula'].gsub(/\s+/, ' ')[0..100]}#{sort_note}"
     else
-      note = plan['mode'] == 'inline' ? 'cumulative/moving window formulas are UNVALIDATED inside a pivot grid' : plan['note']
+      note = plan['note'] || 'window aggregate did not translate'
       cols_array.delete(uv['col'])
       values_arr.delete(uv['col']['id'])
       warnings << "'#{cap}' pivot value '#{uv['name']}' STAYS MANUAL (#{note}) — dropped from the grid; " \
@@ -3084,7 +3110,29 @@ if opts[:auto_controls]
     end
     m = map_column(cap, mmap)
     if m.nil?
-      warnings << "shared filter on '#{cap}' has no master-map entry — add a regex to master-columns.json"
+      # No master-map regex matched. If the caption names a CALCULATED field,
+      # that's expected — a calc dim ("Team Bucket", "Tier") has no raw column
+      # and must be materialized on the master before a control can target it.
+      # Don't drop it silently: record a needs-materialization entry and surface
+      # the calc's translated Sigma formula so the agent adds the column + a
+      # master-columns.json regex, then re-runs.
+      if (tab_formula = calc_formula_by_caption[cap.to_s.strip])
+        sigma_formula = (translate_dim_calc(tab_formula, mmap, meta['columns_by_guid'] || {}) rescue nil)
+        slug = cap.downcase.gsub(/\W+/, '-').sub(/-$/, '')
+        control_scope_records << {
+          'controlId' => "ctl-#{slug}", 'name' => cap.strip, 'mechanism' => 'filters',
+          'source_signal' => "tableau shared-view quick filter '#{cap}' (bound to a calculated field)",
+          'status' => 'needs-materialization',
+          'tableau_formula' => tab_formula,
+          'sigma_formula' => sigma_formula
+        }
+        warnings << "shared filter on '#{cap}' binds to a CALCULATED field, not a raw column — " \
+                    'materialize it on the master, then add a master-columns.json regex so the control binds. ' \
+                    "Tableau: #{tab_formula}" +
+                    (sigma_formula ? " → Sigma: #{sigma_formula}" : ' (auto-translation unavailable — translate by hand)')
+      else
+        warnings << "shared filter on '#{cap}' has no master-map entry — add a regex to master-columns.json"
+      end
       next
     end
     slug = cap.downcase.gsub(/\W+/, '-').sub(/-$/, '')

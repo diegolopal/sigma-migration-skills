@@ -153,8 +153,18 @@ module MechanicalSpecs
     all_elements(model).find { |e| e['id'] == src_eid }
   end
 
-  # Run the Tableau→Sigma converter via a node shim importing build/tableau.js.
-  def run_converter(twb_path:, conn:, db:, schema:, mcp_build:, workdir:)
+  # Run the Tableau→Sigma converter. Two backends, same output contract
+  # ({ model, warnings, stats, security }):
+  #   - mcp_build present → node shim importing a LOCAL build/tableau.js
+  #     (fast/offline; the converter author's dev path)
+  #   - mcp_build nil     → the HOSTED converter MCP over HTTP
+  #     (https://sigma-data-model-mcp.onrender.com/mcp via lib/mcp_convert.py),
+  #     so the skill works for anyone who installed the MCP on their agent —
+  #     no local converter clone required.
+  def run_converter(twb_path:, conn:, db:, schema:, mcp_build:, workdir:, datasource_index: 0, table_mapping: nil)
+    return run_converter_hosted(twb_path: twb_path, conn: conn, db: db, schema: schema,
+                                workdir: workdir, datasource_index: datasource_index,
+                                table_mapping: table_mapping) if mcp_build.nil?
     shim = File.join(workdir, '_convert_tableau.mjs')
     raw_out = File.join(workdir, 'dm-raw.json')
     meta_out = File.join(workdir, 'conv-meta.json')
@@ -177,6 +187,43 @@ module MechanicalSpecs
     o, e, st = Open3.capture3('node', shim)
     raise "converter failed: #{e}#{o}" unless st.success?
     JSON.parse(File.read(meta_out))
+  end
+
+  # Hosted backend: POST the .twb to the convert_tableau_to_sigma tool on the
+  # sigma-data-model MCP over streamable HTTP, via the vendored stdlib client
+  # (scripts/lib/mcp_convert.py). Maps the tool result onto the same shape the
+  # node shim returns. RLS is reported, never injected — so if the hosted result
+  # carries a model but no warnings/stats keys (an unexpected wrapper), we WARN
+  # loudly rather than silently shipping an empty security[] (the RLS-never-
+  # silently-dropped invariant).
+  def run_converter_hosted(twb_path:, conn:, db:, schema:, workdir:, datasource_index: 0, table_mapping: nil)
+    client = File.join(__dir__, 'lib', 'mcp_convert.py')
+    raise "hosted converter client missing: #{client}" unless File.exist?(client)
+    args = {
+      'xml_content'      => { '@file' => twb_path },
+      'connection_id'    => conn.to_s,
+      'database'         => db.to_s,
+      'schema'           => schema.to_s,
+      'datasource_index' => datasource_index
+    }
+    args['table_mapping'] = table_mapping if table_mapping && !table_mapping.empty?
+    args_file = File.join(workdir, 'conv-args.json')
+    raw_text  = File.join(workdir, 'conv-hosted-out.json')
+    meta_out  = File.join(workdir, 'conv-meta.json')
+    File.write(args_file, JSON.pretty_generate(args))
+    o, e, st = Open3.capture3('python3', client, 'convert_tableau_to_sigma', args_file, raw_text)
+    raise "hosted converter failed (sigma-data-model-mcp.onrender.com): #{e}#{o}" unless st.success?
+    out = JSON.parse(File.read(raw_text))
+    bare = out['model'] || out['sigmaDataModel'] || out
+    has_wrapper = out.is_a?(Hash) && (out.key?('warnings') || out.key?('stats') || out.key?('security'))
+    unless has_wrapper
+      warn "WARN: hosted converter returned a bare model with no warnings/stats/security wrapper — " \
+           'detected RLS/CLS may not have been surfaced. Verify security manually (RLS is never silently dropped).'
+    end
+    result = { 'model' => bare, 'warnings' => out['warnings'] || [],
+               'stats' => out['stats'] || {}, 'security' => out['security'] || [] }
+    File.write(meta_out, JSON.pretty_generate(result))
+    result
   end
 
   # Tableau functions that cannot survive as a DM CALC COLUMN (fallback when
