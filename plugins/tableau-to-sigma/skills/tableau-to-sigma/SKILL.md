@@ -23,7 +23,7 @@ that mirrors the Tableau dashboard layout as closely as possible.
 - `refs/window-functions.md` — Tableau window/table calcs → Sigma-native window math (WINPROBE-validated mapping table, two-level helper shape, sort/partition/week-anchor rules, manual residues)
 - `refs/coverage-matrix.md` — converter-wide Tableau→Sigma coverage matrix (every construct → Sigma output + status: ✅ spec / 🧩 workbook pattern / 🔐 reported / 🟡 verify / ❌ flagged / ⛔ silent gap). Static companion to the per-workbook `scan-workbook-gaps.rb` readout.
 
-**For canonical workbook spec shape** (element kinds, source kinds, controls, formulas, formatting), defer to the companion **`sigma-workbooks`** skill (install it if you haven't — it's the canonical Sigma workbook spec reference). This skill restates only the Tableau-conversion-specific patterns; everything else (KPI fields, color channel, pivot-table shape, manual sources, container styling, YAML default, etc.) lives there. Read its `reference/specification/` whenever you need the current spec surface.
+**For canonical workbook spec shape** (element kinds, source kinds, controls, formulas, formatting), defer to the companion **`sigma-workbooks`** skill, which ships as the **`sigma-authoring`** plugin in this same marketplace — install it alongside this converter (it's the canonical Sigma workbook spec reference, and this converter assumes it is present). This skill restates only the Tableau-conversion-specific patterns; everything else (KPI fields, color channel, pivot-table shape, manual sources, container styling, YAML default, etc.) lives there. Read its `reference/specification/` whenever you need the current spec surface.
 
 ---
 

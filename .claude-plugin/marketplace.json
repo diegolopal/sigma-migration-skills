@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin-marketplace-manifest.json",
   "name": "sigma-migration-skills",
-  "description": "Skills for migrating BI tools (Tableau, Power BI, Qlik, ThoughtSpot, QuickSight, Looker, Cognos, MicroStrategy) to Sigma \u2014 converters + assessments, validated end-to-end with warehouse parity.",
+  "description": "Skills for migrating BI tools (Tableau, Power BI, Qlik, ThoughtSpot, QuickSight, Looker, Cognos, MicroStrategy) to Sigma \u2014 converters + assessments, validated end-to-end with warehouse parity. Install the sigma-authoring plugin alongside any converter: it carries the canonical Sigma spec the converters defer to.",
   "version": "1.0.0",
   "owner": {
     "name": "Thomas Wells"
@@ -10,6 +10,19 @@
     "pluginRoot": "./plugins"
   },
   "plugins": [
+    {
+      "name": "sigma-authoring",
+      "source": "./plugins/sigma-authoring",
+      "description": "Canonical Sigma authoring skills every converter defers to: sigma-workbooks (workbook spec \u2014 element kinds, source kinds, controls, formulas, formatting, layout), sigma-data-models, and custom-sql-to-data-model. Install this ALONGSIDE any converter \u2014 they assume it is present for the current Sigma spec surface.",
+      "category": "authoring",
+      "keywords": [
+        "sigma",
+        "workbooks",
+        "data-models",
+        "authoring",
+        "spec"
+      ]
+    },
     {
       "name": "tableau-to-sigma",
       "source": "./plugins/tableau-to-sigma",
