@@ -53,7 +53,9 @@ Duration: 2
     quickstart). Don't create a qlik-cli context — follow
     **[On-prem setup](#on-prem-setup-client-managed-qlik-sense)** below in place of
     Installation steps 4–5. A shim-driven discovery is verified output-identical to a
-    qlik-cli run on the same app. QlikView ≠ Qlik Sense: not covered.
+    qlik-cli run on the same app — though that verification was against Qlik *Cloud*
+    (identical QIX protocol); the on-prem auth/QRS path is unproven live (see the
+    note in the On-prem setup section). QlikView ≠ Qlik Sense: not covered.
 - **Qlik Cloud access** — an API key *or* an OAuth client (Admin → OAuth). For creating/round-tripping content, an **M2M impersonation** client is ideal (acts as a real user so content is visible).
 - **Sigma API credentials** (`SIGMA_CLIENT_ID` / `SIGMA_CLIENT_SECRET`).
 - A **Sigma connection to the same warehouse** the Qlik app loads from (for true parity).
@@ -138,7 +140,7 @@ ls scripts/qlik-onprem-shim.py refs/connection-onprem.md   # both should exist
    This should list your on-prem apps. From here **every step below runs unchanged** — wherever the guide says a `qlik ...` command or `--context <ctx>`, the shim handles it via `QLIK_BIN` (no context flag needed).
 
 positive
-: The shim's Engine/QIX layer is **live-verified** (output-identical to qlik-cli on the same app). The QRS layer + on-prem auth bootstrap are code-complete but newer — if a first connection misbehaves, expect to debug auth/ports here, not in discovery or conversion. Without QRS only `appName`/`lastReloadTime` metadata degrade; discovery still completes.
+: The shim's command/output layer is verified **output-identical to qlik-cli — against a live Qlik *Cloud* tenant** (the QIX protocol is identical on-prem, so the command-parsing and output-shaping logic carries over). The **on-prem-specific path has not yet been run live**: certificate/JWT auth, the QRS layer (Cloud has no QRS), and the Engine transport against an on-prem server are code-complete but unproven end-to-end — **your engagement is the first live test.** If a first connection misbehaves, expect to debug auth/ports/proxy here, not in discovery or conversion. Failure is bounded: without QRS, only `appName`/`lastReloadTime`/Section-Access metadata degrade — discovery still completes off the Engine layer.
 
 ## Prepare demo data (optional)
 Duration: 3
