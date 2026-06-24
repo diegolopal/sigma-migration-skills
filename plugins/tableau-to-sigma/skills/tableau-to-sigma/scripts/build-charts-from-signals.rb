@@ -1161,7 +1161,7 @@ def remap_param_branch(expr, mmap, columns_by_guid)
     info = (columns_by_guid || {})[Regexp.last_match(1)]
     info && info['caption'] ? "[#{info['caption'].strip}]" : Regexp.last_match(0)
   end
-  s.gsub(/\[([^\/\]]+)\]/) do
+  s = s.gsub(/\[([^\/\]]+)\]/) do
     inner = Regexp.last_match(1).strip
     if inner.start_with?('ctl-') || inner.include?('/')
       Regexp.last_match(0)
@@ -1175,6 +1175,15 @@ def remap_param_branch(expr, mmap, columns_by_guid)
       "[Master/#{m ? m['name'] : inner}]"
     end
   end
+  # A measure-branch Switch (e.g. THEN SUM([X])) carries Tableau aggregate
+  # function names; Sigma's library has Sum/Avg/CountDistinct/…, not SUM/COUNTD,
+  # so an untranslated branch fails: "references function(s) not in Sigma's
+  # library: SUM". Translate the common aggregate/function names (COUNTD before
+  # COUNT so it isn't partially matched).
+  { 'COUNTD' => 'CountDistinct', 'SUM' => 'Sum', 'AVG' => 'Avg', 'MIN' => 'Min',
+    'MAX' => 'Max', 'MEDIAN' => 'Median', 'COUNT' => 'Count', 'STDEV' => 'StdDev',
+    'IIF' => 'If' }.each { |t, sg| s = s.gsub(/\b#{t}\s*\(/i, "#{sg}(") }
+  s
 end
 
 def translate_case_on_param(formula, param_captions, mmap = nil, columns_by_guid = {})
@@ -1422,6 +1431,42 @@ def build_pivot_element(z, meta, mmap, opts, warnings, data_elements = [])
     next unless ws_calc
     plan = translate_window_calc(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
     if plan.nil?
+      # Parameter-driven Switch value (the "Switch Metric" class): a pivot value
+      # like IF [Parameters].[X] = … THEN SUM([A]) ELSE SUM([B]) END becomes a
+      # Switch over the parameter's CONTROL. Translate it (else it falls through
+      # to the drop path and the workbook ships without the param control, since
+      # nothing references [ctl-param-…]). Materialize the [Master/Y] branch refs
+      # as hidden sibling columns on the pivot and rewrite to [Y] — a [Master/Y]
+      # nested inside Switch() doesn't resolve standalone (same rule as charts).
+      pv_param_caps = (meta['parameters'] || []).map { |p| p['caption'] }.compact
+      pv_cbg = meta['columns_by_guid'] || {}
+      # The Switch translators match a parameter by CAPTION, but a formula often
+      # references it by internal NAME ([Parameters].[Parameter 5]). Normalize
+      # name→caption first (same fix as the parser's parameter_refs) so the
+      # translator recognizes it and builds the right [ctl-param-<caption>] ref.
+      pv_pmap = {}
+      (meta['parameters'] || []).each do |p|
+        cap = p['caption']; nm = p['name'].to_s.gsub(/^\[|\]$/, '')
+        pv_pmap[nm] = cap if cap && !nm.empty?
+      end
+      pv_formula = ws_calc['formula'].to_s.gsub(/(\[Parameters?\]\s*\.\s*\[)([^\]]+)(\])/i) do
+        "#{Regexp.last_match(1)}#{pv_pmap[Regexp.last_match(2)] || Regexp.last_match(2)}#{Regexp.last_match(3)}"
+      end
+      pv_switch = translate_case_on_param(pv_formula, pv_param_caps, mmap, pv_cbg) ||
+                  translate_if_chain_on_param(pv_formula, pv_param_caps, mmap, pv_cbg)
+      if pv_switch
+        existing_names = cols_array.map { |c| c['name'] }.compact
+        pv_switch.scan(/\[Master\/([^\]]+)\]/).flatten.uniq.each do |bn|
+          next if existing_names.include?(bn)
+          bid = "pvsw-#{bn.downcase.gsub(/\W+/, '-')[0..36]}".sub(/-$/, '')
+          cols_array << { 'id' => bid, 'name' => bn, 'formula' => "[Master/#{bn}]" }
+          existing_names << bn
+        end
+        uv['col']['formula'] = pv_switch.gsub(/\[Master\/([^\]]+)\]/) { "[#{Regexp.last_match(1)}]" }
+        warnings << "'#{cap}' pivot value '#{uv['name']}' → parameter-driven Switch over the control: " \
+                    "#{uv['col']['formula'].gsub(/\s+/, ' ')[0..100]}"
+        next
+      end
       f = translate_user_agg_formula(ws_calc['formula'], mmap, meta['columns_by_guid'] || {})
       if f
         uv['col']['formula'] = f
@@ -2807,8 +2852,18 @@ layout.each do |dash|
       # remapped onto [Master/…] (else they leak raw Tableau UUIDs / sibling
       # calc names that validate-spec rejects as non-sibling).
       cbg = meta['columns_by_guid'] || {}
-      translated = translate_case_on_param(formula, param_caps, mmap, cbg) ||
-                   translate_if_chain_on_param(formula, param_caps, mmap, cbg)
+      # Normalize param-by-name → caption so the Switch translators (which match
+      # on caption) recognize formulas that reference a param by internal name.
+      pnmap = {}
+      (meta['parameters'] || []).each do |p|
+        c = p['caption']; n = p['name'].to_s.gsub(/^\[|\]$/, '')
+        pnmap[n] = c if c && !n.empty?
+      end
+      formula_pn = formula.gsub(/(\[Parameters?\]\s*\.\s*\[)([^\]]+)(\])/i) do
+        "#{Regexp.last_match(1)}#{pnmap[Regexp.last_match(2)] || Regexp.last_match(2)}#{Regexp.last_match(3)}"
+      end
+      translated = translate_case_on_param(formula_pn, param_caps, mmap, cbg) ||
+                   translate_if_chain_on_param(formula_pn, param_caps, mmap, cbg)
       if translated
         calc_name = c['name'].to_s.gsub(/^\[|\]$/, '')
         # Sigma resolves a STANDALONE `[Master/X]` passthrough column against the
