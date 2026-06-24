@@ -111,6 +111,51 @@ DATE_TRUNC = {
   'Hour-Trunc'   => 'hour'
 }.freeze
 
+# Tableau date-derivation code (on a shelf column-instance) → the "<grain> of "
+# prefix Tableau puts on the CSV/header label for that field. Used to
+# reconstruct the view headers from shelf signals when the data export came
+# back empty (see synthesize_view_from_signals).
+DATE_DERIV_LABEL = {
+  'tyr' => 'Year of ',  'yr' => 'Year of ',
+  'tqr' => 'Quarter of ', 'qr' => 'Quarter of ',
+  'tmn' => 'Month of ', 'mn' => 'Month of ',
+  'twk' => 'Week of ',  'wk' => 'Week of ',
+  'tdy' => 'Day of ',   'dy' => 'Day of ',
+  'thr' => 'Hour of ',  'hr' => 'Hour of ',
+  'tmi' => 'Minute of ', 'mi' => 'Minute of ',
+  'tsc' => 'Second of ', 'sc' => 'Second of '
+}.freeze
+
+# Reconstruct the view's CSV header row from the parsed shelf signals when the
+# Tableau data export came back EMPTY (a common case for sheets gated behind a
+# dashboard ACTION filter — Tableau renders them fine but its headless data API
+# returns zero rows). The 2-column / multi-channel build flow downstream is
+# driven by the HEADERS plus the aggregations/trunc dicts, not by data rows, so
+# a header-only reconstruction lets us build the chart instead of dropping the
+# tile. Returns { headers: [...] } (dims first, then measures) or nil if the
+# shelves don't carry at least one dim + one measure. Principle: never skip
+# anything that's in the .twb — an empty parity export is not a missing viz.
+def synthesize_view_from_signals(z, meta)
+  cbg = meta['columns_by_guid'] || {}
+  field_header = lambda do |f|
+    return nil unless f && f['guid']
+    cap = (cbg[f['guid']] || {})['caption']
+    cap = f['guid'] if cap.nil? || cap.to_s.empty?
+    pre = DATE_DERIV_LABEL[f['derivation'].to_s.downcase]
+    pre ? "#{pre}#{cap}" : cap
+  end
+  fields = ((z.dig('cols_shelf', 'fields') || []) + (z.dig('rows_shelf', 'fields') || []))
+  dims = fields.select { |f| f['role'] == 'dim' }
+  meas = fields.select { |f| f['role'] == 'measure' }
+  # Include a color-channel dimension if the encoding names one not on a shelf.
+  if (cc = z.dig('channels', 'color', 'column'))
+    g = guid_from_text(cc.to_s)
+    dims << { 'guid' => g, 'role' => 'dim', 'derivation' => 'none' } if g && dims.none? { |f| f['guid'] == g }
+  end
+  headers = (dims.map(&field_header) + meas.map(&field_header)).compact
+  headers.length >= 2 ? { headers: headers } : nil
+end
+
 # Tableau relative-date offset window (first-period..last-period, in periods
 # relative to now — e.g. first=-2,last=0 = "last 3 months") → explicit
 # [startDate, endDate] bounds. Returns [nil, nil] for periods we don't bound
@@ -1711,6 +1756,10 @@ elements = []
 data_elements = [] # hidden helper elements (scatter grouped sources — bead z1d0)
 warnings = []
 lod_chains = [] # nested-FIXED helper-element chains (beads-sigma-t67b)
+# Tiles built from .twb signals because their Tableau data export was EMPTY
+# (action-filter-gated, etc). They can't be value-diffed (no actuals), so they
+# route to IMAGE-based visual verification instead of silently passing parity.
+signal_built_tiles = [] # [{ 'worksheet' => cap, 'view_id' => id }]
 
 layout.each do |dash|
   dash['zones'].each do |z|
@@ -1756,6 +1805,13 @@ layout.each do |dash|
       warnings << "no Tableau view matched '#{cap}'"
       next
     end
+    # Chart kind was INFERRED from shelves (Tableau mark=Automatic) — route it to
+    # IMAGE confirmation so a wrong line/bar/scatter guess can't pass silently.
+    if z['chart_kind_inferred']
+      signal_built_tiles << { 'worksheet' => cap, 'view_id' => view['id'], 'reason' => 'chart-kind-inferred' }
+      warnings << "'#{cap}' chart kind was AUTOMATIC in Tableau — inferred '#{z['chart_kind']}' from the shelves; " \
+                  'routed to image confirmation (verify-visual-tiles) — confirm against the Tableau view image.'
+    end
     csv_path = File.join(opts[:tab], 'views', "#{view['id']}.csv")
     unless File.exist?(csv_path)
       warnings << "missing CSV for '#{cap}' at #{csv_path}"
@@ -1763,14 +1819,30 @@ layout.each do |dash|
     end
     rows = CSV.read(csv_path)
     if rows.empty?
-      # LOUD on purpose (bead gjhe): an empty/0-byte view CSV used to silently
-      # drop the zone — the dashboard shipped with N-1 charts and every gate
-      # still passed because the missing chart never entered the parity plan.
-      warnings << "ZONE DROPPED: '#{cap}' — view CSV at #{csv_path} is EMPTY (0 bytes / 0 rows) " \
-                  "but the zone exists in the dashboard. NO Sigma chart was built for it. " \
-                  "Re-fetch the view data (fetch-view-data.rb) or build the chart by hand — " \
-                  "the Phase-6 tile census will report this zone as unmatched."
-      next
+      # An empty/0-byte view CSV is usually NOT a missing viz — it's a sheet
+      # gated behind a dashboard ACTION filter (Tableau renders it fine, but its
+      # headless data export returns zero rows), or a permission/timeout empty.
+      # Dropping the tile shipped N-1 charts (bead gjhe). Instead, reconstruct
+      # the view headers from the .twb shelf signals and build the chart from
+      # those — the downstream flow is header+signal driven, not row driven — so
+      # we never skip a viz that exists in the workbook. Parity for THIS tile is
+      # downgraded to manual (no exportable actuals to diff).
+      synth = synthesize_view_from_signals(z, meta)
+      if synth
+        warnings << "'#{cap}' — Tableau view CSV is EMPTY (0 bytes), almost always an ACTION-FILTER-gated " \
+                    "export (the sheet renders fine in Tableau). BUILT FROM .twb SIGNALS instead of dropping it: " \
+                    "headers=#{synth[:headers].inspect}. Sigma sources the same warehouse so the chart will populate; " \
+                    "DATA PARITY for this one tile must be verified manually (no exportable actuals)."
+        rows = [synth[:headers]]   # header row only — body stays empty
+        z['_parity_manual'] = true
+        signal_built_tiles << { 'worksheet' => cap, 'view_id' => (view && view['id']) }
+      else
+        warnings << "ZONE DROPPED: '#{cap}' — view CSV at #{csv_path} is EMPTY (0 bytes / 0 rows) AND the shelf " \
+                    "signals carry no dim+measure to reconstruct it (rows_shelf=#{(z['rows_shelf']||{})['raw'].inspect}, " \
+                    "cols_shelf=#{(z['cols_shelf']||{})['raw'].inspect}). Build the chart by hand — " \
+                    "the Phase-6 tile census will report this zone as unmatched."
+        next
+      end
     end
     headers = rows.shift
     if headers.length < 2
@@ -1913,7 +1985,13 @@ layout.each do |dash|
       end
     end
 
-    dim  = map_column(dim_hdr,  mmap)
+    # A date-grain header ("Month of Order Date") won't match a master column
+    # named "Order Date"; try the grain-stripped form so the DateTrunc wraps the
+    # real master date column instead of leaking the prefixed name into the
+    # formula (which would resolve to a non-existent column). dim_trunc below
+    # still carries the grain. Strips only when the full header didn't match.
+    dim_hdr_base = dim_hdr.sub(/^(?:second|minute|hour|day|week|month|quarter|year) of /i, '')
+    dim  = map_column(dim_hdr, mmap) || (dim_hdr_base != dim_hdr ? map_column(dim_hdr_base, mmap) : nil)
     meas = map_column(meas_hdr, mmap)
     find_ws_calc = lambda do |hdr|
       (z['calculations'] || []).find { |c| c['name'].to_s.gsub(/^\[|\]$/, '').strip.casecmp?(hdr.to_s.strip) }
@@ -3547,6 +3625,28 @@ unless control_scope_records.empty?
   warn "wrote #{scope_path} (#{contract_controls.size} control scope entr(y/ies), #{dropped_rs.size} dropped)"
 end
 warnings.each { |w| warn "  WARN  #{w}" }
+
+# ---- Visual-verify sidecar (build-from-signals tiles) -----------------------
+# Tiles built from .twb signals (empty data export) can't be value-diffed, so
+# the orchestrator routes them to IMAGE-based verification (verify-visual-
+# tiles.rb): fetch the Tableau view image + render the Sigma element and compare
+# them. Resolve each tile's Sigma element id by name so the renderer can target
+# it. Always write the file (possibly empty) so the gate can distinguish
+# "checked, none needed" from "never ran".
+if opts[:tab]
+  by_name = elements.each_with_object({}) { |e, h| h[e['name'].to_s] = e['id'] if e['name'] }
+  seen = {}
+  vv = signal_built_tiles.map do |t|
+    { 'worksheet' => t['worksheet'], 'view_id' => t['view_id'],
+      'element_id' => by_name[t['worksheet'].to_s], 'reason' => (t['reason'] || 'empty-data-export') }
+  end.select { |t| t['element_id'] && !seen[t['worksheet']] && (seen[t['worksheet']] = true) }
+  vv_path = File.join(opts[:tab], 'visual-verify-tiles.json')
+  File.write(vv_path, JSON.pretty_generate(vv))
+  unless vv.empty?
+    by_reason = vv.group_by { |t| t['reason'] }.transform_values(&:size)
+    warn "wrote #{vv_path} (#{vv.size} tile(s) need IMAGE verification: #{by_reason.map { |r, n| "#{n} #{r}" }.join(', ')})"
+  end
+end
 
 # ---- Nested-LOD chains sidecar (beads-sigma-t67b) ---------------------------
 # Machine-readable helper-element chains for every nested {FIXED} calc: the

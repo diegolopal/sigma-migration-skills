@@ -60,6 +60,7 @@ OptionParser.new do |p|
   p.on('--chart-y0 PCT', Float)   { |v| opts[:chart_y0] = v }
   p.on('--chart-y1 PCT', Float)   { |v| opts[:chart_y1] = v }
   p.on('--chart-row0 N', Integer) { |v| opts[:chart_row0] = v }
+  p.on('--no-containers', 'force the geometry-banded layout even when the dashboard nests a filter/parameter rail') { opts[:no_containers] = true }
 end.parse!
 %i[layout wb_ids out].each { |k| abort("missing --#{k.to_s.tr('_','-')}") unless opts[k] }
 
@@ -115,6 +116,170 @@ def chart_pos(z, opts)
   col_end   = [opts[:page_cols] + 1, (1 + ((z['x_pct'] || 0) + (z['w_pct'] || 0)) / 100.0 * opts[:page_cols]).round].min
   col_end   = col_start + 1 if col_end <= col_start
   [col_start, col_end, row_start, row_end]
+end
+
+# ---- Faithful container-tree layout (preferred when a control rail exists) --
+# Mirror Tableau's nested zone tree as nested Sigma GridContainers so each
+# filter / parameter / chart lands INSIDE the container it lives in — preserving
+# the left-rail / sidebar idiom and arbitrary nesting — instead of re-banding by
+# raw geometry (which lumps every control into one top strip). Activates only
+# when the dashboard actually nests a filter/parameter zone; otherwise the
+# proven banded path runs. Any failure falls back to bands (rescued in caller).
+
+def clampc(v, lo, hi)
+  [[v, lo].max, hi].min
+end
+
+# True when the zone tree contains a filter/parameter zone at any depth — the
+# case the banded path mishandles and the container path fixes.
+def tree_has_controls?(tree)
+  (tree || []).any? do |n|
+    %w[filter parameter].include?(n['kind']) || tree_has_controls?(n['children'])
+  end
+end
+
+# Place a child within its parent container's internal 24-col grid from pct
+# bounds. parent_rows = grid row-lines the parent spans internally.
+def place_in_parent(ch, p, parent_rows)
+  pw = (p['w_pct'] || 100).to_f; pw = 1.0 if pw <= 0
+  ph = (p['h_pct'] || 100).to_f; ph = 1.0 if ph <= 0
+  px = (p['x_pct'] || 0).to_f;   py = (p['y_pct'] || 0).to_f
+  cx = (ch['x_pct'] || 0).to_f;  cy  = (ch['y_pct'] || 0).to_f
+  cw = (ch['w_pct'] || 0).to_f;  chh = (ch['h_pct'] || 0).to_f
+  c0 = clampc(1 + ((cx - px) / pw * 24).round, 1, 24)
+  c1 = clampc(1 + ((cx + cw - px) / pw * 24).round, c0 + 1, 25)
+  r0 = [1, 1 + ((cy - py) / ph * parent_rows).round].max
+  r1 = [r0 + 1, 1 + ((cy + chh - py) / ph * parent_rows).round].max
+  [c0, c1, r0, r1]
+end
+
+# Resolve a leaf zone to an existing workbook element id (chart by caption,
+# filter/param control by target-column / caption, title text to the page
+# title). Returns nil for zones Sigma renders inline (legend) or drops (spacer).
+def resolve_leaf(node, ctx)
+  case node['kind']
+  when 'chart'
+    name = ctx[:renames][node['caption']] || node['caption']
+    el = ctx[:els_by_name][name]
+    el && el['id']
+  when 'filter', 'parameter'
+    # Pre-assigned by build_page_from_tree (caption match, then rail-fill) so a
+    # control lands in its container even when its target column didn't resolve.
+    ctx[:zone_to_ctl][node['id']]
+  when 'text', 'title'
+    if ctx[:title_el] && !ctx[:title_used]
+      ctx[:title_used] = true
+      ctx[:title_el]['id']
+    end
+  end
+end
+
+# Recursively emit a zone node as Sigma layout XML at grid cell (c0,c1,r0,r1)
+# RELATIVE to its parent container. Container nodes become GridContainers whose
+# children are placed in the container's own 24-col internal grid; empty
+# containers (no resolvable children) are dropped. Appends new container spec
+# placeholders to ctx[:extra]; records placed element ids in ctx[:placed].
+def emit_node(node, c0, c1, r0, r1, ctx)
+  if node['kind'] == 'container'
+    kids = node['children'] || []
+    my_rows = [r1 - r0, 2].max
+    inner = kids.map do |ch|
+      kc0, kc1, kr0, kr1 = place_in_parent(ch, node, my_rows)
+      emit_node(ch, kc0, kc1, kr0, kr1, ctx)
+    end.compact
+    return nil if inner.empty?
+    cid = "tc-#{ctx[:page_id]}-#{node['id']}"
+    ctx[:extra] << container_el(cid)
+    gc(cid, c0, c1, r0, r1, inner.join("\n"))
+  else
+    eid = resolve_leaf(node, ctx)
+    return nil unless eid && !ctx[:placed].include?(eid)
+    ctx[:placed] << eid
+    le(eid, c0, c1, r0, r1)
+  end
+end
+
+# Container-tree page builder. Same return shape as build_page_for_dashboard.
+def build_page_from_tree(dashboard, page, opts)
+  tree        = dashboard['zone_tree'] || []
+  els_by_name = page['elements'].each_with_object({}) { |e, h| h[e['name']] = e if e['name'] }
+  ctl_by_name = page['elements'].select { |e| e['kind'] == 'control' && e['name'] }
+                    .each_with_object({}) { |e, h| h[e['name'].to_s.downcase] = e }
+  title_el    = page['elements'].find { |e| e['kind'] == 'text' }
+
+  ctx = { page_id: page['id'], renames: opts[:renames], els_by_name: els_by_name,
+          ctl_by_name: ctl_by_name, title_el: title_el, title_used: false,
+          extra: [], placed: [], zone_to_ctl: {} }
+
+  # Assign workbook control elements to control zones (filter/parameter), in
+  # document order: caption match first, then fill the remaining control zones
+  # with leftover controls. This puts a rail's controls INSIDE the rail even
+  # when a zone's target column didn't resolve to a caption.
+  control_zones = []
+  collect = lambda { |ns| (ns || []).each { |n| control_zones << n if %w[filter parameter].include?(n['kind']); collect.call(n['children']) } }
+  collect.call(tree)
+  all_ctls = page['elements'].select { |e| e['kind'] == 'control' }
+  used = {}
+  control_zones.each do |z|
+    nm = (z['filter_column_caption'] || z['caption']).to_s.downcase
+    el = nm.empty? ? nil : ctl_by_name[nm]
+    next unless el && !used[el['id']]
+    ctx[:zone_to_ctl][z['id']] = el['id']; used[el['id']] = true
+  end
+  leftover = all_ctls.reject { |e| used[e['id']] }
+  control_zones.each do |z|
+    next if ctx[:zone_to_ctl][z['id']]
+    el = leftover.shift or next
+    ctx[:zone_to_ctl][z['id']] = el['id']; used[el['id']] = true
+  end
+
+  children  = []
+  extra_els = ctx[:extra]
+  page_rows = opts[:page_rows]
+  body_rows = [page_rows - HEADER_ROWS, 4].max
+  page_pseudo = { 'x_pct' => 0.0, 'y_pct' => 0.0, 'w_pct' => 100.0, 'h_pct' => 100.0 }
+
+  # Header band (dark title strip), same chrome as the banded path.
+  hdr_id = "tc-#{page['id']}-hdr"
+  extra_els << container_el(hdr_id, HEADER_STYLE.dup)
+  if title_el
+    children << header_band_xml(hdr_id, title_el['id'])
+    ctx[:title_used] = true
+  else
+    txt_id = "tc-#{page['id']}-hdrtext"
+    extra_els << header_text_el(txt_id, page['name'])
+    children << header_band_xml(hdr_id, txt_id)
+  end
+
+  # Top-level zones → page children, shifted below the header band.
+  tree.each do |node|
+    c0, c1, r0, r1 = place_in_parent(node, page_pseudo, body_rows)
+    r0 += HEADER_ROWS; r1 += HEADER_ROWS
+    xml = emit_node(node, c0, c1, r0, r1, ctx)
+    children << xml if xml
+  end
+
+  # Safety net: any chart/control element NOT placed by the tree (an unmatched
+  # zone, or a control with no dashboard zone) lands in a bottom band so nothing
+  # silently drops from the layout.
+  unplaced = page['elements'].select do |e|
+    %w[chart control].include?(e['kind']) && e['name'] && !ctx[:placed].include?(e['id'])
+  end
+  unless unplaced.empty?
+    n = unplaced.length
+    cw = 24.0 / n
+    inner = unplaced.each_with_index.map do |e, i|
+      cs = 1 + (cw * i).round
+      ce = i == n - 1 ? 25 : [1 + (cw * (i + 1)).round, cs + 1].max
+      le(e['id'], cs, ce, 1, 5)
+    end.join("\n")
+    bid = "tc-#{page['id']}-extra"
+    extra_els << container_el(bid)
+    children << gc(bid, 1, 25, [page_rows - 4, HEADER_ROWS + 1].max, page_rows + 1, inner)
+    warn "WARN: #{n} element(s) had no Tableau zone — appended in a bottom band: #{unplaced.map { |e| e['name'] }.join(', ')}"
+  end
+
+  [page_xml(page['id'], *children), extra_els, ctx[:placed].size, tree.length, ctl_by_name.size]
 end
 
 # Build one container-banded page for a single dashboard. Returns
@@ -222,7 +387,18 @@ totals = { charts: 0, bands: 0, controls: 0 }
 dash_layout.each do |d|
   page = page_for_dash[d['dashboard']]
   next unless page
-  pxml, extra_els, n_charts, n_bands, n_ctls = build_page_for_dashboard(d, page, opts)
+  use_tree = !opts[:no_containers] && tree_has_controls?(d['zone_tree'])
+  if use_tree
+    begin
+      pxml, extra_els, n_charts, n_bands, n_ctls = build_page_from_tree(d, page, opts)
+      warn "container-tree layout: #{d['dashboard'].inspect} → nested Sigma containers (filters/params placed in their Tableau container)"
+    rescue StandardError => e
+      warn "WARN: container-tree layout failed for #{d['dashboard'].inspect} (#{e.class}: #{e.message}) — falling back to banded layout"
+      pxml, extra_els, n_charts, n_bands, n_ctls = build_page_for_dashboard(d, page, opts)
+    end
+  else
+    pxml, extra_els, n_charts, n_bands, n_ctls = build_page_for_dashboard(d, page, opts)
+  end
   page_xmls << pxml
   sidecar[page['id']] = extra_els
   totals[:charts] += n_charts

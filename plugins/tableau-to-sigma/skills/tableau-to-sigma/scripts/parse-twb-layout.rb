@@ -79,9 +79,12 @@ end
 # real caption instead of being silently dropped by the auto-control builder
 # ("shared filter has no resolvable column_caption"). The raw-GUID behaviour is
 # unchanged — we only add the calc-id alternative.
+#   - raw warehouse columns by FRIENDLY NAME (`none:Region:nk`) — simple
+#     columns whose instance ref uses the column name rather than a GUID; the
+#     friendly head (`Region`) is registered in COL_BY_GUID too.
 def guid_from_param(param)
   return nil if param.nil? || param.empty?
-  m = param.match(/\.\[(?:[a-z\-]+:)?([0-9a-f\-]{36}|Calculation_\d+)(?::[a-z]+)?\]$/i)
+  m = param.match(/\.\[(?:[a-z\-]+:)?([0-9a-f\-]{36}|Calculation_\d+|[A-Za-z_][\w. ]*)(?::[a-z]+)?\]$/i)
   m && m[1]
 end
 
@@ -641,6 +644,29 @@ end
 #     as a bar in our experience but is not deterministic; we emit "automatic" so
 #     the agent KNOWS to look at the PNG before committing to a Sigma kind.
 #   - Geographic encoding presence beats mark class for map detection.
+# Tableau "Show Me" picks a mark for an Automatic worksheet deterministically
+# from the shelf structure. Replicate the high-value rules so an Automatic sheet
+# isn't blindly defaulted to a bar (the #1 first-pass fidelity miss — a time
+# series silently became bars). Conservative: only fires for mark=Automatic;
+# anything it can't classify still falls back to bar (and gets image-confirmed
+# downstream, since the kind was inferred not declared).
+DATE_GRAIN_DERIV = %w[tyr tqr tmn twk tdy thr tmi tsc yr qr mn wk dy hr mi sc].freeze
+def infer_automatic_kind(meta)
+  rs = meta[:rows_shelf] || {}
+  cs = meta[:cols_shelf] || {}
+  fields = (rs['fields'] || []) + (cs['fields'] || [])
+  dims = fields.select { |f| f['role'] == 'dim' }
+  meas = fields.select { |f| f['role'] == 'measure' }
+  has_date_dim = dims.any? { |f| DATE_GRAIN_DERIV.include?(f['derivation'].to_s.downcase) }
+  # 1) continuous date dimension + a measure → time-series LINE
+  return 'line' if has_date_dim && !meas.empty?
+  # 2) a measure on BOTH axes (rows AND cols), ≤1 dim → SCATTER
+  return 'scatter' if rs['measure_count'].to_i >= 1 && cs['measure_count'].to_i >= 1 && dims.size <= 1
+  # 3) categorical dim(s) + measure → BAR (Tableau's default for cat × measure)
+  return 'bar' if !dims.empty? && !meas.empty?
+  'bar'
+end
+
 def chart_kind_for(meta)
   return nil unless meta
   mc       = (meta[:mark_class] || '').downcase
@@ -670,10 +696,71 @@ def chart_kind_for(meta)
   when 'shape'      then 'scatter'
   # Automatic is Tableau's default-pick — but a zero-dim single-measure sheet
   # under Automatic renders as a big-number text table, i.e. a KPI (bead 3w4d).
-  when 'automatic'  then (meta[:is_kpi] ? 'kpi' : 'automatic')
+  when 'automatic'
+    # A measure on BOTH axes is unambiguously a scatter (not a big-number KPI),
+    # so it overrides the zero-dim KPI heuristic; otherwise zero-dim → KPI.
+    inferred = infer_automatic_kind(meta)
+    inferred == 'scatter' ? 'scatter' : (meta[:is_kpi] ? 'kpi' : inferred)
   when ''           then 'other'
   else 'other'
   end
+end
+
+# Map a Tableau zone `type-v2` (+ presence of a worksheet name) to our
+# zone-level kind label. Shared by the flat-zone loop and the nested
+# zone-tree builder so the two never diverge.
+def zone_kind(type_v2, caption)
+  case type_v2
+  when 'layout-basic', 'layout-flow' then 'container'
+  when 'text'                        then 'text'
+  when 'title'                       then 'title'
+  when 'filter'                      then 'filter'
+  when 'paramctrl'                   then 'parameter'
+  when 'color'                       then 'legend'
+  when 'empty'                       then 'spacer'
+  when 'dashboard-object'            then 'dashboard-object'
+  when nil
+    # No type-v2 + a worksheet name → this is the chart tile
+    caption ? 'chart' : 'container'
+  else type_v2
+  end
+end
+
+# Build a NESTED zone tree for a dashboard, preserving Tableau's container
+# hierarchy (layout-basic / layout-flow, nested arbitrarily). Each node carries
+# enough to drive a faithful Sigma container layout — kind, caption, bounds,
+# flow direction (vert/horz for layout-flow), the resolved filter/param target
+# column, and `children` (direct-child zones only). This is ADDITIVE: the flat
+# `zones` list (below) is preserved for every downstream consumer that wants the
+# geometry-banded path; the layout builder prefers the tree when present.
+def build_zone_tree(z)
+  type_v2 = z.attributes['type-v2']
+  caption = z.attributes['name']
+  param   = z.attributes['param']
+  kind    = zone_kind(type_v2, caption)
+  node = {
+    'id'      => z.attributes['id'],
+    'kind'    => kind,
+    'caption' => caption,
+    'x_pct'   => pct(z.attributes['x']),
+    'y_pct'   => pct(z.attributes['y']),
+    'w_pct'   => pct(z.attributes['w']),
+    'h_pct'   => pct(z.attributes['h'])
+  }
+  # layout-flow's `param` is the stack direction; a vertical flow stacks its
+  # children top-to-bottom (the classic left filter-rail), horizontal L→R.
+  node['direction'] = (param == 'vert' ? 'vert' : 'horz') if type_v2 == 'layout-flow'
+  # filter/param zones resolve their target column from `param` (a column GUID).
+  if kind == 'filter' || kind == 'parameter'
+    g = guid_from_param(param)
+    info = g ? COL_BY_GUID[g] : nil
+    node['filter_column_caption']  = info && info[:caption]
+    node['filter_column_datatype'] = info && info[:datatype]
+  end
+  kids = []
+  z.elements.each('zone') { |cz| next if cz.attributes['id'].nil?; kids << build_zone_tree(cz) }
+  node['children'] = kids unless kids.empty?
+  node
 end
 
 dashboards = []
@@ -690,23 +777,15 @@ xml.elements.each('//dashboard') do |d|
     view_ref = z.attributes['param']
 
     # Translate Tableau zone type-v2 → our zone-level kind label
-    kind = case type_v2
-           when 'layout-basic', 'layout-flow' then 'container'
-           when 'text'                        then 'text'
-           when 'title'                       then 'title'
-           when 'filter'                      then 'filter'
-           when 'paramctrl'                   then 'parameter'
-           when 'color'                       then 'legend'
-           when 'empty'                       then 'spacer'
-           when 'dashboard-object'            then 'dashboard-object'
-           when nil
-             # No type-v2 + a worksheet name → this is the chart tile
-             caption ? 'chart' : 'container'
-           else type_v2
-           end
+    kind = zone_kind(type_v2, caption)
 
     ws_meta    = caption ? worksheets[caption] : nil
     chart_kind = kind == 'chart' ? chart_kind_for(ws_meta) : nil
+    # The chart kind was INFERRED from shelves (Tableau mark=Automatic), not
+    # declared — flag it so the builder routes it to image confirmation.
+    chart_kind_inferred = kind == 'chart' &&
+                          ws_meta&.dig(:mark_class).to_s.downcase == 'automatic' &&
+                          chart_kind != 'kpi'
 
     # Resolve filter-zone param GUID → column caption when this is a filter
     # zone, so downstream tools don't need to re-walk the .twb.
@@ -727,6 +806,7 @@ xml.elements.each('//dashboard') do |d|
       'w_pct'        => pct(z.attributes['w']),
       'h_pct'        => pct(z.attributes['h']),
       'chart_kind'   => chart_kind,
+      'chart_kind_inferred' => chart_kind_inferred,
       'mark_class'   => ws_meta&.dig(:mark_class),
       'geo_role'     => ws_meta&.dig(:geo_role),
       # New per-worksheet signal fields (nil for non-chart zones)
@@ -755,10 +835,18 @@ xml.elements.each('//dashboard') do |d|
   # treat the flipboard chrome as a regular chart page. The story itself is
   # parsed into story-plan.json below (beads-sigma-y6b).
   is_story = d.attributes['type-v2'] == 'storyboard' || !d.elements['.//story-points'].nil?
+  # Nested container tree (additive — see build_zone_tree). Walk the direct
+  # children of the dashboard's <zones> root so nesting is preserved.
+  zone_tree = []
+  if (root = d.elements['zones'])
+    root.elements.each('zone') { |z| next if z.attributes['id'].nil?; zone_tree << build_zone_tree(z) }
+  end
+
   dashboards << {
     'dashboard' => d.attributes['name'],
     'is_story'  => is_story,
-    'zones'     => zones
+    'zones'     => zones,
+    'zone_tree' => zone_tree
   }
 end
 

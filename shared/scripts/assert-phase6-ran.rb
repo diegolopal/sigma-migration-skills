@@ -115,6 +115,7 @@ OptionParser.new do |p|
   p.on('--skip-parity-gate REASON', 'waive gate 1 (Phase 6 source-parity) — REQUIRED reason string. Use ONLY when source parity is genuinely unavailable (e.g. no source workspace/dataset/warehouse access). The reason MUST be named in your migration report.') { |v| opts[:skip_parity] = v }
   p.on('--sigma-render PATH', 'gate 8: path to the rendered Sigma dashboard PNG (default: <workdir>/sigma-render.png; also accepts <workdir>/screenshots/_manifest.json)') { |v| opts[:sigma_render] = v }
   p.on('--skip-visual-gate REASON', 'waive gate 8 (Phase 6f visual render) — REQUIRED reason string. Use ONLY when the workbook genuinely cannot be rendered (e.g. export API unavailable). The reason MUST be named in your migration report.') { |v| opts[:skip_visual] = v }
+  p.on('--skip-visual-tiles REASON', 'waive gate 9 (build-from-signals tile image-verification) — REQUIRED reason string. The reason MUST be named in your migration report.') { |v| opts[:skip_visual_tiles] = v }
 end.parse!
 abort('--workdir (or --tableau) required') unless opts[:tab]
 
@@ -620,6 +621,40 @@ else
       warn "[WARN] gate 8: parity-final.json records no screenshot_path/visual_checked flag — " \
            'render exists but confirm you actually compared it to the source and noted any divergence.'
     end
+  end
+end
+
+# Gate 9 — Visual-verify tiles (build-from-signals). Tiles whose Tableau data
+# export came back EMPTY (action-filter-gated etc.) are built from .twb signals
+# and cannot be value-diffed, so they must be confirmed by IMAGE comparison
+# (verify-visual-tiles.rb). Without this gate they'd pass parity silently. No-op
+# (and invisible to other converters) when the sidecar is absent.
+vv_sidecar = File.join(opts[:tab], 'visual-verify-tiles.json')
+if File.exist?(vv_sidecar)
+  vtiles = (JSON.parse(File.read(vv_sidecar)) rescue [])
+  if opts[:skip_visual_tiles]
+    puts "[SKIP] gate 9: #{vtiles.size} build-from-signals tile(s) visual-verify WAIVED (#{opts[:skip_visual_tiles]})."
+  elsif vtiles.any?
+    man_path = File.join(opts[:tab], 'visual-verify', 'manifest.json')
+    man = File.exist?(man_path) ? (JSON.parse(File.read(man_path)) rescue nil) : nil
+    if man.nil?
+      warn "[FAIL] gate 9: #{vtiles.size} tile(s) had EMPTY data exports (built from .twb signals) but no"
+      warn "       visual-verify/manifest.json exists — run: ruby scripts/verify-visual-tiles.rb"
+      warn "       --workbook #{opts[:wb] || '<id>'} --tableau-dir #{opts[:tab]}, then READ each"
+      warn '       <tile>.tableau.png vs <tile>.sigma.png pair and mark "visual_verified": true.'
+      exit 11
+    end
+    unverified = man.reject { |m| m['visual_verified'] }
+    if unverified.any?
+      warn "[FAIL] gate 9: #{unverified.size}/#{man.size} build-from-signals tile(s) NOT visually verified: " \
+           "#{unverified.map { |m| m['worksheet'] }.join(', ')}."
+      warn '       These tiles have no value actuals (empty Tableau export). READ each'
+      warn "       <tile>.tableau.png vs <tile>.sigma.png under #{File.join(opts[:tab], 'visual-verify')}/,"
+      warn '       confirm trend/axis/magnitudes match, and set "visual_verified": true per tile in'
+      warn '       visual-verify/manifest.json. Escape hatch: --skip-visual-tiles "<reason>" (name it in your report).'
+      exit 11
+    end
+    puts "[OK] gate 9: #{man.size} build-from-signals tile(s) image-verified (empty data export → visual parity)"
   end
 end
 
