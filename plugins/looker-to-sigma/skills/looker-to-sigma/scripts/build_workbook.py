@@ -187,6 +187,22 @@ def parse_join_aliases(model_files):
             fm = re.search(r"\bfrom:\s*(\w+)", body)
             if fm and fm.group(1) != alias:
                 aliases[alias] = fm.group(1)
+        # explore: <alias> { from: <view> ... }  — an explore can ALIAS its BASE
+        # view via a top-level `from:` (e.g. `explore: orders_basic { from:
+        # order_fact }`). Tiles then reference the explore alias (orders_basic.x)
+        # while the converter names the DM element after the underlying VIEW
+        # (order_fact). Capture the explore's OWN base `from:` (the one before the
+        # first `join:`), brace-balanced so nested join/access_filter braces don't
+        # confuse the scan. Without this the whole base-view field set is dropped.
+        for em in re.finditer(r"explore:\s*(\w+)\s*\{", txt):
+            alias = em.group(1); start = em.end(); depth, i = 1, start
+            while i < len(txt) and depth:
+                depth += {"{": 1, "}": -1}.get(txt[i], 0); i += 1
+            body = txt[start:i]
+            head = body.split("join:", 1)[0]      # base `from:` precedes any join
+            fm = re.search(r"\bfrom:\s*(\w+)", head)
+            if fm and fm.group(1) != alias:
+                aliases[alias] = fm.group(1)
     return aliases
 
 
@@ -194,6 +210,8 @@ def build_field_index(view_files, aliases=None):
     measures = {}   # "view.field" -> (agg_type, base_display_or_None, sql, filters)
     formats = {}    # "view.field" -> Sigma format dict (or None)
     dims = set()    # "view.field"
+    labels = {}     # "view.field" -> LookML label (the converter names the column
+                    #   after the label, so a tile ref must use it, not the field name)
     view_pk = {}    # "view" -> primary-key dimension name
     yesno = set()   # "view.field" of type:yesno dims — the DM converter names
                     # their boolean calc column "<label> (T-F)"
@@ -236,6 +254,9 @@ def build_field_index(view_files, aliases=None):
                 view_pk[view] = name
             if re.search(r"type:\s*yesno\b", txt[start:i]):
                 yesno.add(f"{view}.{name}")
+            lm = re.search(r'label:\s*"([^"]*)"', txt[start:i])
+            if lm:
+                labels[f"{view}.{name}"] = lm.group(1)
         # measure blocks: measure: name { ... }
         for m in re.finditer(r"measure:\s*(\w+)\s*\{", txt):
             name = m.group(1); start = m.end()
@@ -293,9 +314,11 @@ def build_field_index(view_files, aliases=None):
             yesno.add(f"{alias}.{f.split('.', 1)[1]}")
         for g in [k for k in dim_groups if k.startswith(view + ".")]:
             dim_groups.setdefault(f"{alias}.{g.split('.', 1)[1]}", dim_groups[g])
+        for f in [k for k in labels if k.startswith(view + ".")]:
+            labels.setdefault(f"{alias}.{f.split('.', 1)[1]}", labels[f])
         if view in view_pk:
             view_pk.setdefault(alias, view_pk[view])
-    return measures, dims, view_pk, formats, yesno, dim_groups
+    return measures, dims, view_pk, formats, yesno, dim_groups, labels
 
 def main():
     ap = argparse.ArgumentParser()
@@ -325,7 +348,7 @@ def main():
     model_files = (glob.glob(os.path.join(a.views, "*.model.lkml"))
                    + glob.glob(os.path.join(a.views, "..", "*.model.lkml")))
     aliases = parse_join_aliases(model_files)
-    measures, dims, view_pk, formats, yesno_dims, dim_groups = build_field_index(
+    measures, dims, view_pk, formats, yesno_dims, dim_groups, dim_labels = build_field_index(
         sorted(glob.glob(os.path.join(a.views, "*.view.lkml"))), aliases)
     warnings = []
 
@@ -447,11 +470,23 @@ def main():
         if is_measure(f):
             if is_ratio(f): return None           # composite — components needed separately
             base = measures[f][1]                 # base column (None for plain count)
-            return (base + suf) if base else None
+            if not base: return None
+            # A count/count_distinct on a JOINED view keyed on that view's PK
+            # references the join key — which the denorm element OMITS (a
+            # cross-element passthrough of a join key compiles to type "error").
+            # The base side of the relationship carries the same value under the
+            # plain (un-suffixed) column, so reference that instead of the absent
+            # alias-suffixed one.
+            if suf and measures[f][0] in ("count", "count_distinct") and base == disp(view_pk.get(view) or ""):
+                return base
+            return base + suf
         dg = dimgroup_display(f)
         if dg is not None:
             return dg + suf
-        return disp(leaf(f)) + suf
+        # The converter names a dimension column after its LookML `label:` when one
+        # is set (e.g. dimension full_name { label: "Customer Name" } → column
+        # "Customer Name", not "Full Name"), so a tile ref must use the label.
+        return dim_labels.get(f, disp(leaf(f))) + suf
     def pk_display(view, explore):
         """Display name of a view's primary-key column in the denorm element."""
         pk = view_pk.get(view)
@@ -1237,7 +1272,15 @@ def main():
     controls, control_scope, dropped_controls = [], [], []
     for flt in dash["filters"]:
         fld = flt.get("dimension") or flt.get("field") or flt.get("_resolvedField")
-        ctype = "date-range" if flt["type"] == "date_filter" else "list"
+        # A `list` control targeting a DATETIME column is silently DROPPED by
+        # Sigma on POST (its `filters` come back empty → dead control). A filter
+        # bound to a date/time dimension_group must be a date control regardless
+        # of the Looker filter `type` (a Looker field_filter on a date renders a
+        # list in LookML but must become a date control in Sigma).
+        _fld = flt.get("dimension") or flt.get("field") or flt.get("_resolvedField")
+        is_date_field = (flt["type"] == "date_filter"
+                         or (_fld is not None and dimgroup_display(_fld) is not None))
+        ctype = "date-range" if is_date_field else "list"
         cid = flt["name"].lower().replace(" ", "-")
         entry = {"controlId": cid, "name": flt["title"], "controlType": ctype,
                  "source_signal": f"looker dashboard filter '{flt['name']}' (per-tile listen: scope)",

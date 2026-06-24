@@ -503,7 +503,7 @@ def main():
         views_dir = lookml_dir
     view_files = sorted(glob.glob(os.path.join(views_dir, "*.view.lkml")))
     _aliases = parse_join_aliases(glob.glob(os.path.join(lookml_dir, "*.model.lkml")))
-    measures, _dims, view_pk, _formats, _yesno, _dim_groups = build_field_index(view_files, _aliases)
+    measures, _dims, view_pk, _formats, _yesno, _dim_groups, _labels = build_field_index(view_files, _aliases)
     print(f"   '{dash['title']}': {len(dash['elements'])} tile(s), {len(dash['filters'])} filter(s), "
           f"explore '{explore}' · {len(view_files)} view file(s), {len(measures)} measure(s) · workdir {wd}")
 
@@ -794,7 +794,20 @@ console.error('stats:', JSON.stringify(res.stats));
          f"--folder-id={folder}", f"--out={wb_spec_path}"])
     wspec = json.load(open(wb_spec_path))
     wspec["name"] = f"{prefix}{dash['title']} (from Looker)"
-    resp = sigma("POST", "/v2/workbooks/spec", wspec)       # responds in YAML
+    try:
+        resp = sigma("POST", "/v2/workbooks/spec", wspec)   # responds in YAML
+    except RuntimeError as e:
+        msg = str(e)
+        dep = re.search(r"Dependency not found: '([^']+)'", msg)
+        if dep:
+            sys.exit(
+                f"FATAL: workbook POST rejected — missing DM column '{dep.group(1)}'. "
+                f"A tile references a data-model column the converter did not emit "
+                f"(e.g. an unconverted dimension/measure, or a join column not denormalized "
+                f"onto the explore element). Inspect the spec at {wb_spec_path} and the DM "
+                f"element columns; the offending tile field should be dropped or the converter "
+                f"gap fixed — never POST past it.")
+        sys.exit(f"FATAL: workbook POST failed: {msg[:400]}")
     m = re.search(r"workbookId[\"'\s:]+([0-9a-f-]{36})", resp)
     if not m:
         sys.exit("FATAL: workbook POST: " + resp[:300])
@@ -880,7 +893,17 @@ console.error('stats:', JSON.stringify(res.stats));
 
     # ── Phase 5 — SOURCE-FRESHNESS preflight (read BEFORE any side-by-side) ───
     hdr(5, TOTAL, "Source freshness (preflight — before parity)")
-    mh, mr = parse_csv(export_csv(wb, "m-master"))
+    try:
+        mh, mr = parse_csv(export_csv(wb, "m-master"))
+    except RuntimeError as e:
+        # A CSV-export timeout here almost always means the master ended up with 0
+        # columns (every tile field was dropped/unresolved upstream). Don't crash the
+        # whole run with a raw stack trace — warn and skip the freshness readout so
+        # the parity gate still runs and reports the real coverage problem.
+        print(f"   ⚠ source-freshness export skipped: {e}")
+        print("     (the master may have no resolvable columns — check the Phase-4b "
+              "field-drop warnings above; parity will still run and surface it.)")
+        mh, mr = [], []
     print("   ── SOURCE FRESHNESS (read this before any side-by-side) ──")
     if offline:
         newest = max((os.path.getmtime(f) for f in view_files + [a.dashboard]), default=None)
