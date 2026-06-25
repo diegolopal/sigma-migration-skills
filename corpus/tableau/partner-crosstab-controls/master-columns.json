@@ -1,0 +1,10 @@
+{
+  "(?i)^partner name$":            { "id": "m-partner",  "name": "Partner Name" },
+  "(?i)created fyqq":              { "id": "m-fyqq",     "name": "Created FYQQ" },
+  "(?i)customer geo":              { "id": "m-geo",      "name": "Customer Geo" },
+  "(?i)partner level":             { "id": "m-plevel",   "name": "Partner Level" },
+  "(?i)mkt sourced":               { "id": "m-mkt",      "name": "Mkt Sourced Influenced" },
+  "(?i)^product tcv$":             { "id": "m-ptcv",     "name": "Product TCV" },
+  "(?i)^tcv$":                     { "id": "m-tcv",      "name": "TCV" },
+  "(?i)^acv$":                     { "id": "m-acv",      "name": "ACV" }
+}

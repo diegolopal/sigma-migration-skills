@@ -59,11 +59,28 @@ xml.elements.each('//column') do |c|
   cap = c.attributes['caption']
   dt  = c.attributes['datatype']
   next if raw.empty?
-  # Names look like `[guid]` or `[guid (foo)]` or `[Friendly Name]`. Strip
-  # surrounding brackets and lift out the GUID-looking head.
+  # Names look like `[guid]`, `[guid (foo)]`, `[Friendly Name]`,
+  # `[Calculation_123]`, or a Tableau group/copy `[Partner Level (group)]`.
+  # Strip surrounding brackets.
   body = raw.sub(/^\[/, '').sub(/\]$/, '')
-  head = body.split(/\s/, 2).first
-  COL_BY_GUID[head] ||= { caption: cap, datatype: dt } if cap && !cap.empty?
+  # GUID-shaped heads (hex UUID, possibly `(suffix)`-tagged) and Calculation_
+  # ids resolve via their leading token — keep the historical head-split so
+  # instance refs that quote only the GUID still match. These are only useful
+  # when a caption exists (the GUID itself is not human-readable).
+  if body =~ /\A([0-9a-f]{8}-[0-9a-f\-]{20,}|Calculation_\d+)/i
+    head = body.split(/\s/, 2).first
+    COL_BY_GUID[head] ||= { caption: cap, datatype: dt } if cap && !cap.empty?
+  else
+    # Friendly / group / copy names are referenced VERBATIM by their full body
+    # (e.g. instance ref `[none:Customer Geo:nk]` → "Customer Geo", filter
+    # `[Partner Level (group)]` → "Partner Level (group)"). Register under the
+    # FULL body — NOT the first word — or multi-word names ("Customer Geo")
+    # collapse to "Customer" and never resolve. Plain warehouse columns carry NO
+    # caption attribute (their name IS the display name), so fall the caption
+    # back to the body; that is the fix for the ~40 EDNA quick-filters that were
+    # silently dropped ("shared filter has no resolvable column_caption").
+    COL_BY_GUID[body] ||= { caption: (cap && !cap.empty? ? cap : body), datatype: dt }
+  end
 end
 
 # Filter columns use a column-instance level reference like
@@ -84,7 +101,14 @@ end
 #     friendly head (`Region`) is registered in COL_BY_GUID too.
 def guid_from_param(param)
   return nil if param.nil? || param.empty?
-  m = param.match(/\.\[(?:[a-z\-]+:)?([0-9a-f\-]{36}|Calculation_\d+|[A-Za-z_][\w. ]*)(?::[a-z]+)?\]$/i)
+  # Friendly/group/copy names carry parens, slashes ("Mkt Sourced/Influenced"),
+  # hyphens, ampersands, and trailing `(copy)_<digits>` / `(group)` suffixes —
+  # the friendly char class keeps them all so refs like `[Partner Level
+  # (group)]`, `[none:Region (copy)_4720…:nk]`, and `[none:Mkt
+  # Sourced/Influenced:nk]` resolve instead of returning nil (which dropped
+  # those quick-filters entirely). `:` stays excluded — it's the structural
+  # `<deriv>:<name>:<qual>` delimiter.
+  m = param.match(%r{\.\[(?:[a-z\-]+:)?([0-9a-f\-]{36}|Calculation_\d+|[A-Za-z_][\w. ()/&-]*)(?::[a-z]+)?\]$}i)
   m && m[1]
 end
 
@@ -111,11 +135,21 @@ def normalize_filter(f)
   guid  = guid_from_param(param)
   info  = guid ? COL_BY_GUID[guid] : nil
 
+  # Caption fallback: when the ref resolved to a friendly name (not a hex GUID /
+  # Calculation_ id) but no <column> def registered it, the extracted token IS
+  # the display name — use it rather than dropping the filter as "unresolvable".
+  # Strip Tableau's `(copy)_<digits>` / `(group)` decorations for a clean label.
+  friendly = guid && guid !~ /\A([0-9a-f]{8}-[0-9a-f\-]{20,}|Calculation_\d+)\z/i
+  fallback_caption =
+    if friendly
+      guid.sub(/\s*\(copy\)_\d+\z/i, '').sub(/\s*\(group\)\z/i, ' (group)').strip
+    end
+
   out = {
     'raw_class'      => cls,
     'raw_param'      => param,
     'column_guid'    => guid,
-    'column_caption' => info && info[:caption],
+    'column_caption' => (info && info[:caption]) || fallback_caption,
     'datatype'       => info && info[:datatype],
     'is_action'      => is_action
   }
@@ -199,8 +233,16 @@ end
 # Parse a `<rows>` or `<cols>` shelf string into a structured summary.
 def parse_shelf(shelf_str)
   out = { 'raw' => shelf_str, 'fields' => [], 'dim_count' => 0,
-          'measure_count' => 0, 'has_measure_names' => false }
+          'measure_count' => 0, 'has_measure_names' => false,
+          'has_measure_values' => false }
   return out if shelf_str.nil? || shelf_str.strip.empty?
+  # The Measure-VALUES pill (`[Multiple Values]` / `[Measure Values]`) signals
+  # measures placed on this shelf as a VISUAL encoding (bar lengths / line
+  # values). Detect it from the RAW string as a flag — NOT as a per-field role —
+  # because a shelf can hold it ALONGSIDE a real measure pill
+  # (`([Multiple Values] + [usr:Calc:qk])`), and classifying the whole field as
+  # measure-values would drop that real measure and break line/bar inference.
+  out['has_measure_values'] = true if shelf_str =~ /\[(?:Multiple|Measure)\s+Values\]/i
   shelf_str.split('/').each do |f|
     # Nested shelves wrap the field list in parens —
     #   `([ds].[none:A:nk] / [ds].[none:B:nk])`
@@ -517,17 +559,36 @@ xml.elements.each('//worksheet') do |ws|
   rows_shelf = parse_shelf(rows_node&.text)
   cols_shelf = parse_shelf(cols_node&.text)
 
-  # Crosstab signal: requires Text/Square mark AND either
-  #   (a) ≥1 real dim on BOTH shelves, or
-  #   (b) one shelf has a real dim + the other carries Measure Names
-  #       (with ≥2 measures on the worksheet)
+  # Crosstab signal:
+  #   (a) explicit Text/Square mark with ≥1 real dim on BOTH shelves, OR a
+  #       Measure-Names shelf (≥2 measures + ≥1 dim) — the mark is unambiguous, OR
+  #   (b) Automatic/blank mark with Measure Names AND dims on BOTH shelves.
+  # Measure Names on a shelf lays measures out as a text grid, and Tableau's
+  # DEFAULT "Automatic" mark renders that grid as text — so a crosstab authored
+  # without flipping the mark to "Text" reports mark_class="Automatic" (or blank).
+  # Gating only on text/square missed every such table (EDNA's "Metric Partner
+  # Closed Won" / "1T.PartnerClosed size&Status" → flat table/kpi, losing the
+  # grouped quarter headers + Grand Total).
+  #
+  # BUT the AUTOMATIC relaxation excludes sheets carrying the Measure-VALUES pill
+  # (`[Multiple Values]` / `[Measure Values]`) on a shelf: that places the
+  # measures as a VISUAL encoding (bar lengths / line values), so an
+  # Automatic-mark sheet with Measure Names on one shelf and Measure Values on the
+  # other is a MULTI-MEASURE BAR, not a text crosstab (real-world catch: a public
+  # "Barchart of accident factors" sheet — Measure Names on cols, `[Multiple
+  # Values]` on rows — must stay a bar). A genuine text crosstab carries the
+  # measure values on the Text marks card, never as a row/col pill. Explicit
+  # Text/Square marks keep the lenient rule — the author's intent is unambiguous.
   is_text_mark = %w[text square].include?(mark_class.to_s.downcase)
+  automatic_mark = mark_class.to_s.downcase == 'automatic' || mark_class.to_s.strip.empty?
   both_have_dims = rows_shelf['dim_count'] >= 1 && cols_shelf['dim_count'] >= 1
+  shelf_has_measure_values = rows_shelf['has_measure_values'] || cols_shelf['has_measure_values']
   measure_names_crosstab =
     (rows_shelf['has_measure_names'] || cols_shelf['has_measure_names']) &&
     (rows_shelf['dim_count'] + cols_shelf['dim_count']) >= 1 &&
     (rows_shelf['measure_count'] + cols_shelf['measure_count'] + measures.size) >= 2
-  is_crosstab = is_text_mark && (both_have_dims || measure_names_crosstab)
+  is_crosstab = (is_text_mark && (both_have_dims || measure_names_crosstab)) ||
+                (automatic_mark && measure_names_crosstab && !shelf_has_measure_values)
 
   # KPI signal: Text/Square/AUTOMATIC mark with ZERO dims on both shelves AND
   # ≥1 measure (on shelves or on the worksheet's Marks card). Tableau
@@ -697,11 +758,19 @@ def chart_kind_for(meta)
   # Automatic is Tableau's default-pick — but a zero-dim single-measure sheet
   # under Automatic renders as a big-number text table, i.e. a KPI (bead 3w4d).
   when 'automatic'
-    # A measure on BOTH axes is unambiguously a scatter (not a big-number KPI),
-    # so it overrides the zero-dim KPI heuristic; otherwise zero-dim → KPI.
-    inferred = infer_automatic_kind(meta)
-    inferred == 'scatter' ? 'scatter' : (meta[:is_kpi] ? 'kpi' : inferred)
-  when ''           then 'other'
+    # An Automatic-mark sheet with the crosstab shape (Measure Names + dims) is
+    # a text grid pivot — honor is_crosstab BEFORE the bar/KPI inference, else
+    # the grouped headers + Grand Total are lost to a flat table (EDNA partner
+    # tables). A measure on BOTH axes is unambiguously a scatter (not a
+    # big-number KPI), so it overrides the zero-dim KPI heuristic; otherwise
+    # zero-dim → KPI.
+    if meta[:is_crosstab]
+      'pivot-table'
+    else
+      inferred = infer_automatic_kind(meta)
+      inferred == 'scatter' ? 'scatter' : (meta[:is_kpi] ? 'kpi' : inferred)
+    end
+  when ''           then (meta[:is_crosstab] ? 'pivot-table' : 'other')
   else 'other'
   end
 end
@@ -971,6 +1040,20 @@ xml.elements.each("//column[@param-domain-type]") do |col|
     'step'          => rng && rng.attributes['granularity']
   }
 end
+
+# A global parameter is redeclared in EVERY worksheet's embedded
+# datasource-dependencies — so the raw scan finds the same `[Parameter N]`
+# hundreds of times (EDNA: 604 declarations for ~50 params), and the COPIES
+# carry empty <members> while the canonical Parameters-datasource declaration
+# carries the real domain. Dedup by internal NAME, keeping the richest entry
+# (most members; tie-break on a non-empty default). Without this the meta is
+# bloated AND a downstream consumer that takes the first-seen declaration can
+# land on an empty-members copy and emit a domainless control.
+parameters = parameters
+  .group_by { |p| p['name'] }
+  .map do |_name, dups|
+    dups.max_by { |p| [(p['members'] || []).size, p['default_value'].to_s.empty? ? 0 : 1] }
+  end
 
 # Detect which worksheet calcs reference a parameter so the build script knows
 # which calcs to translate via Switch(). A calc references a parameter when its

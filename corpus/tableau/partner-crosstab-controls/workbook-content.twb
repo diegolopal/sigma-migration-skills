@@ -1,0 +1,131 @@
+<?xml version='1.0' encoding='utf-8' ?>
+
+<workbook source-build='2024.1.0' version='18.1' xmlns:user='http://www.tableausoftware.com/xml/user'>
+  <datasources>
+    <datasource caption='Partner Bookings (CSA.TJ)' inline='true' name='federated.primary' version='18.1'>
+      <!-- Plain warehouse dimensions referenced by quick filters. These carry NO
+           caption attribute (their name IS the display name) and multi-word /
+           slash names — the COL_BY_GUID registration + guid_from_param fixes
+           must resolve all of them. -->
+      <column datatype='string' name='[Customer Geo]' role='dimension' type='nominal' />
+      <column datatype='string' name='[Mkt Sourced/Influenced]' role='dimension' type='nominal' />
+      <column datatype='string' name='[Partner Name]' role='dimension' type='nominal' />
+      <column datatype='string' name='[Created FYQQ]' role='dimension' type='nominal' />
+      <!-- Tableau GROUP field (has a caption, name carries a (group) suffix). -->
+      <column caption='Partner Level (g)' datatype='string' name='[Partner Level (group)]' role='dimension' type='nominal'>
+        <groupfilter function='level-members' level='[Partner Level (group)]' />
+      </column>
+      <!-- Measures the param switches between. -->
+      <column caption='TCV' datatype='real' name='[TCV]' role='measure' type='quantitative' />
+      <column caption='Product TCV' datatype='real' name='[PRODUCT_TCV]' role='measure' type='quantitative' />
+      <column caption='ACV' datatype='real' name='[ACV]' role='measure' type='quantitative' />
+      <!-- Measure-SWAP calc: a CASE on the integer param returns a different
+           aggregated FIELD per value. Must translate to Switch([ctl-param-...],
+           "1", Sum([Master/TCV]), ...). References the param → not orphan. -->
+      <column caption='Summary $' datatype='real' name='[Calculation_summary]' role='measure' type='quantitative'>
+        <calculation class='tableau' formula='CASE [Summary $ Choose] WHEN 1 THEN SUM([TCV]) WHEN 2 THEN SUM([Product TCV]) WHEN 3 THEN SUM([ACV]) END' />
+      </column>
+    </datasource>
+    <datasource hasconnection='false' inline='true' name='Parameters'>
+      <!-- Integer measure-switcher parameter with value ALIASES (1->TCV, ...).
+           The segmented control must show the alias labels, not raw 1/2/3. -->
+      <column caption='Summary $ Choose' datatype='integer' name='[Parameter 4]' param-domain-type='list' role='measure' type='quantitative' value='1'>
+        <members>
+          <member value='1' />
+          <member value='2' />
+          <member value='3' />
+        </members>
+        <aliases>
+          <alias key='&quot;1&quot;' value='TCV' />
+          <alias key='&quot;2&quot;' value='Product TCV' />
+          <alias key='&quot;3&quot;' value='ACV' />
+        </aliases>
+      </column>
+    </datasource>
+  </datasources>
+  <worksheets>
+    <worksheet name='Metric Partner Closed Won'>
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Partner Bookings (CSA.TJ)' name='federated.primary' />
+          </datasources>
+          <datasource-dependencies datasource='federated.primary'>
+            <column datatype='string' name='[Partner Name]' role='dimension' type='nominal' />
+            <column datatype='string' name='[Created FYQQ]' role='dimension' type='nominal' />
+            <column caption='TCV' datatype='real' name='[TCV]' role='measure' type='quantitative' />
+            <column caption='ACV' datatype='real' name='[ACV]' role='measure' type='quantitative' />
+            <column caption='Product TCV' datatype='real' name='[PRODUCT_TCV]' role='measure' type='quantitative' />
+            <column caption='Summary $' datatype='real' name='[Calculation_summary]' role='measure' type='quantitative'>
+              <calculation class='tableau' formula='CASE [Summary $ Choose] WHEN 1 THEN SUM([TCV]) WHEN 2 THEN SUM([Product TCV]) WHEN 3 THEN SUM([ACV]) END' />
+            </column>
+            <column-instance column='[Partner Name]' derivation='None' name='[none:Partner Name:nk]' pivot='key' type='nominal' />
+            <column-instance column='[Created FYQQ]' derivation='None' name='[none:Created FYQQ:nk]' pivot='key' type='nominal' />
+            <column-instance column='[Calculation_summary]' derivation='User' name='[usr:Calculation_summary:qk]' pivot='key' type='quantitative' />
+            <column-instance column='[ACV]' derivation='Sum' name='[sum:ACV:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+        </view>
+        <rows>[federated.primary].[none:Partner Name:nk]</rows>
+        <cols>([federated.primary].[none:Created FYQQ:nk] / [federated.primary].[:Measure Names])</cols>
+        <panes>
+          <pane>
+            <mark class='Automatic' />
+          </pane>
+        </panes>
+      </table>
+    </worksheet>
+    <worksheet name='Bookings by Quarter Bar'>
+      <!-- OVER-FIRE GUARD: Automatic mark + Measure Names on cols, but the
+           measure VALUES are on rows as the `[Multiple Values]` pill (a VISUAL
+           multi-measure bar). Must stay a BAR, NOT become a pivot-table — the
+           measure-values discriminator distinguishes it from the text crosstab
+           above (modeled on a real public "Barchart of accident factors"). -->
+      <table>
+        <view>
+          <datasources>
+            <datasource caption='Partner Bookings (CSA.TJ)' name='federated.primary' />
+          </datasources>
+          <datasource-dependencies datasource='federated.primary'>
+            <column datatype='string' name='[Created FYQQ]' role='dimension' type='nominal' />
+            <column caption='TCV' datatype='real' name='[TCV]' role='measure' type='quantitative' />
+            <column caption='ACV' datatype='real' name='[ACV]' role='measure' type='quantitative' />
+            <column-instance column='[Created FYQQ]' derivation='None' name='[none:Created FYQQ:nk]' pivot='key' type='nominal' />
+            <column-instance column='[TCV]' derivation='Sum' name='[sum:TCV:qk]' pivot='key' type='quantitative' />
+          </datasource-dependencies>
+        </view>
+        <rows>([federated.primary].[Multiple Values] + [federated.primary].[sum:TCV:qk])</rows>
+        <cols>([federated.primary].[none:Created FYQQ:nk] / [federated.primary].[:Measure Names])</cols>
+        <panes>
+          <pane>
+            <mark class='Automatic' />
+          </pane>
+        </panes>
+      </table>
+    </worksheet>
+  </worksheets>
+  <dashboards>
+    <dashboard name='Partner Summary'>
+      <size maxheight='900' maxwidth='1400' minheight='900' minwidth='1400' />
+      <zones>
+        <zone h='100000' id='1' type-v2='layout-basic' w='100000' x='0' y='0'>
+          <zone h='80000' id='2' name='Metric Partner Closed Won' w='80000' x='20000' y='0' />
+          <zone h='20000' id='3' param='[Parameters].[Parameter 4]' type-v2='paramctrl' w='20000' x='0' y='0' />
+          <zone h='20000' id='4' param='[federated.primary].[none:Customer Geo:nk]' type-v2='filter' w='20000' x='0' y='20000' />
+          <zone h='20000' id='5' param='[federated.primary].[Partner Level (group)]' type-v2='filter' w='20000' x='0' y='40000' />
+          <zone h='20000' id='6' param='[federated.primary].[none:Mkt Sourced/Influenced:nk]' type-v2='filter' w='20000' x='0' y='60000' />
+        </zone>
+      </zones>
+    </dashboard>
+  </dashboards>
+  <shared-view name='federated.primary'>
+    <filter class='categorical' column='[federated.primary].[none:Customer Geo:nk]'>
+      <groupfilter function='level-members' level='[federated.primary].[none:Customer Geo:nk]' />
+    </filter>
+    <filter class='categorical' column='[federated.primary].[Partner Level (group)]'>
+      <groupfilter function='level-members' level='[federated.primary].[Partner Level (group)]' />
+    </filter>
+    <filter class='categorical' column='[federated.primary].[none:Mkt Sourced/Influenced:nk]'>
+      <groupfilter function='level-members' level='[federated.primary].[none:Mkt Sourced/Influenced:nk]' />
+    </filter>
+  </shared-view>
+</workbook>

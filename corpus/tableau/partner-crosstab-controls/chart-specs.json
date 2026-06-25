@@ -1,0 +1,190 @@
+{
+  "pages": [
+    {
+      "name": "Metric Partner Closed Won",
+      "elements": [
+        {
+          "id": "title-text-metric-partner-closed-won",
+          "kind": "text",
+          "body": "## Metric Partner Closed Won"
+        },
+        {
+          "id": "el-param-summary-choose-metric-partner-closed",
+          "kind": "control",
+          "controlId": "ctl-param-summary-choose-metric-partner-closed",
+          "name": "Summary $ Choose",
+          "includeNulls": "when-no-value-is-selected",
+          "controlType": "segmented",
+          "source": {
+            "kind": "manual",
+            "valueType": "text",
+            "values": [
+              "1",
+              "2",
+              "3"
+            ],
+            "labels": [
+              "TCV",
+              "Product TCV",
+              "ACV"
+            ]
+          },
+          "value": "1"
+        },
+        {
+          "id": "el-ctl-customer-geo-metric-partner-closed",
+          "kind": "control",
+          "controlId": "ctl-customer-geo-metric-partner-closed",
+          "name": "Customer Geo",
+          "includeNulls": "when-no-value-is-selected",
+          "controlType": "list",
+          "mode": "include",
+          "selectionMode": "multiple",
+          "values": [
+
+          ],
+          "source": {
+            "kind": "source",
+            "source": {
+              "kind": "table",
+              "elementId": "master"
+            },
+            "columnId": "m-geo"
+          },
+          "filters": [
+            {
+              "source": {
+                "kind": "table",
+                "elementId": "master"
+              },
+              "columnId": "m-geo"
+            }
+          ]
+        },
+        {
+          "id": "el-ctl-partner-level-g-metric-partner-closed",
+          "kind": "control",
+          "controlId": "ctl-partner-level-g-metric-partner-closed",
+          "name": "Partner Level (g)",
+          "includeNulls": "when-no-value-is-selected",
+          "controlType": "list",
+          "mode": "include",
+          "selectionMode": "multiple",
+          "values": [
+
+          ],
+          "source": {
+            "kind": "source",
+            "source": {
+              "kind": "table",
+              "elementId": "master"
+            },
+            "columnId": "m-plevel"
+          },
+          "filters": [
+            {
+              "source": {
+                "kind": "table",
+                "elementId": "master"
+              },
+              "columnId": "m-plevel"
+            }
+          ]
+        },
+        {
+          "id": "el-ctl-mkt-sourced-influenced-metric-partner-closed",
+          "kind": "control",
+          "controlId": "ctl-mkt-sourced-influenced-metric-partner-closed",
+          "name": "Mkt Sourced/Influenced",
+          "includeNulls": "when-no-value-is-selected",
+          "controlType": "list",
+          "mode": "include",
+          "selectionMode": "multiple",
+          "values": [
+
+          ],
+          "source": {
+            "kind": "source",
+            "source": {
+              "kind": "table",
+              "elementId": "master"
+            },
+            "columnId": "m-mkt"
+          },
+          "filters": [
+            {
+              "source": {
+                "kind": "table",
+                "elementId": "master"
+              },
+              "columnId": "m-mkt"
+            }
+          ]
+        },
+        {
+          "id": "el-metric-partner-closed-won",
+          "kind": "pivot-table",
+          "name": "Summary $ Choose",
+          "source": {
+            "kind": "table",
+            "elementId": "master"
+          },
+          "columns": [
+            {
+              "id": "p-el-metric-partner-closed-won-row-partner-name",
+              "name": "Partner Name",
+              "formula": "[Master/Partner Name]"
+            },
+            {
+              "id": "p-el-metric-partner-closed-won-col-created-fyqq",
+              "name": "Created FYQQ",
+              "formula": "[Master/Created FYQQ]"
+            },
+            {
+              "id": "p-el-metric-partner-closed-won-value-calculation_summary",
+              "name": "Summary $",
+              "formula": "Switch([ctl-param-summary-choose-metric-partner-closed], \"1\", Sum([TCV]), \"2\", Sum([Product TCV]), \"3\", Sum([ACV]))",
+              "format": {
+                "kind": "number",
+                "formatString": ",.0f"
+              }
+            },
+            {
+              "id": "p-el-metric-partner-closed-won-value-acv",
+              "name": "ACV",
+              "formula": "Sum([Master/ACV])",
+              "format": {
+                "kind": "number",
+                "formatString": ",.0f"
+              }
+            },
+            {
+              "id": "pvsw-tcv",
+              "name": "TCV",
+              "formula": "[Master/TCV]"
+            },
+            {
+              "id": "pvsw-product-tcv",
+              "name": "Product TCV",
+              "formula": "[Master/Product TCV]"
+            }
+          ],
+          "values": [
+            "p-el-metric-partner-closed-won-value-calculation_summary",
+            "p-el-metric-partner-closed-won-value-acv"
+          ],
+          "rowsBy": [
+            {
+              "id": "p-el-metric-partner-closed-won-row-partner-name"
+            }
+          ],
+          "columnsBy": [
+            {
+              "id": "p-el-metric-partner-closed-won-col-created-fyqq"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

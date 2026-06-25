@@ -75,8 +75,13 @@ def lint(spec)
         #  (the slider handle position), so only flag `value` when it is a Hash.
         errs << "C2 control '#{name}': value fields nested under a `value` object — control fields must be FLAT top-level (list: mode/selectionMode/values; ranges: low/high; slider: low/high/mode/<scalar value>)." if el['value'].is_a?(Hash)
 
-        # `source`, if present, must be double-nested ({kind:source, source:{kind:table,elementId}, columnId}).
-        if el['source'].is_a?(Hash) && !el['source']['source'].is_a?(Hash)
+        # A COLUMN-BOUND source ({kind:source}) must be double-nested
+        # ({kind:source, source:{kind:table,elementId}, columnId}). A MANUAL
+        # value-list source ({kind:manual, valueType, values, labels}) — emitted
+        # for segmented parameter controls (e.g. an EDNA measure-switcher) — is a
+        # self-contained list and is correct as-is; Sigma accepts it (live-verified
+        # 2026-06-25). Only flag the column-bound form when it isn't double-nested.
+        if el['source'].is_a?(Hash) && el['source']['kind'] == 'source' && !el['source']['source'].is_a?(Hash)
           errs << "C2 control '#{name}': `source` present but not double-nested — needs {kind:source, source:{kind:table,elementId}, columnId}."
         end
 
