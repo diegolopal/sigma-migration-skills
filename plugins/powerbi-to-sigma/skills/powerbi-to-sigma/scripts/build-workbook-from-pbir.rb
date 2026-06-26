@@ -620,6 +620,56 @@ def resolve_map_kind(rec, name)
   'bar-chart'
 end
 
+# bead miu7: a column formula whose bracket holds a DOT ("[EMPLOYEES.Ghost]") is
+# field_spec's line-259 fallback for a queryRef ABSENT from the master-map. A valid
+# Sigma ref is [id/Name] or [Name] (slash, never a dot), so this form ALWAYS
+# compiles to a type=error column. The old code recorded it as "dropped" in
+# coverage but still SHIPPED the broken column (the lie the customer hit). This
+# matcher detects exactly that fallback so we can actually drop it.
+UNRESOLVED_REF = %r{\A\[[^\]/]*\.[^\]]*\]\z}.freeze
+
+# GUARANTEE no element ships an unresolved literal-ref column (bead miu7; mirrors
+# the slicer dropout). Drops every such column from `el` AND prunes its id from
+# every role reference build_element emits (value / xAxis / yAxis(2) / groupings /
+# rowsBy / columnsBy / values / sort), then records ONE honest 'dropped' entry.
+# The tile degrades (a role may lose a column) instead of carrying a broken one.
+def drop_unresolved_columns!(el, rec, kind)
+  cols = el['columns']
+  return unless cols.is_a?(Array)
+  bad = cols.select { |c| c['formula'].to_s =~ UNRESOLVED_REF }
+  return if bad.empty?
+  bad_ids = bad.map { |c| c['id'] }
+  has_bad = ->(x) { bad_ids.include?(x.is_a?(Hash) ? (x['columnId'] || x['id']) : x) }
+  el['columns'] = cols.reject { |c| bad_ids.include?(c['id']) }
+  el.delete('value') if bad_ids.include?(el.dig('value', 'columnId'))
+  if el['xAxis'].is_a?(Hash)
+    el['xAxis'].delete('sort') if bad_ids.include?(el.dig('xAxis', 'sort', 'by'))
+    el.delete('xAxis') if bad_ids.include?(el['xAxis']['columnId'])
+  end
+  %w[yAxis yAxis2].each do |ax|
+    next unless el[ax].is_a?(Hash) && el[ax]['columnIds'].is_a?(Array)
+    el[ax]['columnIds'] = el[ax]['columnIds'].reject(&has_bad)
+    el.delete(ax) if el[ax]['columnIds'].empty?
+  end
+  Array(el['groupings']).each do |g|
+    g['groupBy'] = Array(g['groupBy']).reject(&has_bad) if g['groupBy']
+    g['calculations'] = Array(g['calculations']).reject(&has_bad) if g['calculations']
+  end
+  el['groupings']&.reject! { |g| Array(g['groupBy']).empty? && Array(g['calculations']).empty? }
+  %w[rowsBy columnsBy].each do |k|
+    next unless el[k].is_a?(Array)
+    el[k] = el[k].reject(&has_bad)
+    el.delete(k) if el[k].empty?
+  end
+  el['values'] = Array(el['values']).reject(&has_bad) if el['values'].is_a?(Array)
+  leaves = bad.map { |c| c['name'] }.compact.join(', ')
+  record_unresolved(visual: (rec['title'] || rec['visual_id']), pbi_type: rec['visual_type'],
+                    sigma_kind: kind, severity: 'dropped', recoverable: true,
+                    detail: "field(s) #{leaves} could not be resolved to a master column — dropped " \
+                            '(would have shipped as a type=error column)',
+                    action: "Map the PBI queryRef(s) for #{leaves} to a master column in master-map.json and re-run.")
+end
+
 def build_element(rec, fields, masters, extra_data = [])
   kind = SIGMA_KIND[rec['sigma_kind']] || 'bar-chart'
   if kind == 'map'
@@ -691,7 +741,10 @@ def build_element(rec, fields, masters, extra_data = [])
   if master
     unreachable = rec['bindings'].values.flatten.compact.reject do |qr|
       fs = field_spec(qr, fields)
-      fs['master'] == master || Array(fs['alts']).any? { |a| a['master'] == master }
+      # master nil = absent from the master-map entirely; that case is owned by
+      # drop_unresolved_columns! (recorded as 'dropped', not double-counted here).
+      fs['master'].nil? ||
+        fs['master'] == master || Array(fs['alts']).any? { |a| a['master'] == master }
     end.map { |qr| qr.to_s }.uniq
     unless unreachable.empty?
       warn "[build-workbook] WARN visual '#{(rec['title'] || rec['visual_id'])}' has field(s) " \
@@ -1218,6 +1271,9 @@ def build_element(rec, fields, masters, extra_data = [])
 
   # Controls reference a master column; they carry no columns array of their own.
   el['columns'] = cols unless el['kind'] == 'control'
+  # bead miu7: never ship an unresolved literal-ref column (type=error). Drop it
+  # and prune its references — the tile degrades honestly into coverage instead.
+  drop_unresolved_columns!(el, rec, kind) unless el['kind'] == 'control'
   el
 end
 
