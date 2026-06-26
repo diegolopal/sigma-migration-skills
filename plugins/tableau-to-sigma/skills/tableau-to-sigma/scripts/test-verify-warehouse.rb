@@ -76,5 +76,14 @@ Dir.mktmpdir do |d|
   ok('all-blank → FAIL', st == 2)
 end
 
+# 6. query-error cell ("Invalid Query: …") → FAIL (handoff FIX 2: must not PASS a broken element)
+Dir.mktmpdir do |d|
+  st, s = run(d,
+    [{ 'chart' => 'Broken', 'sigma_element_id' => 'el-rev', 'sigma_kind' => 'kpi-chart', 'sigma_columns' => %w[c-m c-r] }],
+    { 'el-rev' => "Month,Net Revenue\n2025-01,Invalid Query: Unknown column DimDate.Month\n" })
+  ok('query-error cell → exit 2', st == 2)
+  ok('query-error cell listed as FAIL', s['fail_names'] == ['Broken'])
+end
+
 puts $fail.zero? ? "\nall verify-warehouse tests passed" : "\n#{$fail} FAILED"
 exit($fail.zero? ? 0 : 1)

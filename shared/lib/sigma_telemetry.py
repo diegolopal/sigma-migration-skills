@@ -51,7 +51,7 @@ def report_migration(
     skill_version: str = SKILL_VERSION,
     endpoint: str = TELEMETRY_ENDPOINT,
     timeout: int = 5,
-) -> None:
+) -> bool:
     """
     Fire-and-forget anonymous usage ping. Never raises — a telemetry failure
     must never block or fail a migration.
@@ -90,16 +90,60 @@ def report_migration(
         if k != "event":
             print(f"  {k}: {v}")
 
+    body = json.dumps(payload).encode("utf-8")
+    # Returns True on HTTP 2xx, False on any skip/failure. NEVER raises — telemetry
+    # must never block or fail a migration. The caller writes an honest marker
+    # ("sent" vs "skipped") based on this return (handoff FIX 3).
+    return _post(endpoint, body, timeout)
+
+
+def _ssl_context():
+    """Prefer certifi's CA bundle — stock macOS / homebrew-python urllib often
+    fails CERTIFICATE_VERIFY_FAILED against the endpoint where curl succeeds
+    (handoff FIX 4). Fall back to the default context if certifi isn't present."""
     try:
-        body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            endpoint,
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            print(f"  → telemetry sent ({resp.status})\n")
+        import ssl
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
     except Exception:
-        # Never surface telemetry errors to the user
-        print("  → telemetry unavailable (skipped)\n")
+        try:
+            import ssl
+            return ssl.create_default_context()
+        except Exception:
+            return None
+
+
+def _post(endpoint, body, timeout):
+    # 1) urllib with a certifi-backed SSL context.
+    try:
+        req = urllib.request.Request(
+            endpoint, data=body,
+            headers={"Content-Type": "application/json"}, method="POST",
+        )
+        ctx = _ssl_context()
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            if 200 <= resp.status < 300:
+                print(f"  → telemetry sent ({resp.status})\n")
+                return True
+            print(f"  → telemetry endpoint returned {resp.status} — skipped\n")
+            return False
+    except Exception as e:
+        first = str(e).splitlines()[0] if str(e) else type(e).__name__
+        # 2) Fall back to curl — succeeds on boxes where python's CA store is broken.
+        try:
+            import subprocess
+            r = subprocess.run(
+                ["curl", "-sS", "-m", str(timeout), "-o", "/dev/null",
+                 "-w", "%{http_code}", "-X", "POST",
+                 "-H", "Content-Type: application/json", "--data-binary", "@-", endpoint],
+                input=body, capture_output=True, timeout=timeout + 5,
+            )
+            code = (r.stdout or b"").decode("ascii", "ignore").strip()
+            if code.startswith("2"):
+                print(f"  → telemetry sent ({code}, via curl)\n")
+                return True
+            print(f"  → telemetry unavailable (urllib: {first}; curl HTTP {code or 'n/a'}) — skipped\n")
+            return False
+        except Exception as e2:
+            print(f"  → telemetry unavailable (urllib: {first}; curl: {str(e2).splitlines()[0]}) — skipped\n")
+            return False

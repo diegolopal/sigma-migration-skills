@@ -57,8 +57,11 @@ end
 
 rec = (JSON.parse(File.read(marker)) rescue nil)
 status = rec.is_a?(Hash) ? rec['status'] : nil
-unless %w[sent declined].include?(status)
-  warn "[FAIL] telemetry gate: #{marker} present but status is #{status.inspect} (expected \"sent\" or \"declined\")."
+# "skipped" = consent given + send attempted but the endpoint was unreachable
+# (handoff FIX 3). Telemetry must never block, so it still passes — the marker is
+# honest about non-delivery instead of faking "sent".
+unless %w[sent declined skipped].include?(status)
+  warn "[FAIL] telemetry gate: #{marker} present but status is #{status.inspect} (expected \"sent\", \"declined\", or \"skipped\")."
   warn '       Re-run report-telemetry.py to write a valid marker.'
   exit 12
 end

@@ -1446,20 +1446,27 @@ diff against (you ran intake with `--mode file`), you cannot do source-side pari
 no Tableau view CSVs. But the Sigma **warehouse** is reachable, so verify there instead:
 
 ```bash
-# build as usual from the .twb, then in place of the Tableau-side parity diff:
+# build the workbook as usual from the .twb, then — in place of the Tableau-side
+# parity diff — derive the plan from the LIVE workbook spec and verify vs the warehouse:
+ruby scripts/build-parity-plan.rb --workbook-id <wb> \
+  --out <WORK>/parity-plan.json --emit-spec <WORK>/wb-readback.json
 ruby scripts/verify-warehouse.rb --plan <WORK>/parity-plan.json \
   --workbook-id <wb> --workbook-spec <WORK>/wb-readback.json --out <WORK>/parity-final.json
-ruby scripts/assert-phase6-ran.rb --workdir <WORK>     # Gate 1 accepts it + prints the banner
+ruby scripts/assert-phase6-ran.rb --workdir <WORK> --workbook-id <wb>   # Gate 1 + banner
 ```
 
-`verify-warehouse.rb` exports every built element and confirms it **evaluates against the live
-warehouse and returns real, column-resolvable, non-empty data** — catching the broken joins,
-error columns, and empty results that make a raw-file conversion *look* done but be wrong. It
-writes `parity-final.json` with `verified_against: warehouse`; `assert-phase6-ran.rb` accepts
-that as PASS but prints a loud banner: **verified vs the warehouse, NOT vs Tableau's rendered
-output**. State that in the migration report. This is honest degradation — real numbers from
-real data, minus the source-side value/visual diff that needs a live Tableau. (For a stronger
-check, supply a warehouse-SQL oracle of expected values and run the normal `verify-parity.rb`.)
+`build-parity-plan.rb` reads the built workbook spec and lists every **visible** chart element
+(excluding hidden masters, controls, text/image/containers) with its plotted columns — so you
+never hand-roll `parity-plan.json`. `verify-warehouse.rb` then exports each element and confirms
+it **evaluates against the live warehouse and returns real, column-resolvable, non-empty data**,
+FAILing any element that returns a query-error cell (`Invalid Query …`) or owns a `type=error`
+column — catching the broken joins / error columns / empty results that make a raw-file
+conversion *look* done but be wrong. It writes `parity-final.json` with `verified_against:
+warehouse`; `assert-phase6-ran.rb` accepts that as PASS but prints a loud banner: **verified vs
+the warehouse, NOT vs Tableau's rendered output**. State that in the migration report. This is
+honest degradation — real numbers from real data, minus the source-side value/visual diff that
+needs a live Tableau. (For a stronger check, supply a warehouse-SQL oracle of expected values
+and run the normal `verify-parity.rb`.)
 
 ### 6 — one-step (preferred)
 

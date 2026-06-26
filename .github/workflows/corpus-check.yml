@@ -104,6 +104,7 @@ jobs:
             plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-telemetry-gate.rb
             plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-intake.rb
             plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-verify-warehouse.rb
+            plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-build-parity-plan.rb
           )
           fail=0
           for t in "${tests[@]}"; do

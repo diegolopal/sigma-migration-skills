@@ -92,7 +92,17 @@ end
 
 # Verify one element returns real warehouse data: non-empty rows, all plan
 # columns present in the export headers, and at least one non-blank cell.
-def verify_chart(c, el_by_id, wb, timeout, fixture)
+# A cell that is itself a Sigma query-error string is NOT real data — the element
+# rendered "Invalid Query: Unknown…" / "#ERROR". The old has_value check treated
+# these as non-blank and PASSed a visibly-broken workbook (handoff FIX 2).
+ERROR_CELL = /\A\s*(Invalid Query|Error\b|#REF|#ERROR|#VALUE|#NAME)/i
+
+def verify_chart(c, el_by_id, error_element_ids, wb, timeout, fixture)
+  # An element that owns a type=error column (the signal Gate 3 uses) can never
+  # be warehouse-verified — fail it before we even look at the CSV.
+  if error_element_ids.include?(c['sigma_element_id'])
+    return [:fail, 'element owns a type=error column (broken formula — see /columns)']
+  end
   status, payload = element_csv(c, wb, timeout, fixture)
   return [:fail, payload] if status == :fail
   rows = (CSV.parse(payload) rescue [])
@@ -100,6 +110,10 @@ def verify_chart(c, el_by_id, wb, timeout, fixture)
   headers = rows.shift.map { |h| h.to_s.strip }
   data = rows
   return [:fail, 'no data rows (element returned headers only — empty result / broken join)'] if data.empty?
+
+  # Reject query-error sentinels appearing as cell values.
+  bad = data.flatten.find { |cell| cell.to_s =~ ERROR_CELL }
+  return [:fail, "element returned query-error cells: #{bad.to_s.strip[0, 60]}"] if bad
 
   # pivot-table exports the wide grid (not the plan's long tuples); a non-empty
   # grid is the strongest honest assertion we can make for it.
@@ -118,7 +132,22 @@ def verify_chart(c, el_by_id, wb, timeout, fixture)
   [:ok, "#{data.size} row(s)"]
 end
 
+# Belt-and-suspenders: the warehouse-verified stamp must never land on a workbook
+# with type=error columns. Fetch /columns ONCE and collect the owning element ids
+# (the same signal assert-phase6 Gate 3 uses). Skipped in fixture/test mode.
+error_element_ids = []
+unless opts[:fixture]
+  begin
+    cols = (Sigma.request(:get, "/v2/workbooks/#{opts[:wb]}/columns")['entries'] rescue []) || []
+    error_element_ids = cols.select { |c| c.dig('type', 'type') == 'error' }.map { |c| c['elementId'] }.compact.uniq
+    warn "verify-warehouse: #{error_element_ids.size} element(s) own type=error columns — will fail" unless error_element_ids.empty?
+  rescue => e
+    warn "verify-warehouse: /columns scan unavailable (#{e.message.lines.first.to_s.strip[0, 80]}) — relying on per-cell error detection"
+  end
+end
+
 require 'thread'
+fixture_data = opts[:fixture] && JSON.parse(File.read(opts[:fixture]))
 queue = Queue.new
 charts.each { |c| queue << c }
 results = {}
@@ -127,7 +156,7 @@ Array.new([opts[:pool], [charts.size, 1].max].min.clamp(1, 16)) do
   Thread.new do
     loop do
       c = (queue.pop(true) rescue break)
-      st, why = verify_chart(c, el_by_id, opts[:wb], opts[:timeout], opts[:fixture] && JSON.parse(File.read(opts[:fixture])))
+      st, why = verify_chart(c, el_by_id, error_element_ids, opts[:wb], opts[:timeout], fixture_data)
       mutex.synchronize { results[c['chart']] = [st, why] }
     end
   end
