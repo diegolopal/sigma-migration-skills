@@ -88,6 +88,12 @@
 #      ("declared done on HTTP 200" regression; gate 8). Render with
 #      scripts/sigma-export-png.py --page <pageId>, Read it against the source
 #      dashboard PNG, then re-run. Escape hatch: --skip-visual-gate "<reason>".
+#  11  Build-from-signals tile(s) not image-verified (gate 9). Escape hatch:
+#      --skip-visual-tiles "<reason>".
+#  12  Telemetry consent decision missing — the anonymous usage ping was never
+#      sent or declined (no telemetry-sent.json marker; gate 10, delegated to
+#      assert-telemetry-ran.rb). Ask the user, then run report-telemetry.py
+#      (--declined if they decline). Escape hatch: --skip-telemetry-gate "<reason>".
 #
 # Prints a per-gate summary to stdout regardless of exit code.
 
@@ -95,6 +101,7 @@ require 'json'
 require 'net/http'
 require 'uri'
 require 'optparse'
+require 'rbconfig'
 
 opts = { min_pass_rate: 1.0, allow_extract: false, min_layout_elements: 2,
          allow_missing_tiles: 0 }
@@ -116,6 +123,7 @@ OptionParser.new do |p|
   p.on('--sigma-render PATH', 'gate 8: path to the rendered Sigma dashboard PNG (default: <workdir>/sigma-render.png; also accepts <workdir>/screenshots/_manifest.json)') { |v| opts[:sigma_render] = v }
   p.on('--skip-visual-gate REASON', 'waive gate 8 (Phase 6f visual render) — REQUIRED reason string. Use ONLY when the workbook genuinely cannot be rendered (e.g. export API unavailable). The reason MUST be named in your migration report.') { |v| opts[:skip_visual] = v }
   p.on('--skip-visual-tiles REASON', 'waive gate 9 (build-from-signals tile image-verification) — REQUIRED reason string. The reason MUST be named in your migration report.') { |v| opts[:skip_visual_tiles] = v }
+  p.on('--skip-telemetry-gate REASON', 'waive gate 10 (telemetry consent decision) — REQUIRED reason string. Use ONLY when the run genuinely cannot prompt (e.g. unattended CI). The reason MUST be named in your migration report.') { |v| opts[:skip_telemetry] = v }
 end.parse!
 abort('--workdir (or --tableau) required') unless opts[:tab]
 
@@ -656,6 +664,27 @@ if File.exist?(vv_sidecar)
     end
     puts "[OK] gate 9: #{man.size} build-from-signals tile(s) image-verified (empty data export → visual parity)"
   end
+end
+
+# ---------------------------------------------------------------------------
+# Gate 10 — Telemetry consent decision. The anonymous usage ping (and the
+# consent prompt that precedes it) lived as prose in each SKILL.md, so an agent
+# could wrap up without ever asking — telemetry silently never fired. This gate
+# delegates to the standalone assert-telemetry-ran.rb (single source of truth)
+# which checks for the telemetry-sent.json marker written by report-telemetry.py
+# on send OR decline. Never touches the network. The 3 converters that don't run
+# THIS script (qlik/cognos/gooddata) call assert-telemetry-ran.rb directly.
+# ---------------------------------------------------------------------------
+tele_gate = File.join(__dir__, 'assert-telemetry-ran.rb')
+if File.exist?(tele_gate)
+  cmd = [RbConfig.ruby, tele_gate, '--workdir', opts[:tab]]
+  cmd += ['--skip-telemetry-gate', opts[:skip_telemetry]] if opts[:skip_telemetry]
+  unless system(*cmd)
+    # assert-telemetry-ran.rb already printed the actionable failure message.
+    exit 12
+  end
+else
+  warn '[WARN] gate 10: assert-telemetry-ran.rb not found alongside this script — telemetry not enforced.'
 end
 
 puts "[OK] all gates pass — conversion may declare GREEN"

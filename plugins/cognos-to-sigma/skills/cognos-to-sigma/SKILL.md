@@ -329,6 +329,17 @@ it returns an opt-in `scripts/escalate-gap.py` command to file a tracking issue 
 If the user does not object, run:
 
 ```bash
-python3 scripts/report-telemetry.py --tool cognos-to-sigma --duration <elapsed_seconds>
-# on failure: python3 scripts/report-telemetry.py --tool cognos-to-sigma --duration <elapsed_seconds> --failed
+python3 scripts/report-telemetry.py --tool cognos-to-sigma --duration <elapsed_seconds> --workdir <run-dir> [--mode live|file|both]
+# on failure:        python3 scripts/report-telemetry.py --tool cognos-to-sigma --duration <elapsed_seconds> --workdir <run-dir> --failed
+# if the user declines: python3 scripts/report-telemetry.py --tool cognos-to-sigma --workdir <run-dir> --declined
+# --workdir writes telemetry-sent.json, the marker the GREEN telemetry gate (assert-telemetry-ran.rb) requires.
+```
+
+**Then, before declaring the migration done, run the telemetry gate** (MANDATORY — proves the
+consent decision above was actually made, not skipped):
+
+```bash
+ruby scripts/assert-telemetry-ran.rb --workdir <run-dir>
+# exit 0 = decision recorded (sent or declined); exit 12 = you skipped the ping — go back and ask.
+# Escape hatch for unattended runs that genuinely cannot prompt: --skip-telemetry-gate "<reason>".
 ```
