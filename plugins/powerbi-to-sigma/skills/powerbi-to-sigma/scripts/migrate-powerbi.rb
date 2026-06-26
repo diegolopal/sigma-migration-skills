@@ -69,6 +69,7 @@ require 'scout_gate'    # run-each-time gap-scout gate (bead beads-sigma-5l5e)
 require 'dax_gate'      # DAX warning → decision-question classifier (regression-tested)
 require 'coverage_gate' # workbook-build coverage.json → consolidated report + assistance prompt
 require 'pbi_element_match' # converter→readback element pairing (POST reorders; regression-tested)
+require 'pbi_timeintel_route' # time-intel fallback-router fact-provenance guard (regression-tested)
 
 opts = { db: '', schema: '' }
 OptionParser.new do |o|
@@ -909,6 +910,10 @@ end
 #   measure name -> original TMSL table (from Phase 1's all_measures).
 ti_orig_table = {}
 all_measures.each { |tbl, mname, _expr| ti_orig_table[mname] = tbl }
+# converter element id -> name, so a synthesized time-intel element can report the
+# FACT it was built from (its source View's table) — used to stop the fallback
+# router from cross-wiring a measure to an unrelated fact's time-intel element.
+conv_name_by_id = conv_elements.each_with_object({}) { |e, h| h[e['id']] = e['name'] }
 # collect the emitted time-intel elements (element-sourced, DateLookback/CumulativeSum).
 ti_elements = []
 conv_elements.each do |cel|
@@ -944,8 +949,9 @@ conv_elements.each do |cel|
     next nil unless date_col
     "Sum(If([#{mid}/#{date_col['name']}] = Max([#{mid}/#{date_col['name']}]), [#{mid}/#{colname}], Null))"
   end
+  ti_fact = PbiTimeIntelRoute.fact_of(conv_name_by_id[src['elementId']])
   ti_elements << { 'name' => mname, 'mid' => mid, 'cols' => cols,
-                   'date' => (date_col && date_col['name']) }
+                   'date' => (date_col && date_col['name']), 'fact' => ti_fact }
   ref = { 'master' => mkey, 'ref' => "[#{mid}/#{pick['name']}]", 'agg' => nil }
   hf = headline.call(pick['name'])
   ref['formula'] = hf if hf
@@ -1017,9 +1023,14 @@ if ti_elements.any?
       elsif mname =~ /\b(PY|Prior Year|Last Year|LY)\b/i then :prior
       end
     next unless shape
-    # choose a target column across the emitted time-intel elements.
+    # choose a target column across the emitted time-intel elements — but ONLY
+    # those built from THIS measure's own fact. Cross-fact borrowing produced
+    # garbage (live run-2: SAFETY "PY Incident Count" -> ABSENCE "Hours YTD").
+    # If no same-fact element exists, leave the measure unresolved so it degrades
+    # into coverage.json rather than binding to an unrelated table's column.
     target = nil; tmid = nil; tname = nil; tdate = nil
     ti_elements.each do |te|
+      next unless PbiTimeIntelRoute.same_fact?(tbl, te['fact'])
       cand =
         case shape
         when :yoy   then te['cols'].find { |c| c['name'].to_s =~ /YoY/i }

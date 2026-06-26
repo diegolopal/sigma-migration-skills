@@ -106,6 +106,7 @@ jobs:
             plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-verify-warehouse.rb
             plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-build-parity-plan.rb
             plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-pbi-element-match.rb
+            plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-pbi-timeintel-route.rb
           )
           fail=0
           for t in "${tests[@]}"; do
