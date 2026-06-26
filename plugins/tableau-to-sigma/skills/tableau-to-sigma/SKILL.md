@@ -1439,6 +1439,28 @@ This step is mandatory and must run before declaring the conversion done.
 
 > **If `mcp__sigma-mcp-v2__query` errors with an auth-related message mid-Phase-6**, the Sigma MCP session has staled. Re-call `mcp__sigma-mcp-v2__begin_session` and retry the query. Do NOT skip Phase 6 because of a recoverable auth error — that's the 2026-05-22 cluster-follower regression.
 
+### Raw-mode — only a `.twb`, no live Tableau (`scripts/verify-warehouse.rb`)
+
+When the customer hands over a raw `.twb` export with **no live Tableau Server/Cloud** to
+diff against (you ran intake with `--mode file`), you cannot do source-side parity — there are
+no Tableau view CSVs. But the Sigma **warehouse** is reachable, so verify there instead:
+
+```bash
+# build as usual from the .twb, then in place of the Tableau-side parity diff:
+ruby scripts/verify-warehouse.rb --plan <WORK>/parity-plan.json \
+  --workbook-id <wb> --workbook-spec <WORK>/wb-readback.json --out <WORK>/parity-final.json
+ruby scripts/assert-phase6-ran.rb --workdir <WORK>     # Gate 1 accepts it + prints the banner
+```
+
+`verify-warehouse.rb` exports every built element and confirms it **evaluates against the live
+warehouse and returns real, column-resolvable, non-empty data** — catching the broken joins,
+error columns, and empty results that make a raw-file conversion *look* done but be wrong. It
+writes `parity-final.json` with `verified_against: warehouse`; `assert-phase6-ran.rb` accepts
+that as PASS but prints a loud banner: **verified vs the warehouse, NOT vs Tableau's rendered
+output**. State that in the migration report. This is honest degradation — real numbers from
+real data, minus the source-side value/visual diff that needs a live Tableau. (For a stronger
+check, supply a warehouse-SQL oracle of expected values and run the normal `verify-parity.rb`.)
+
 ### 6 — one-step (preferred)
 
 ```bash

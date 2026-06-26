@@ -4,7 +4,11 @@
 # independent things — failing ANY of them blocks the GREEN declaration:
 #
 #   1. Phase 6 ran (parity-final.json exists, status=PASS, pass-rate met)
-#      → beads-sigma-4pm
+#      → beads-sigma-4pm. Raw-mode: when the source tool is unreachable,
+#      verify-warehouse.rb writes parity-final.json with
+#      verified_against=warehouse — accepted as PASS but flagged with a loud
+#      banner ("verified vs warehouse, NOT source"). intake.json input_mode=file
+#      without a warehouse-verified parity triggers an advisory WARN.
 #   2. No orphan workbooks left in the customer's My Documents
 #      (posted-workbooks.jsonl has ≤1 entry OR cleanup-marker.json shows
 #      cleanup ran with no failed deletes)  → beads-sigma-38a
@@ -188,6 +192,29 @@ else
          "DIVERGING (accepted, must be NAMED in the report): #{(summary['fail_names'] || []).join(', ')}"
   else
     puts "[OK] gate 1/7: Phase 6 ran cleanly — #{passed}/#{total} charts PASS (mode=#{mode}, status=#{status})"
+  end
+
+  # Raw-mode honesty banner. When the source tool was unreachable, parity is run
+  # against the live Sigma WAREHOUSE (verify-warehouse.rb) instead of the source —
+  # every element evaluates against real warehouse data, but the values were NOT
+  # diffed against the source tool's rendered output. Surface that loudly so a
+  # warehouse-verified run is never mistaken for source parity.
+  verified_against = summary['verified_against'].to_s
+  if verified_against == 'warehouse'
+    puts '     ┌─────────────────────────────────────────────────────────────────────────┐'
+    puts '     │ VERIFIED AGAINST THE LIVE SIGMA WAREHOUSE — NOT against the source tool.   │'
+    puts '     │ Each element evaluates against real warehouse data; values were NOT diffed │'
+    puts '     │ vs the source (it was unreachable). State this in the migration report.    │'
+    puts '     └─────────────────────────────────────────────────────────────────────────┘'
+  else
+    # Advisory only: if intake recorded file-mode (no live source) but parity was
+    # not warehouse-verified, the run may be over-claiming source parity.
+    intake = (JSON.parse(File.read(File.join(opts[:tab], 'intake.json'))) rescue nil)
+    if intake.is_a?(Hash) && intake['input_mode'].to_s == 'file'
+      warn '[WARN] gate 1: intake.json records input_mode=file (no live source) but parity-final.json is'
+      warn '       not marked verified_against=warehouse. In raw-mode, verify against the warehouse'
+      warn '       (ruby scripts/verify-warehouse.rb) so the result is not mistaken for source parity.'
+    end
   end
 end
 
