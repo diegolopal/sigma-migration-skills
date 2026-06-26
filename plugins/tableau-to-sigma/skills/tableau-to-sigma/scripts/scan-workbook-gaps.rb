@@ -22,7 +22,9 @@
 # and other downstream tools can consume it programmatically.
 
 require 'json'
-require 'rexml/document'
+# Nokogiri-backed REXML drop-in — REXML is O(n^2) on large .twb files. See lib/twb_xml.rb.
+$LOAD_PATH.unshift File.expand_path('lib', __dir__)
+require 'twb_xml'
 
 # --- Feature inventory: what the skill handles today ----------------------
 # Each entry: { pattern: regex_or_lambda, name: "feature", status: :auto |
@@ -325,7 +327,7 @@ def main
   # Workbook summary via REXML
   xml = nil
   begin
-    xml = REXML::Document.new(content)
+    xml = TwbXml.parse(content)
     n_dash = xml.elements.to_a('//dashboard').count
     n_ws   = xml.elements.to_a('//worksheet').count
     # Count REAL datasource definitions only — at /workbook/datasources/datasource.

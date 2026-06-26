@@ -65,6 +65,8 @@
 # 11 = gap scan found ❌-unhandled features (re-run with --force to accept);
 # 12 = pass 1 complete, parity PENDING (run the printed MCP queries, then
 #      re-run with --finalize --actuals);
+# 13 = calc extraction returned 0 calcs though the .twb defines calc fields
+#      (broken extraction — re-run calc discovery; NO Sigma objects created);
 # 14 = migration GREEN + Phase E proposals pending acceptance (re-run
 #      --finalize with --enhance --enhance-accept ...);
 # 3 = parity/guard fail; 4 = workbook layer needs the agent path; other = error.
@@ -784,6 +786,34 @@ if wb_luid
     calcs = cfj['calcs'] || []
     n_csql = calcs.count { |c| c['requires_custom_sql'] }
     line "#{calcs.size} calc field(s); #{n_csql} require Custom SQL (window/LOD)"
+  end
+end
+
+# EMPTY-PAGE GUARD (DDMX regression): extract-calc-fields runs allow_fail, so a
+# hang/error/auth failure silently leaves calcs=[] and the build then ships
+# pages whose elements have no backing calculation — the "blank workbook, must
+# re-prompt to finish" symptom. If the .twb plainly defines Tableau calc fields
+# but extraction returned none, that's a BROKEN extraction, not a calc-free
+# workbook: hard-stop here, before any Sigma object is created. (Parser-free raw
+# count so the guard doesn't depend on the same path that just failed.)
+if have_twb && calcs.empty?
+  raw_calc_nodes = (File.read(twb).scan(/<calculation\s+class=['"]tableau['"]/i).size rescue 0)
+  if raw_calc_nodes.positive?
+    puts
+    puts '==================== CALC-EXTRACTION STOP (empty result) ===================='
+    puts "The .twb defines ~#{raw_calc_nodes} Tableau calculation node(s) but"
+    puts 'extract-calc-fields.rb returned 0 calcs — extraction failed (hang/error/auth),'
+    puts 'NOT a calc-free workbook. Proceeding would post a workbook whose elements'
+    puts 'have no backing calculations (blank pages).'
+    puts ''
+    puts 'Re-run calc discovery and confirm it completes (now Nokogiri-fast):'
+    puts "  ruby #{File.join(HERE, 'extract-calc-fields.rb')} " \
+         "--workbook-luid #{wb_luid || '<luid>'} --twb #{twb} --out #{calc_path} --refresh"
+    puts '======================================================='
+    puts 'No Sigma objects were created.'
+    mark('phase1-join')
+    phase_summary
+    exit 13
   end
 end
 
