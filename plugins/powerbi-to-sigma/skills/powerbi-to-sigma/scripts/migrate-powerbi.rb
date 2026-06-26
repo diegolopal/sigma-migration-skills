@@ -68,6 +68,7 @@ $LOAD_PATH.unshift File.expand_path('lib', HERE)
 require 'scout_gate'    # run-each-time gap-scout gate (bead beads-sigma-5l5e)
 require 'dax_gate'      # DAX warning → decision-question classifier (regression-tested)
 require 'coverage_gate' # workbook-build coverage.json → consolidated report + assistance prompt
+require 'pbi_element_match' # converter→readback element pairing (POST reorders; regression-tested)
 
 opts = { db: '', schema: '' }
 OptionParser.new do |o|
@@ -697,19 +698,14 @@ rescue StandardError
 end
 masters = {}
 field_map = {}
+# Pair each converter element to its posted-DM readback element. A DM POST does
+# NOT preserve element order (it floats nameless Custom SQL elements to the front),
+# so this is NOT a positional index — see lib/pbi_element_match.rb for the full
+# rationale + the run-2 SAFETY_INCIDENTS overwrite it prevents.
+dmel_for = PbiElementMatch.pair(conv_elements, dm_elements)
 conv_elements.each_with_index do |cel, cel_idx|
   cname = cel['name']
-  # match the posted DM element: by NAME first (PUT keeps names; ids may change),
-  # then by ID, then POSITIONALLY (POST /spec preserves element order). A Custom
-  # SQL element is NAMELESS in the spec (rule 3) and the readback can ALSO carry
-  # name:null — the old `|| dm_elements.first` fallback then bound it to the
-  # FIRST element (usually the fact table), OVERWRITING that master with the SQL
-  # element's columns (live failure: EMPLOYEES master got SalaryBands' "Band
-  # Floor" -> "Dependency not found: 'employees/band floor'"). Positional match
-  # keeps the nameless element its OWN master (Bug E: nameless SQL element).
-  dmel = (cname && dm_elements.find { |e| e['name'] == cname }) ||
-         dm_elements.find { |e| e['id'] == cel['id'] } ||
-         dm_elements[cel_idx] || dm_elements.first
+  dmel = dmel_for[cel_idx]
   cname ||= (dmel && dmel['name']) || 'Custom SQL'
   # POSTED-spec column display names for this element (matched the same way the
   # dm element was), keyed by formula — overrides the formula-leaf derivation.
