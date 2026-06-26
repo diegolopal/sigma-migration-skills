@@ -58,13 +58,39 @@ def _write_marker(workdir, record):
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--tool',     required=True, help='Migration skill name, e.g. tableau-to-sigma')
-parser.add_argument('--duration', type=int, default=0, help='Elapsed seconds')
+parser.add_argument('--duration', type=int, default=0, help='Elapsed seconds (auto-derived from intake.json run_start if omitted)')
 parser.add_argument('--failed',   action='store_true', help='Pass if the migration did not reach GREEN')
 parser.add_argument('--declined', action='store_true', help='User declined the ping: record the decision, send nothing')
 parser.add_argument('--mode',     default='unknown', choices=['live', 'file', 'both', 'unknown'],
-                    help='Input mode: live (source API), file (raw export only), both, or unknown')
+                    help='Input mode (auto-derived from intake.json if omitted): live, file, both, or unknown')
 parser.add_argument('--workdir',  default=None, help='Run directory; the telemetry marker is written here for the gate')
 args = parser.parse_args()
+
+
+def _from_intake(workdir):
+    """intake.rb (the front-door step) records run_start + input_mode in
+    intake.json. If --duration / --mode were not passed explicitly, derive them
+    from it so the agent doesn't have to track elapsed time by hand. Returns
+    (duration_seconds_or_None, mode_or_None)."""
+    if not workdir:
+        return None, None
+    try:
+        from datetime import datetime, timezone
+        intake = json.load(open(os.path.join(workdir, 'intake.json')))
+        dur = None
+        if intake.get('run_start'):
+            started = datetime.fromisoformat(intake['run_start'])
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            dur = max(0, int((datetime.now(timezone.utc) - started).total_seconds()))
+        return dur, intake.get('input_mode')
+    except Exception:
+        return None, None
+
+
+_intake_dur, _intake_mode = _from_intake(args.workdir)
+duration = args.duration if args.duration else (_intake_dur or 0)
+mode = args.mode if args.mode != 'unknown' else (_intake_mode or 'unknown')
 
 if args.declined:
     print("\nTelemetry declined by user — nothing sent.")
@@ -75,13 +101,13 @@ report_migration(
     tool=args.tool,
     sigma_base=os.environ.get('SIGMA_BASE_URL', 'https://aws-api.sigmacomputing.com'),
     client_id=os.environ.get('SIGMA_CLIENT_ID', ''),
-    duration_seconds=args.duration,
+    duration_seconds=duration,
     success=not args.failed,
-    mode=args.mode,
+    mode=mode,
 )
 _write_marker(args.workdir, {
     'status': 'sent',
     'tool': args.tool,
     'success': not args.failed,
-    'mode': args.mode,
+    'mode': mode,
 })

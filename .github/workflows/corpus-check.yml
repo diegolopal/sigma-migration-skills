@@ -102,6 +102,7 @@ jobs:
             plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-layout-lint.rb
             plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-dax-restructure.rb
             plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-telemetry-gate.rb
+            plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-intake.rb
           )
           fail=0
           for t in "${tests[@]}"; do

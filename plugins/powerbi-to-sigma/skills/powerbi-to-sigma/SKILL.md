@@ -38,6 +38,21 @@ If a destination is already supplied, honor it silently — don't ask.
 7. VERIFY    sigma-mcp-v2 query each element returns real rows; Phase 6 = compare vs PBI executeQueries (DAX)
 ```
 
+## Step 0 — Front door: resolve the connection once (`scripts/intake.rb`)
+
+Resolve the Sigma warehouse connection a SINGLE time up front so no phase free-searches
+`/v2/connections` (the token sink):
+
+```bash
+ruby scripts/intake.rb --workdir <WORK> --tool powerbi-to-sigma --mode file \
+  [--connection <id>] [--name <connection-name-substring>]
+```
+
+Caches `<WORK>/connection.json` (the orchestrator reads it when `--connection` is omitted —
+point `--out` at the same `<WORK>`) and writes `intake.json` (run-start + mode feed the
+telemetry ping). Multiple connections + no id/name → it lists them and asks you to pick;
+never guesses. (Power BI input is almost always `--mode file` — TMSL + PBIR exports.)
+
 ## Phase 1 — Connect (no Entra app required)
 The corporate tenant blocks Entra app creation, Git integration, and XMLA (PPU). The working path:
 - `scripts/fabric-extract.py` — device-code via well-known public client **`ea0616ba-638b-4df5-95b9-636659ae5121`** (Power BI Desktop), scope `https://api.fabric.microsoft.com/.default`. User signs in once at the device URL; token cached.

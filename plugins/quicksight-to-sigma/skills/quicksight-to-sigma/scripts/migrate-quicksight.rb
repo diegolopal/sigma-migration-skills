@@ -84,7 +84,10 @@ end.parse!
 
 abort 'missing --analysis-id (or --from-fixtures)' unless opts[:analysis] || opts[:fixtures]
 abort 'missing --account-id (live discovery)' if opts[:analysis] && !opts[:fixtures] && !opts[:account]
-abort 'missing --connection' unless opts[:conn]
+# intake.rb (front-door) caches the resolved connection in <out>/connection.json; honor it
+# when --connection is omitted so the agent need not re-pass the id it just resolved.
+opts[:conn] ||= (JSON.parse(File.read(File.join(opts[:out], 'connection.json')))['connection_id'] rescue nil) if opts[:out]
+abort 'missing --connection (pass --connection <id>, or run intake.rb first and point --out at its --workdir)' unless opts[:conn]
 if opts[:conn] !~ /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
   abort "FATAL: --connection must be a FULL Sigma connection UUID (8-4-4-4-12 hex); got #{opts[:conn].inspect}"
 end

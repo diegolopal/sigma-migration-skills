@@ -40,6 +40,21 @@ If a destination is already supplied, honor it silently — don't ask.
 
 See `refs/migration-test-slate.md` for the complexity taxonomy + 20-dashboard test slate that grounds the converter's coverage and known gaps.
 
+## Step 0 — Front door: resolve the connection once (`scripts/intake.rb`)
+
+Resolve the Sigma warehouse connection a SINGLE time up front so no phase free-searches
+`/v2/connections` (the token sink):
+
+```bash
+ruby scripts/intake.rb --workdir <WORK> --tool quicksight-to-sigma --mode live \
+  [--connection <id>] [--name <connection-name-substring>]
+```
+
+Caches `<WORK>/connection.json` (the orchestrator reads it when `--connection` is omitted —
+point `--out` at the same `<WORK>`) and writes `intake.json` (run-start + mode feed the
+telemetry ping). Multiple connections + no id/name → it lists them and asks you to pick;
+never guesses.
+
 ## One command (preferred): `scripts/migrate-quicksight.rb`
 
 The single-process orchestrator chains every phase below — discover (live AWS or `--from-fixtures <dir>`), convert (local MCP build, or `convert-model.rb --emit-mcp` gate + `--converted` resume), the **Phase 3.5 DM-reuse check** (`qs-dm-signature.py` + `find-or-pick-dm.rb`; **reuse-first** — auto-reuses an existing DM covering all the analysis's source tables, `--reuse-dm <id>` pins one, `--skip-reuse-check` forces build new), fixup `--folder-id` → validate → post-and-readback, workbook build, layout, then the **two-pass Phase 7 parity** (`phase6-parity-quicksight.rb` emits the per-chart query list and gates; write `parity-expected.json` + `parity-actuals.json` and re-run the SAME command — phases 1–5 skip automatically) and the `assert-phase6-ran.rb --workdir` hard gate:
