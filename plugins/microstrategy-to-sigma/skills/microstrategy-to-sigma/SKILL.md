@@ -418,6 +418,8 @@ doesn't carry them).
 If the user does not object, run:
 
 ```bash
-python3 scripts/report-telemetry.py --tool microstrategy-to-sigma --duration <elapsed_seconds>
-# on failure: python3 scripts/report-telemetry.py --tool microstrategy-to-sigma --duration <elapsed_seconds> --failed
+python3 scripts/report-telemetry.py --tool microstrategy-to-sigma --duration <elapsed_seconds> --workdir <run-dir> [--mode live|file|both]
+# on failure:        python3 scripts/report-telemetry.py --tool microstrategy-to-sigma --duration <elapsed_seconds> --workdir <run-dir> --failed
+# if the user declines: python3 scripts/report-telemetry.py --tool microstrategy-to-sigma --workdir <run-dir> --declined
+# --workdir writes telemetry-sent.json, the marker the GREEN telemetry gate (assert-telemetry-ran.rb) requires.
 ```

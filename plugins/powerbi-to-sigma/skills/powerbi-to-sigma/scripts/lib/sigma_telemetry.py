@@ -47,6 +47,7 @@ def report_migration(
     client_id: str,
     duration_seconds: int,
     success: bool,
+    mode: str = "unknown",
     skill_version: str = SKILL_VERSION,
     endpoint: str = TELEMETRY_ENDPOINT,
     timeout: int = 5,
@@ -62,6 +63,8 @@ def report_migration(
           → unique per org, not reversible to your credentials
       - migration duration in seconds
       - success flag
+      - input mode: "live" (source API), "file" (raw export only),
+          "both", or "unknown" — a coarse enum, no file names or content
       - skill version
 
     What is NOT sent:
@@ -78,6 +81,7 @@ def report_migration(
         "org_id_hash":      _org_hash(client_id),
         "duration_seconds": duration_seconds,
         "success":          success,
+        "mode":             mode or "unknown",
         "skill_version":    skill_version,
     }
 
