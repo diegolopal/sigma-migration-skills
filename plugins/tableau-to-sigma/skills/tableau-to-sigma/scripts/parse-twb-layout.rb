@@ -33,12 +33,15 @@
 # Sigma kinds with the table in refs/workbook-layout.md.
 
 require 'json'
-require 'rexml/document'
+# Nokogiri-backed REXML drop-in — REXML is O(n^2) on large .twb files; twb_xml.rb
+# parses a 5 MB / 95-worksheet workbook in well under a second. See lib/twb_xml.rb.
+$LOAD_PATH.unshift File.expand_path('lib', __dir__)
+require 'twb_xml'
 
 INP = ARGV[0] || abort('usage: parse-twb-layout.rb <workbook-content.twb> <out.json>')
 OUT = ARGV[1] || abort('usage: parse-twb-layout.rb <workbook-content.twb> <out.json>')
 
-xml = REXML::Document.new(File.read(INP))
+xml = TwbXml.parse(File.read(INP))
 
 def pct(v)
   return nil if v.nil?

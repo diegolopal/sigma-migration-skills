@@ -62,7 +62,13 @@ if opts[:ds]
            end
   fields.each do |f|
     next unless f['columnClass'] == 'CALCULATION'
-    if (f['formula'] || '').match?(/\{\s*(FIXED|INCLUDE|EXCLUDE)|\bIF\b[\s\S]+\bELSEIF\b[\s\S]+\bELSEIF\b/i)
+    # "Complex" = an LOD, or a multi-branch IF chain (≥2 ELSEIF). The old regex
+    # used two `[\s\S]+` bridges (`IF…ELSEIF…ELSEIF`) which catastrophically
+    # backtracked on real formulas; count ELSEIF directly instead — O(n), same
+    # signal.
+    fml = f['formula'] || ''
+    if fml.match?(/\{\s*(FIXED|INCLUDE|EXCLUDE)/i) ||
+       (fml.match?(/\bIF\b/i) && fml.scan(/\bELSEIF\b/i).length >= 2)
       calc_count_complex += 1
     else
       calc_count_simple += 1

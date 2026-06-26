@@ -114,8 +114,13 @@ def gotchas(formula)
   notes = []
   notes << 'IIF(c, t, e) → If(c, t, e) in Sigma' if formula =~ /\bIIF\s*\(/i
   notes << 'COUNTD → CountDistinct in Sigma' if formula =~ /\bCOUNTD\b/i
+  # Split, non-backtracking checks. The old single regex `\bIF\b[\s\S]+(>=|...)`
+  # catastrophically backtracked on real calcs (a 1 KB formula took >3 s; some
+  # never finished), which — on top of REXML — was a primary cause of the
+  # multi-minute calc-extraction stall. Detecting "has IF" AND "has comparison"
+  # is the same hint signal at O(n).
   notes << 'Tableau IF/IFNULL falls through to ELSE on NULL; Sigma If returns Null — wrap nullable source with Coalesce' \
-    if formula =~ /\bIF\b[\s\S]+(>=|<=|=|<|>)/i
+    if formula =~ /\bIF\b/i && formula =~ /(>=|<=|<|>|=)/
 
   manual_hits = detect_manual_window_fns(formula)
   auto_hits   = detect_window_fns(formula) - manual_hits
@@ -241,11 +246,14 @@ end
 
 # ---- .twb XML fallback --------------------------------------------------
 
-require 'rexml/document'
+# Nokogiri-backed REXML drop-in — REXML is O(n^2) on large .twb files (a 5 MB
+# workbook never finishes calc extraction inside an agent turn); twb_xml.rb
+# does the same parse in ~35 ms. See lib/twb_xml.rb.
+require 'twb_xml'
 
 def fetch_via_twb_xml(twb_path)
   return { ok: false, error: "twb not found: #{twb_path}" } unless File.file?(twb_path)
-  doc = REXML::Document.new(File.read(twb_path))
+  doc = TwbXml.parse(File.read(twb_path))
 
   calcs = []
   # In a .twb, each <datasource> has a <column> children with optional

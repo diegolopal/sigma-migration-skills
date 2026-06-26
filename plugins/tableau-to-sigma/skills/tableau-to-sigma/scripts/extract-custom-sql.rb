@@ -21,9 +21,10 @@
 
 require 'json'
 require 'optparse'
-require 'rexml/document'
 $LOAD_PATH.unshift File.expand_path('lib', __dir__)
 require 'tableau_rest'
+# Nokogiri-backed REXML drop-in — REXML is O(n^2) on large .twb files. See lib/twb_xml.rb.
+require 'twb_xml'
 
 opts = {}
 OptionParser.new do |o|
@@ -100,7 +101,7 @@ end
 
 # --- .twb fallback (embedded Custom SQL) ---
 if opts[:twb] && File.exist?(opts[:twb])
-  twb = REXML::Document.new(File.read(opts[:twb]))
+  twb = TwbXml.parse(File.read(opts[:twb]))
   # Top-level datasource definitions only — `//datasource` also matches the
   # `<datasource>` REFERENCE blocks inside every worksheet, and walking those
   # repeats the same custom-SQL `<relation>` once per worksheet that uses it.
