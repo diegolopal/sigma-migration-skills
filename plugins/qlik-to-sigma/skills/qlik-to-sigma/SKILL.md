@@ -36,6 +36,21 @@ If a destination is already supplied, honor it silently — don't ask.
 > (one Sigma page per Qlik sheet, layout straight from the sheet cell grids) from ONE
 > command with zero hand-edits in under 2 minutes.
 
+## Step 0 — Front door: resolve the connection once (`scripts/intake.rb`)
+
+Resolve the Sigma warehouse connection a SINGLE time up front so no phase free-searches
+`/v2/connections` (the token sink):
+
+```bash
+ruby scripts/intake.rb --workdir <WORK> --tool qlik-to-sigma --mode live \
+  [--connection <id>] [--name <connection-name-substring>]
+```
+
+Caches `<WORK>/connection.json` (the orchestrator reads it when `--connection` is omitted —
+point `--out` at the same `<WORK>`) and writes `intake.json` (run-start + mode feed the
+telemetry ping). Multiple connections + no id/name → it lists them and asks you to pick;
+never guesses.
+
 ## The one command
 
 ```bash

@@ -27,6 +27,23 @@ that mirrors the Tableau dashboard layout as closely as possible.
 
 ---
 
+## Step 0 — Front door: resolve the connection once (`scripts/intake.rb`)
+
+Before the run, resolve the Sigma warehouse connection a SINGLE time so no phase
+free-searches `/v2/connections` (the token sink):
+
+```bash
+eval "$(scripts/get-token.sh)"
+ruby scripts/intake.rb --workdir <WORK> --tool tableau-to-sigma --mode live \
+  [--connection <id>] [--name <connection-name-substring>] [--source "<workbook name>"]
+```
+
+It caches `<WORK>/connection.json` (the orchestrator reads it when `--connection` is
+omitted — just point `--out` at the same `<WORK>`) and writes `intake.json` (run-start +
+input mode, which feed the telemetry ping's duration and `mode`). Precedence: explicit
+`--connection` → cached → `SIGMA_CONNECTION_ID` env → list once. With no id/name and
+multiple connections it lists them and asks you to pick — it never guesses.
+
 ## One command (orchestrated path)
 
 ```bash

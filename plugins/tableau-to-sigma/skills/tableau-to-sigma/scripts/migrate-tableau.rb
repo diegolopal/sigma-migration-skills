@@ -125,7 +125,10 @@ OptionParser.new do |o|
 end.parse!
 
 abort 'missing --workbook or --workbook-id' unless opts[:wb_name] || opts[:wb_id]
-abort 'missing --connection' unless opts[:conn] || opts[:finalize]
+# intake.rb (front-door) caches the resolved connection in <out>/connection.json; honor it
+# when --connection is omitted so the agent need not re-pass the id it just resolved.
+opts[:conn] ||= (JSON.parse(File.read(File.join(opts[:out], 'connection.json')))['connection_id'] rescue nil) if opts[:out]
+abort 'missing --connection (pass --connection <id>, or run intake.rb first and point --out at its --workdir)' unless opts[:conn] || opts[:finalize]
 
 slug = (opts[:wb_name] || opts[:wb_id]).gsub(/[^A-Za-z0-9_-]/, '-').squeeze('-')
 WORK = opts[:out] || File.expand_path("~/tableau-migration/#{slug}")

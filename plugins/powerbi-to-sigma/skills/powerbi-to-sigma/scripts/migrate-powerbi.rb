@@ -119,6 +119,9 @@ abort 'missing --tmsl' unless opts[:tmsl]
 abort "--tmsl not found: #{opts[:tmsl]}" unless opts[:tmsl] && File.exist?(opts[:tmsl])
 abort 'missing --pbir' unless opts[:pbir]
 abort "--pbir not found: #{opts[:pbir]}" unless File.exist?(opts[:pbir])
+# intake.rb (front-door) caches the resolved connection in <out>/connection.json; honor it
+# when --connection is omitted so the agent need not re-pass the id it just resolved.
+opts[:conn] ||= (JSON.parse(File.read(File.join(opts[:out], 'connection.json')))['connection_id'] rescue nil) if opts[:out]
 # bead hjke(a): abort early on a truncated/partial connection id — it survives
 # all the way to the DM POST and fails there opaquely ("Source not found").
 if opts[:conn] && opts[:conn] !~ /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/
