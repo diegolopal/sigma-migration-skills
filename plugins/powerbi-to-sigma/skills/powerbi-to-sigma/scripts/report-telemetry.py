@@ -97,7 +97,7 @@ if args.declined:
     _write_marker(args.workdir, {'status': 'declined', 'tool': args.tool})
     sys.exit(0)
 
-report_migration(
+sent = report_migration(
     tool=args.tool,
     sigma_base=os.environ.get('SIGMA_BASE_URL', 'https://aws-api.sigmacomputing.com'),
     client_id=os.environ.get('SIGMA_CLIENT_ID', ''),
@@ -105,8 +105,11 @@ report_migration(
     success=not args.failed,
     mode=mode,
 )
+# Honest marker (handoff FIX 3): "sent" ONLY when the POST actually landed (2xx);
+# otherwise "skipped" so the audit record never claims a delivery that failed.
+# The gate accepts sent|declined|skipped — telemetry must never block.
 _write_marker(args.workdir, {
-    'status': 'sent',
+    'status': 'sent' if sent else 'skipped',
     'tool': args.tool,
     'success': not args.failed,
     'mode': mode,

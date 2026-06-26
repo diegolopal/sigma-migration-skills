@@ -105,6 +105,34 @@
       ]
     },
     {
+      "canonical": "shared/scripts/build-parity-plan.rb",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/build-parity-plan.rb",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/build-parity-plan.rb",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/build-parity-plan.rb",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/build-parity-plan.rb",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/build-parity-plan.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/build-parity-plan.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/build-parity-plan.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/build-parity-plan.rb",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/build-parity-plan.rb"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/verify-warehouse.rb",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/verify-warehouse.rb",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/verify-warehouse.rb",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/verify-warehouse.rb",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/verify-warehouse.rb",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/verify-warehouse.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/verify-warehouse.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/verify-warehouse.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/verify-warehouse.rb",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/verify-warehouse.rb"
+      ]
+    },
+    {
       "canonical": "shared/scripts/assert-telemetry-ran.rb",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/assert-telemetry-ran.rb",
@@ -287,6 +315,20 @@
       "targets": [
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-intake.rb",
         "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-intake.rb"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/test-verify-warehouse.rb",
+      "targets": [
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-verify-warehouse.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-verify-warehouse.rb"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/test-build-parity-plan.rb",
+      "targets": [
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-build-parity-plan.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-build-parity-plan.rb"
       ]
     }
   ]

@@ -39,12 +39,14 @@ Dir.mktmpdir do |d|
 end
 
 Dir.mktmpdir do |d|
-  # 4. send path writes status=sent + carries the mode enum
+  # 4. send path: status is "sent" when the POST lands, "skipped" when the endpoint
+  #    is unreachable (offline CI). Both are honest (handoff FIX 3) and both satisfy
+  #    the gate — telemetry must never block. NEVER "sent" on a failed delivery.
   ok('send writes a marker', report(d, '--duration', '120', '--mode', 'file'))
   rec = JSON.parse(File.read(File.join(d, 'telemetry-sent.json')))
-  ok('sent marker status',  rec['status'] == 'sent')
-  ok('sent marker mode',    rec['mode'] == 'file')
-  ok('sent marker satisfies the gate', gate(d) == true)
+  ok('send marker status sent|skipped', %w[sent skipped].include?(rec['status']))
+  ok('send marker mode',    rec['mode'] == 'file')
+  ok('send marker satisfies the gate', gate(d) == true)
 end
 
 Dir.mktmpdir do |d|
