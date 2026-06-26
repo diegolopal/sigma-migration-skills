@@ -76,11 +76,14 @@ Wire the **existing** telemetry into the finalize path + enforce it.
    run-start so duration tracking gets clean.
 3. **Raw-mode warehouse-verify** — depends on ①'s mode detection; goes last.
 
-## Open decisions
+## Resolved decisions (2026-06-26)
 
-- **D1 — gate fanout for qlik/cognos/gooddata:** extend `assert-phase6-ran.rb` fanout to all 9
-  (telemetry enforced everywhere), or accept "telemetry wired but unenforced" for those three?
-- **D2 — connection resolution UX:** always prompt, or read a `~/.sigma-migration/config`
-  first and only prompt on miss?
-- **D3 — telemetry on `file` mode:** record `mode: file|live|both` in the payload so we can see
-  how often customers run file-only? (No PII; just a mode enum.)
+- **D1 — gate fanout → extend to all 9.** Add qlik/cognos/gooddata to the
+  `assert-phase6-ran.rb` fanout so telemetry (Gate 9) is enforced on every plugin. No plugin
+  can finish silently.
+- **D2 — connection resolution → config-first, prompt on miss.** Intake reads
+  `~/.sigma-migration/config` first; prompts only when no connection is cached/configured.
+  Zero tokens on repeat runs.
+- **D3 — telemetry payload → add `mode` enum.** Record `mode: live|file|both` (no PII) so we
+  can measure how often customers run file-only — the path that degrades — and target
+  investment.
