@@ -1579,6 +1579,25 @@ wb_id = wb_ids['workbookId']
 line "workbookId = #{wb_id}"
 mark('phase4-workbook')
 
+# "Not Migrated (and why)" punch-list — turn every dropped tile into an actionable
+# entry (param measure-picker → control-driven Switch, field absent from source SQL,
+# inert/commented source calc, window/LOD, aggregate-metric) so no empty/sparse tab
+# is mysterious. Best-effort: never fail the migration over the report.
+notes_meta   = File.join(WORK, 'conv-meta.json')
+notes_charts = File.join(WORK, 'chart-specs.json')
+if File.exist?(notes_meta) && File.exist?(notes_charts) && File.exist?(wb_spec_path)
+  notes_out = File.join(WORK, 'migration-notes.md')
+  nc = ['ruby', File.join(HERE, 'migration-notes.rb'), '--conv-meta', notes_meta,
+        '--chart-specs', notes_charts, '--wb-spec', wb_spec_path, '--twb', twb, '--out', notes_out]
+  _o, ne, nst = Open3.capture3(*nc)
+  if nst.success?
+    line "Not-Migrated report → #{notes_out}"
+    (ne || '').each_line { |l| line l.rstrip if l.strip.start_with?(/\d/) || l.include?('categorized') }
+  else
+    line "Not-Migrated report skipped (#{(ne || '').lines.first&.strip})"
+  end
+end
+
 # ---------------------------------------------------------------------------
 # Phase 5 — Layout. Prefer the generator's layout_xml; else auto-build from the
 # parsed Tableau zone tree via build-dashboard-layout.rb.
