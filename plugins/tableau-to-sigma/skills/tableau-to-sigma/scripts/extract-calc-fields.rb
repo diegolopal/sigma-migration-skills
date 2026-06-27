@@ -12,7 +12,35 @@
 #     [--out <wb-dir>/calc-fields.json] \
 #     [--source auto|metadata|twb] \
 #     [--twb <path>] \
-#     [--refresh]
+#     [--dashboard "<name>"] [--used-by <layout-meta.json>] \
+#     [--refresh] [--no-cache]
+#
+# WORKING-SET SCOPING (--dashboard / --used-by):
+#   A big .twb can carry ~2000 calcs, but one dashboard uses only a few dozen.
+#   When --dashboard "<name>" (repeatable) and/or --used-by <meta.json>
+#   (repeatable) is given, the script resolves the FULL calc set first, then
+#   keeps ONLY the calcs the target dashboard's worksheets actually reference —
+#   transitively (a kept calc that depends on another calc pulls that one in
+#   too). The used-field set comes from the parse-twb-layout `*-meta.json`
+#   sidecar (per-worksheet column-instance / measure / filter / calc lists).
+#     --dashboard resolves the meta sidecar next to --twb (workbook-content.twb
+#       → workbook-content-meta.json or layout-meta.json) and reads the
+#       worksheets whose dashboard is in scope; if the sidecar isn't already
+#       dashboard-scoped, ALL worksheets in it are treated as the used set
+#       (still narrows to that workbook's referenced calcs).
+#     --used-by <meta.json> reads an explicit (already dashboard-scoped) meta
+#       sidecar. Use this from migrate-tableau when a scoped meta already exists.
+#   WITHOUT either flag, behavior is unchanged: every calc is emitted.
+#   The filtered output adds a `used_by` index (dashboard names → kept calc
+#   captions) plus `n_calcs_total` so downstream sees the reduction.
+#
+# TRANSLATION CACHE (~/.tableau-to-sigma/calc-cache.json):
+#   Each calc carries a `formula_hash` (SHA1 of its formula text). Per-calc
+#   derived translation signals (is_lod / requires_custom_sql / translation_notes)
+#   are memoized in the customer HOME cache keyed by that hash, matching the
+#   ~/.tableau-to-sigma/ convention used by learned-rules.rb. Re-runs over the
+#   same formulas are instant (cache HITs are logged to stderr). --no-cache
+#   bypasses read+write; --refresh still re-fetches the source but reuses cache.
 #
 # Exit codes:
 #   0 — success (metadata-api OR twb-xml-fallback)
@@ -28,6 +56,8 @@ require 'json'
 require 'time'
 require 'optparse'
 require 'fileutils'
+require 'digest'
+require 'set'
 $LOAD_PATH.unshift File.expand_path('lib', __dir__)
 require 'tableau_rest'
 
@@ -35,14 +65,20 @@ require 'tableau_rest'
 
 opts = {
   source: 'auto',
-  refresh: false
+  refresh: false,
+  dashboards: [],
+  used_by: [],
+  cache: true
 }
 OptionParser.new do |p|
   p.on('--workbook-luid LUID')      { |v| opts[:workbook_luid] = v }
   p.on('--out PATH')                { |v| opts[:out] = v }
   p.on('--source {auto|metadata|twb}', %w[auto metadata twb]) { |v| opts[:source] = v }
   p.on('--twb PATH')                { |v| opts[:twb] = v }
+  p.on('--dashboard NAME')          { |v| opts[:dashboards] << v }
+  p.on('--used-by PATH')            { |v| opts[:used_by] << v }
   p.on('--refresh')                 { opts[:refresh] = true }
+  p.on('--no-cache')                { opts[:cache] = false }
 end.parse!
 
 unless opts[:workbook_luid]
@@ -56,6 +92,11 @@ out_path = opts[:out] || File.join('/tmp', "calc-fields-#{luid}.json")
 twb_path = opts[:twb] || "/tmp/assessment-dataflow/twbs/#{luid}.twb"
 
 FileUtils.mkdir_p(File.dirname(out_path))
+
+# True when the caller asked for a per-dashboard working set.
+def scoping?(opts)
+  !opts[:dashboards].empty? || !opts[:used_by].empty?
+end
 
 # ---- cache reuse --------------------------------------------------------
 
@@ -74,6 +115,53 @@ if !opts[:refresh] && cache_fresh?(out_path)
   warn "calc-fields.json fresh at #{out_path} (#{(Time.now - File.mtime(out_path)).to_i}s old); use --refresh to bypass"
   puts File.read(out_path)
   exit 0
+end
+
+# ---- per-calc translation cache (~/.tableau-to-sigma/calc-cache.json) ----
+#
+# Keyed by SHA1 of the formula text — formula identity, not field name — so the
+# SAME formula seen in a re-run (or in another workbook for the same customer)
+# reuses the already-computed translation signals instead of re-deriving them.
+# Lives under the customer HOME exactly like learned-rules.yaml, so `git pull`
+# of the skill never clobbers it. The cached payload is small (the derived
+# signals, not the formula), so the file stays tiny even for 2000-calc books.
+module CalcCache
+  HOME_OVERRIDE = ENV['TABLEAU_TO_SIGMA_HOME']
+  DEFAULT_HOME  = File.expand_path('~/.tableau-to-sigma')
+  CACHE_VERSION = 2 # bump when gotchas()/requires_custom_sql? logic changes
+
+  def self.home
+    HOME_OVERRIDE || DEFAULT_HOME
+  end
+
+  def self.path
+    File.join(home, 'calc-cache.json')
+  end
+
+  def self.key(formula)
+    Digest::SHA1.hexdigest("v#{CACHE_VERSION}\n#{formula}")
+  end
+
+  # Load the on-disk cache once. Missing file is the normal first-run case.
+  def self.load
+    return {} unless File.file?(path)
+    data = JSON.parse(File.read(path))
+    (data['entries'].is_a?(Hash) ? data['entries'] : {})
+  rescue StandardError => e
+    warn "WARN  calc-cache.json at #{path} unreadable: #{e.message}; starting fresh"
+    {}
+  end
+
+  def self.save(entries)
+    FileUtils.mkdir_p(home)
+    tmp = "#{path}.tmp#{Process.pid}"
+    File.write(tmp, JSON.pretty_generate('version' => CACHE_VERSION,
+                                         'updated_at' => Time.now.utc.iso8601,
+                                         'entries' => entries))
+    File.rename(tmp, path)
+  rescue StandardError => e
+    warn "WARN  could not persist calc-cache.json: #{e.message}"
+  end
 end
 
 # ---- formula translation hints (carried over from the v1 script) --------
@@ -173,6 +261,45 @@ def requires_custom_sql?(formula)
   detect_manual_window_fns(formula).any? || !!(formula =~ /\{\s*(INCLUDE|EXCLUDE)\b/i)
 end
 
+# Derive the translation signals for one formula. Pure function of the formula
+# text → safe to memoize by formula hash. Returns the subset of the calc record
+# that depends ONLY on the formula (not on name/role/datasource metadata).
+def compute_signals(formula)
+  {
+    is_lod: !!lod?(formula),
+    requires_custom_sql: requires_custom_sql?(formula),
+    translation_notes: gotchas(formula)
+  }
+end
+
+# Memoizing wrapper. $calc_cache is the loaded hash; $calc_cache_stats tracks
+# hits/misses for the run summary. Set $calc_cache to nil to bypass (--no-cache).
+$calc_cache = nil
+$calc_cache_stats = { hits: 0, misses: 0 }
+def cached_signals(formula)
+  return compute_signals(formula).merge(formula_hash: nil) if formula.to_s.empty?
+  h = CalcCache.key(formula)
+  if $calc_cache && (hit = $calc_cache[h])
+    $calc_cache_stats[:hits] += 1
+    return {
+      is_lod: hit['is_lod'],
+      requires_custom_sql: hit['requires_custom_sql'],
+      translation_notes: hit['translation_notes'] || [],
+      formula_hash: h
+    }
+  end
+  $calc_cache_stats[:misses] += 1
+  sig = compute_signals(formula)
+  if $calc_cache
+    $calc_cache[h] = {
+      'is_lod' => sig[:is_lod],
+      'requires_custom_sql' => sig[:requires_custom_sql],
+      'translation_notes' => sig[:translation_notes]
+    }
+  end
+  sig.merge(formula_hash: h)
+end
+
 # ---- Metadata API path --------------------------------------------------
 
 GRAPHQL_QUERY = <<~GRAPHQL
@@ -225,18 +352,21 @@ def fetch_via_metadata_api(luid)
       next unless f['__typename'] == 'CalculatedField'
       formula = f['formula'].to_s
       depends_on = (f['fields'] || []).map { |d| d['name'] }.compact.uniq
+      sig = cached_signals(formula)
       calcs << {
         name: f['name'],
+        internal_name: f['name'],
         datasource: ds_name,
         formula: formula,
         role: f['role'],
         data_type: f['dataType'],
         aggregation: f['aggregation'],
         is_hidden: f['isHidden'] == true,
-        is_lod: !!lod?(formula),
+        is_lod: sig[:is_lod],
         depends_on: depends_on,
-        requires_custom_sql: requires_custom_sql?(formula),
-        translation_notes: gotchas(formula)
+        formula_hash: sig[:formula_hash],
+        requires_custom_sql: sig[:requires_custom_sql],
+        translation_notes: sig[:translation_notes]
       }
     end
   end
@@ -276,18 +406,26 @@ def fetch_via_twb_xml(twb_path)
       role_norm = role == 'measure' ? 'MEASURE' : (role == 'dimension' ? 'DIMENSION' : role)
       hidden = col.attributes['hidden'] == 'true'
       default_agg = col.attributes['default-aggregation']
+      sig = cached_signals(formula)
       calcs << {
         name: caption || internal_name,
+        # internal_name is the .twb id (e.g. "[Calculation_123]" or
+        # "[Field (copy)_456]") that worksheet column-instances reference, used
+        # by the --dashboard/--used-by working-set resolver to match calcs.
+        internal_name: internal_name,
         datasource: ds_name,
         formula: formula,
         role: role_norm,
         data_type: data_type ? data_type.upcase : nil,
         aggregation: default_agg,
         is_hidden: hidden,
-        is_lod: !!lod?(formula),
-        depends_on: [], # not available without a resolved field graph
-        requires_custom_sql: requires_custom_sql?(formula),
-        translation_notes: gotchas(formula)
+        is_lod: sig[:is_lod],
+        # depends_on is derived post-hoc from the formula (see resolve_used_calcs)
+        # since the .twb path has no resolved field graph.
+        depends_on: [],
+        formula_hash: sig[:formula_hash],
+        requires_custom_sql: sig[:requires_custom_sql],
+        translation_notes: sig[:translation_notes]
       }
     end
   end
@@ -295,7 +433,140 @@ def fetch_via_twb_xml(twb_path)
   { ok: true, calcs: calcs }
 end
 
+# ---- working-set resolution (--dashboard / --used-by) -------------------
+
+# Resolve the parse-twb-layout meta sidecar path for a given .twb. The parser
+# writes "<base>-meta.json" next to its layout JSON; migrate-tableau names the
+# layout "layout.json" (→ layout-meta.json) and the cold path may use
+# "<twb-base>-meta.json". We probe the common spellings next to the .twb.
+def resolve_meta_path(twb_path)
+  return nil unless twb_path
+  dir  = File.dirname(twb_path)
+  base = File.basename(twb_path, '.twb')
+  candidates = [
+    File.join(dir, "#{base}-meta.json"),
+    File.join(dir, 'layout-meta.json'),
+    File.join(dir, 'layout-content-meta.json')
+  ]
+  candidates.find { |p| File.file?(p) }
+end
+
+# Normalize a field reference to a bare token usable for matching. Worksheet
+# column-instances and formulas reference fields as "[Calculation_123]",
+# "[Region]", "[federated.abc].[none:Region:nk]" etc. We strip brackets and any
+# "[ds].[col]" qualifier, returning the inner-most segment. Both the calc index
+# and the used-token set run through this so a worksheet ref and a calc id line
+# up regardless of bracketing.
+def norm_token(ref)
+  s = ref.to_s.strip
+  # Take the last bracketed segment of a qualified ref ([ds].[col] → col).
+  if s =~ /\]\.\[([^\]]+)\]\s*$/
+    s = Regexp.last_match(1)
+  end
+  s = s.sub(/\A\[/, '').sub(/\]\z/, '')
+  # Tableau instance refs sometimes carry a "none:Name:nk" derivation prefix.
+  if s =~ /\A(?:none|sum|avg|min|max|ctd|cnt|usr|qk|tmn|tdy|tyr|tqr|tmo|twk):(.+?):(?:nk|qk|ok|ck)\z/i
+    s = Regexp.last_match(1)
+  end
+  s.strip
+end
+
+# Harvest every field token a scoped meta sidecar's worksheets reference. Returns
+# a Hash: dashboard-or-meta label → Set-ish array of normalized tokens. We can't
+# always know the dashboard name from the meta alone (the sidecar is keyed by
+# worksheet), so when a label can't be derived we bucket under the meta file's
+# basename. The token harvest is deliberately broad — every place a worksheet
+# can name a field — because a missed reference silently drops a needed calc.
+def used_tokens_from_meta(meta)
+  tokens = []
+  (meta['worksheets'] || {}).each_value do |w|
+    # column-instance derivations (keyed by the column ref)
+    (w['aggregations'] || {}).each_key { |k| tokens << norm_token(k) }
+    (w['measures'] || []).each { |m| tokens << norm_token(m['column']) }
+    (w['channels'] || {}).each_value do |c|
+      tokens << norm_token(c['column']) if c['column']
+      tokens << norm_token(c['field'])  if c['field']
+    end
+    if (s = w['sort'])
+      tokens << norm_token(s['column']) if s['column']
+      tokens << norm_token(s['using'])  if s['using']
+    end
+    %w[rows_shelf cols_shelf].each do |shelf|
+      (w.dig(shelf, 'fields') || []).each { |f| tokens << norm_token(f['raw']) }
+    end
+    (w['filters'] || []).each do |f|
+      tokens << norm_token(f['column_guid']) if f['column_guid']
+      tokens << f['column_caption'] if f['column_caption']
+    end
+    (w['ref_marks'] || []).each do |r|
+      tokens << norm_token(r['axis_column'])  if r['axis_column']
+      tokens << norm_token(r['value_column']) if r['value_column']
+      tokens << norm_token(r['field_x'])      if r['field_x']
+      tokens << norm_token(r['field_y'])      if r['field_y']
+    end
+    # The worksheet's own calc list: match by BOTH internal id and caption.
+    (w['calculations'] || []).each do |c|
+      tokens << norm_token(c['name']) if c['name']
+      tokens << c['caption'] if c['caption']
+    end
+  end
+  tokens.compact.map(&:to_s).reject(&:empty?).uniq
+end
+
+# Pull the bracketed field references out of a formula so we can walk the
+# dependency graph even on the .twb path (no resolved graph there). Captures
+# "[Calculation_123]", "[Region]", "[Some Field (copy)_45]". Function names like
+# IF/SUM aren't bracketed, so this only yields field refs.
+def formula_refs(formula)
+  formula.to_s.scan(/\[[^\[\]]+\]/).map { |t| norm_token(t) }.uniq
+end
+
+# Given the full calc list + a set of directly-used tokens, return the
+# transitive closure of calcs needed: a calc is in-scope if its internal id or
+# caption is used, and every calc THAT calc's formula references is pulled in
+# too (walking depends_on when present, else parsed formula refs).
+def resolve_used_calcs(calcs, used_tokens)
+  used = used_tokens.map(&:to_s).to_set
+  by_token = {}
+  calcs.each do |c|
+    # Index each calc under its normalized internal id, its normalized caption,
+    # and its raw caption — a dependency ref may match any of these spellings.
+    by_token[norm_token(c[:internal_name])] = c if c[:internal_name]
+    if c[:name]
+      by_token[norm_token(c[:name])] = c
+      by_token[c[:name].to_s] = c
+    end
+  end
+  # Seed: any calc whose id/caption is directly referenced by a worksheet.
+  frontier = calcs.select do |c|
+    used.include?(norm_token(c[:internal_name])) ||
+      used.include?(c[:name].to_s) ||
+      used.include?(norm_token(c[:name]))
+  end
+  kept = {}
+  frontier.each { |c| kept[c.object_id] = c }
+  queue = frontier.dup
+  until queue.empty?
+    c = queue.shift
+    deps = (c[:depends_on] || []).map { |d| norm_token(d) }
+    deps += formula_refs(c[:formula])
+    deps.uniq.each do |d|
+      dep = by_token[d]
+      next unless dep
+      next if kept.key?(dep.object_id)
+      kept[dep.object_id] = dep
+      queue << dep
+    end
+  end
+  kept.values
+end
+
 # ---- orchestration ------------------------------------------------------
+
+# Prime the per-formula translation cache (unless --no-cache). cached_signals
+# reads/writes $calc_cache during both fetch paths below.
+$calc_cache = opts[:cache] ? CalcCache.load : nil
+warn "calc-cache: #{$calc_cache.size} entries loaded from #{CalcCache.path}" if $calc_cache
 
 source_chosen = nil
 final_calcs = nil
@@ -345,6 +616,64 @@ when 'auto'
   end
 end
 
+# Persist the per-formula cache (signals computed during this run). Cheap and
+# idempotent; safe even on an all-calcs run.
+if $calc_cache
+  CalcCache.save($calc_cache)
+  warn "calc-cache: #{$calc_cache_stats[:hits]} hit / #{$calc_cache_stats[:misses]} miss (saved #{$calc_cache.size} entries → #{CalcCache.path})"
+end
+
+n_calcs_total = final_calcs.size
+
+# ---- working-set filter -------------------------------------------------
+used_by = nil
+if scoping?(opts)
+  meta_inputs = []
+  # Explicit --used-by sidecars first.
+  opts[:used_by].each do |p|
+    if File.file?(p)
+      meta_inputs << [p, JSON.parse(File.read(p))]
+    else
+      warn "WARN  --used-by sidecar not found: #{p}; skipping"
+    end
+  end
+  # --dashboard resolves the sidecar next to the .twb. The base-branch parser
+  # writes a dashboard-SCOPED meta when run with --dashboard; if migrate-tableau
+  # already produced that scoped meta, --used-by is the precise handle. Here we
+  # fall back to whatever full/scoped meta sits next to the .twb.
+  if !opts[:dashboards].empty?
+    mp = resolve_meta_path(twb_path)
+    if mp
+      meta_inputs << [mp, JSON.parse(File.read(mp))]
+      warn "scoping: --dashboard #{opts[:dashboards].inspect} resolving against meta sidecar #{mp}"
+    else
+      warn "WARN  --dashboard given but no meta sidecar found next to #{twb_path}; " \
+           'run parse-twb-layout.rb (with --dashboard) first or pass --used-by. ' \
+           'Emitting UNFILTERED calc set.'
+    end
+  end
+
+  if meta_inputs.empty?
+    warn 'WARN  scoping requested but no usable meta sidecars; emitting all calcs.'
+  else
+    all_tokens = []
+    used_by = {}
+    meta_inputs.each do |path, meta|
+      toks = used_tokens_from_meta(meta)
+      label = (opts[:dashboards].empty? ? File.basename(path) : opts[:dashboards].join(' + '))
+      used_by[label] ||= []
+      all_tokens.concat(toks)
+    end
+    scoped = resolve_used_calcs(final_calcs, all_tokens.uniq)
+    # Build the per-label index of kept calc CAPTIONS (what downstream sees).
+    kept_captions = scoped.map { |c| c[:name] }.compact.uniq.sort
+    used_by.each_key { |k| used_by[k] = kept_captions }
+    warn "scoping: #{final_calcs.size} total calcs → #{scoped.size} used by " \
+         "#{used_by.keys.join(', ')} (transitive closure over #{all_tokens.uniq.size} tokens)"
+    final_calcs = scoped
+  end
+end
+
 n_calcs = final_calcs.size
 n_lods  = final_calcs.count { |c| c[:is_lod] }
 n_sql   = final_calcs.count { |c| c[:requires_custom_sql] }
@@ -354,14 +683,20 @@ result = {
   workbook_name: wb_name,
   source: source_chosen,
   generated_at: Time.now.utc.iso8601,
+  scoped: scoping?(opts) && !used_by.nil?,
+  scope_dashboards: (opts[:dashboards].empty? ? nil : opts[:dashboards]),
+  scope_used_by: (opts[:used_by].empty? ? nil : opts[:used_by]),
+  n_calcs_total: n_calcs_total,
   n_calcs: n_calcs,
   n_lods: n_lods,
   n_requires_custom_sql: n_sql,
+  used_by: used_by,
   metadata_api_error: metadata_err,
   calcs: final_calcs
 }
 
 File.write(out_path, JSON.pretty_generate(result))
-warn "wrote #{out_path}  (source=#{source_chosen}, n_calcs=#{n_calcs}, n_lods=#{n_lods}, n_sql=#{n_sql})"
+scope_note = result[:scoped] ? " scoped #{n_calcs}/#{n_calcs_total}" : ''
+warn "wrote #{out_path}  (source=#{source_chosen}, n_calcs=#{n_calcs}, n_lods=#{n_lods}, n_sql=#{n_sql})#{scope_note}"
 puts JSON.pretty_generate(result)
 exit 0
