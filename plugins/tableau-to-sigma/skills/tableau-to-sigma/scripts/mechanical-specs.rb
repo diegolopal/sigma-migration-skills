@@ -187,7 +187,11 @@ module MechanicalSpecs
       // Capture out.security too — detected RLS/CLS rules (architecture B:
       // reported, not injected). Dropping it here is how RLS silently
       // vanished from the orchestrated path; the orchestrator now gates on it.
-      writeFileSync(#{meta_out.to_json}, JSON.stringify({ model: bare, warnings: out.warnings || [], stats: out.stats || {}, security: out.security || [] }, null, 2));
+      // workbookPatterns (param measure-pickers → control-driven Switch,
+      // param-filters, window/LOD calcs) + parameters (control values/defaults)
+      // are needed by the build layer to materialise controls/Switch tiles and by
+      // the "Not Migrated (and why)" report — pass them through (was dropped).
+      writeFileSync(#{meta_out.to_json}, JSON.stringify({ model: bare, warnings: out.warnings || [], stats: out.stats || {}, security: out.security || [], workbookPatterns: out.workbookPatterns || [], parameters: out.parameters || [] }, null, 2));
     JS
     o, e, st = Open3.capture3('node', shim)
     raise "converter failed: #{e}#{o}" unless st.success?
@@ -226,7 +230,8 @@ module MechanicalSpecs
            'detected RLS/CLS may not have been surfaced. Verify security manually (RLS is never silently dropped).'
     end
     result = { 'model' => bare, 'warnings' => out['warnings'] || [],
-               'stats' => out['stats'] || {}, 'security' => out['security'] || [] }
+               'stats' => out['stats'] || {}, 'security' => out['security'] || [],
+               'workbookPatterns' => out['workbookPatterns'] || [], 'parameters' => out['parameters'] || [] }
     File.write(meta_out, JSON.pretty_generate(result))
     result
   end
