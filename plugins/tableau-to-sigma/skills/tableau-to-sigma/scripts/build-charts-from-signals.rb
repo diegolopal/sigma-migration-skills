@@ -65,6 +65,13 @@ OptionParser.new do |p|
   p.on('--title STR',     'Dashboard title text element to emit (e.g., "Orders Dashboard")')         { |v| opts[:title] = v }
   p.on('--page-per-worksheet', 'Emit one Sigma page per Tableau worksheet (ignore dashboard layout)') { opts[:pages_mode] = :worksheet }
   p.on('--page-per-dashboard', 'Emit ONE Sigma page per Tableau DASHBOARD (multi-dashboard workbooks - bead ptrt)') { opts[:pages_mode] = :dashboard }
+  # Per-dashboard scoping (large-workbook one-tab-at-a-time builds). Normally the
+  # --layout is ALREADY scoped by parse-twb-layout --dashboard, so a single
+  # dashboard ⇒ exactly one page. These flags are a defensive belt-and-suspenders
+  # filter: if handed a FULL layout, keep only the matching dashboard(s) so a
+  # standalone invocation still builds just the requested tab. Repeatable.
+  p.on('--dashboard NAME', 'Build only this dashboard (name: exact or unique substring, case-insensitive). Repeatable.') { |v| (opts[:dashboards] ||= []) << v }
+  p.on('--page ID', 'Build only the dashboard whose zone-root id matches (rarely needed; --dashboard is the handle).') { |v| (opts[:pages] ||= []) << v }
   p.on('--auto-controls', 'Auto-emit Sigma controls from shared-view filters in --meta')              { opts[:auto_controls] = true }
   p.on('--out PATH')                { |v| opts[:out] = v }
   # Where the migration COVERAGE ledger lands (the aggregated drop/approx report
@@ -615,6 +622,21 @@ end
 
 # ---- Load inputs ----
 layout = JSON.parse(File.read(opts[:layout]))
+# Defensive per-dashboard scope: if --dashboard/--page was passed AND the layout
+# still carries more than the requested tab(s), keep only the matching ones.
+# (parse-twb-layout normally pre-scopes the layout, making this a no-op — but a
+# standalone build with a full layout should still honor the flag.) Name match is
+# case-insensitive exact OR unique substring, matching parse-twb-layout.
+if (opts[:dashboards] && !opts[:dashboards].empty?) || (opts[:pages] && !opts[:pages].empty?)
+  want = (opts[:dashboards] || []).map(&:downcase)
+  before = layout.size
+  layout = layout.select do |d|
+    n = d['dashboard'].to_s.downcase
+    want.any? { |w| n == w || (!w.empty? && n.include?(w)) }
+  end
+  warn "scoped layout to #{layout.size}/#{before} dashboard(s): #{layout.map { |d| d['dashboard'] }.join(', ')}"
+  abort("--dashboard/--page matched no dashboard in #{opts[:layout]}") if layout.empty?
+end
 mmap   = JSON.parse(File.read(opts[:mmap]))
 meta   = opts[:meta] ? JSON.parse(File.read(opts[:meta])) : { 'worksheets' => {}, 'shared_filters' => [] }
 # Caption → Tableau formula for every calculated field the workbook defines

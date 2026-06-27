@@ -42,6 +42,14 @@ OptionParser.new do |p|
        'master-absences / master-employees / master-time).') { |v| (opts[:master_ids] ||= []) << v }
   p.on('--rename PAIR')          { |v| from, to = v.split('=', 2); opts[:renames][from] = to }
   p.on('--no-fetch')             {     opts[:no_fetch] = true }
+  # Per-dashboard parity scoping (large-workbook one-tab-at-a-time gating). When
+  # set, only chart elements on the matching workbook PAGE(s) are planned/gated —
+  # so parity passes/fails per-tab instead of all-or-nothing across the whole
+  # workbook. Page name match is case-insensitive exact OR unique substring (the
+  # Sigma page name == the Tableau dashboard name in per-dashboard builds).
+  # Repeatable. --page is an alias accepting a page id or name.
+  p.on('--dashboard NAME', 'Scope parity to chart tiles on this workbook page only (name: exact or unique substring). Repeatable.') { |v| (opts[:dashboards] ||= []) << v }
+  p.on('--page NAME_OR_ID', 'Alias for --dashboard; matches a page by name or id. Repeatable.') { |v| (opts[:dashboards] ||= []) << v }
 end.parse!
 abort('usage: --tableau DIR --workbook-spec FILE --out FILE [--workbook-id ID] [--rename A=B]') unless opts[:tab] && opts[:wb] && opts[:out]
 
@@ -62,6 +70,22 @@ view_by_name = views.each_with_object({}) { |v, h| h[v['name']] = v }
 
 # Load Sigma side
 spec = JSON.parse(File.read(opts[:wb]))
+
+# Per-dashboard scope: narrow the pages we plan parity over to the matching
+# page(s). The master-detection + chart-matching loops below iterate `pages`
+# instead of `spec['pages']`, so a scoped run gates ONLY the target tab's tiles
+# (per-tab parity, not all-or-nothing). No flag ⇒ every page (current behavior).
+pages = spec['pages']
+if opts[:dashboards] && !opts[:dashboards].empty?
+  want = opts[:dashboards].map(&:downcase)
+  pages = spec['pages'].select do |pg|
+    nm = pg['name'].to_s.downcase
+    pid = pg['id'].to_s.downcase
+    want.any? { |w| !w.empty? && (nm == w || nm.include?(w) || pid == w) }
+  end
+  abort("--dashboard/--page matched no workbook page in #{opts[:wb]}") if pages.empty?
+  warn "scoped parity to page(s): #{pages.map { |p| p['name'] }.join(', ')}"
+end
 
 # Build the set of master-element-IDs we should treat as "the master" for
 # chart matching. Either explicit via --master-id (repeatable) OR auto-detect
@@ -111,7 +135,7 @@ spec['pages'].each do |pg|
   end
 end
 sigma_charts = []
-spec['pages'].each do |pg|
+pages.each do |pg|
   pg['elements'].each do |e|
     next if master_id_set.include?(e['id'])
     next unless e['source'] && master_id_set.include?(e['source']['elementId'])

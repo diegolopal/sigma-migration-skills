@@ -80,6 +80,7 @@ require 'fileutils'
 require 'open3'
 require 'date'
 require 'time'
+require 'set'
 require_relative 'lib/scout_gate'
 
 $stdout.sync = true # progress lines interleave correctly when piped/captured
@@ -126,6 +127,16 @@ OptionParser.new do |o|
   o.on('--converter MODE', %w[local hosted], "converter backend: 'local' (default; no data egress — " \
        "needs TABLEAU_MCP_BUILD) or 'hosted' (sends the .twb to sigma-data-model-mcp.onrender.com — " \
        'explicit consent to upload customer schema/SQL).') { |v| opts[:converter] = v }
+  # ---- Per-dashboard scoping (LARGE workbooks: build+gate ONE tab at a time) ----
+  # `--dashboard "<name>"` (repeatable) scopes parse-twb-layout, build-charts, and
+  # the parity plan to a single Tableau dashboard, so a 14-tab workbook is built
+  # and gated one tab at a time. `--page <id>` is the zone-root-id equivalent. When
+  # a Sigma workbook ALREADY exists for the prior tabs, pass `--workbook <sigma-id>`
+  # to APPEND the new dashboard's page to that workbook (PUT the merged spec)
+  # instead of POSTing a brand-new workbook.
+  o.on('--dashboard NAME', 'Build/gate only this Tableau dashboard (repeatable). Enables one-tab-at-a-time large-workbook migration.') { |v| (opts[:dashboards] ||= []) << v }
+  o.on('--page ID',        'Scope to the dashboard with this zone-root id (alt to --dashboard; repeatable).') { |v| (opts[:pages] ||= []) << v }
+  o.on('--workbook-target ID', 'Existing Sigma workbook id to APPEND the scoped dashboard page to (PUT-append instead of POST-new).') { |v| opts[:wb_target] = v }
 end.parse!
 
 abort 'missing --workbook or --workbook-id' unless opts[:wb_name] || opts[:wb_id]
@@ -133,6 +144,12 @@ abort 'missing --workbook or --workbook-id' unless opts[:wb_name] || opts[:wb_id
 # when --connection is omitted so the agent need not re-pass the id it just resolved.
 opts[:conn] ||= (JSON.parse(File.read(File.join(opts[:out], 'connection.json')))['connection_id'] rescue nil) if opts[:out]
 abort 'missing --connection (pass --connection <id>, or run intake.rb first and point --out at its --workdir)' unless opts[:conn] || opts[:finalize]
+
+# Per-dashboard scope flags, assembled once and threaded into parse-twb-layout,
+# build-charts, and auto-parity. Empty ⇒ whole-workbook (current behavior).
+DASH_SCOPE = (opts[:dashboards] || []).flat_map { |d| ['--dashboard', d] } +
+             (opts[:pages]      || []).flat_map { |p| ['--page', p] }
+SCOPED = !DASH_SCOPE.empty?
 
 slug = (opts[:wb_name] || opts[:wb_id]).gsub(/[^A-Za-z0-9_-]/, '-').squeeze('-')
 WORK = opts[:out] || File.expand_path("~/tableau-migration/#{slug}")
@@ -511,7 +528,8 @@ line "workbook '#{wb_name}' (#{wb_luid}): #{views.size} view(s)#{has_extracts ? 
 layout_json = File.join(WORK, 'dashboard-layout.json')
 have_twb = lane_wait_for.call(twb, 'workbook-content.twb')
 if have_twb
-  run!(['ruby', File.join(HERE, 'parse-twb-layout.rb'), twb, layout_json])
+  run!(['ruby', File.join(HERE, 'parse-twb-layout.rb'), twb, layout_json] + DASH_SCOPE)
+  line "per-dashboard scope: #{(opts[:dashboards] || []) + (opts[:pages] || [])} (single-tab build)" if SCOPED
   dash = JSON.parse(File.read(layout_json))
   zones = dash.is_a?(Array) ? dash.flat_map { |d| d['zones'] || [] } : (dash['zones'] || [])
   chart_zones = zones.select { |z| z['kind'] == 'chart' }
@@ -1362,6 +1380,10 @@ if mechanical
                '--coverage-out', File.join(WORK, 'coverage.json')]
   build_cmd += ['--meta', layout_json.sub(/\.json$/, '-meta.json')] if File.exist?(layout_json.sub(/\.json$/, '-meta.json'))
   build_cmd += ['--auto-controls'] if File.exist?(layout_json.sub(/\.json$/, '-meta.json'))
+  # Per-dashboard scope (defensive — the layout is already pre-scoped, so a single
+  # dashboard yields exactly one page; passing the flags keeps a standalone build
+  # honest if it's ever handed a full layout).
+  build_cmd += DASH_SCOPE if SCOPED
   run!(build_cmd, allow_fail: true)
   raw_charts = (JSON.parse(File.read(charts_path)) rescue [])
   chart_pages = raw_charts.is_a?(Hash) ? (raw_charts['pages'] || []) : nil
@@ -1428,6 +1450,69 @@ else
   spec['folderId'] = opts[:folder] if opts[:folder]
   layout_xml = (Specs.respond_to?(:layout_xml) ? Specs.layout_xml : nil)
 end
+# ---- PUT-APPEND: incremental one-tab-at-a-time into an EXISTING workbook ----
+# When --workbook-target <id> is set with a single-dashboard build, append the
+# newly-built page(s) to the existing workbook's spec instead of POSTing a brand
+# new workbook. We GET the live spec, merge in (a) any data-page elements
+# (master/helpers) not already present and (b) the new dashboard page(s), then
+# hand the MERGED spec to post-and-readback in PUT mode (--update-id). This is
+# the keystone of large-workbook migration: build + gate one tab, then append
+# the next without rebuilding the whole workbook.
+append_update_id = nil
+if opts[:wb_target]
+  require 'sigma_rest'
+  abort 'FATAL: --workbook-target requires --dashboard/--page (append is per-tab)' unless SCOPED
+  line "PUT-append: merging the scoped page(s) into existing workbook #{opts[:wb_target]}"
+  existing = begin
+    # accept: application/json ⇒ Sigma.request returns an ALREADY-PARSED Hash
+    # (see lib/sigma_rest.rb) — do not JSON.parse again.
+    Sigma.request(:get, "/v2/workbooks/#{opts[:wb_target]}/spec", accept: 'application/json')
+  rescue StandardError => e
+    abort "FATAL: could not GET existing workbook #{opts[:wb_target]} spec for append (#{e.class}: #{e.message}). " \
+          'Verify the id and that the token can read it.'
+  end
+  unless existing.is_a?(Hash) && existing['pages'].is_a?(Array)
+    abort "FATAL: workbook #{opts[:wb_target]} spec readback is not a page-bearing spec (got #{existing.class}); " \
+          'the readback may have returned YAML — append aborted to avoid clobbering the workbook.'
+  end
+  existing_page_names = existing['pages'].map { |p| p['name'] }.compact
+  existing_el_ids = existing['pages'].flat_map { |p| (p['elements'] || []).map { |e| e['id'] } }.compact.to_set
+  # Append only the NEW page(s) (skip a page name that already exists — re-running
+  # the same tab updates in place rather than duplicating).
+  new_pages = (spec['pages'] || []).reject do |p|
+    nm = p['name']
+    data_page = p['id'].to_s.downcase.include?('data')
+    if data_page
+      # Data-page elements: merge any element id not already in the workbook.
+      true # handled below; don't append the whole data page again
+    else
+      existing_page_names.include?(nm)
+    end
+  end
+  # Merge data-page elements (master/helpers) that the existing workbook lacks
+  # into its FIRST data page (or create one). New tabs reuse the same master.
+  built_data_pages = (spec['pages'] || []).select { |p| p['id'].to_s.downcase.include?('data') }
+  new_data_els = built_data_pages.flat_map { |p| p['elements'] || [] }
+                                 .reject { |e| existing_el_ids.include?(e['id']) }
+  if new_data_els.any?
+    target_data = existing['pages'].find { |p| p['id'].to_s.downcase.include?('data') }
+    if target_data
+      target_data['elements'] = (target_data['elements'] || []) + new_data_els
+    else
+      existing['pages'] << (built_data_pages.first || { 'id' => 'data', 'name' => 'Data', 'elements' => new_data_els })
+    end
+    line "append: +#{new_data_els.size} data-page element(s) (shared master/helpers not yet in workbook)"
+  end
+  if new_pages.empty?
+    line "append: page(s) #{(spec['pages'] || []).map { |p| p['name'] }.compact.inspect} already present in workbook — PUT will refresh in place"
+  end
+  existing['pages'] = existing['pages'] + new_pages
+  # Preserve the existing workbook's identity (name/folder); don't clobber.
+  spec = existing
+  append_update_id = opts[:wb_target]
+  line "append: workbook now has #{existing['pages'].size} page(s) after merge (+#{new_pages.size} new content page(s))"
+end
+
 File.write(wb_spec_path, JSON.pretty_generate(spec))
 wb_ids_path = File.join(WORK, 'wb-ids.json')
 
@@ -1440,8 +1525,11 @@ wb_ids_path = File.join(WORK, 'wb-ids.json')
 begin
   v_log = run_wb!(['ruby', File.join(HERE, 'validate-spec.rb'), '--type', 'workbook',
                    '--dm-context', dm_ids_path, wb_spec_path])
-  p_log = sigma_run_wb!(['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'workbook',
-                         '--spec', wb_spec_path, '--out', wb_ids_path, '--workdir', WORK])
+  par_cmd = ['ruby', File.join(HERE, 'post-and-readback.rb'), '--type', 'workbook',
+             '--spec', wb_spec_path, '--out', wb_ids_path, '--workdir', WORK]
+  # PUT-append into the targeted existing workbook (instead of POST-create).
+  par_cmd += ['--update-id', append_update_id] if append_update_id
+  p_log = sigma_run_wb!(par_cmd)
 rescue WorkbookBuildError => e
   failed = cull_failed_fields(e.captured_output,
                               (defined?(v_log) ? v_log : ''), (defined?(p_log) ? p_log : ''))

@@ -38,8 +38,55 @@ require 'json'
 $LOAD_PATH.unshift File.expand_path('lib', __dir__)
 require 'twb_xml'
 
-INP = ARGV[0] || abort('usage: parse-twb-layout.rb <workbook-content.twb> <out.json>')
-OUT = ARGV[1] || abort('usage: parse-twb-layout.rb <workbook-content.twb> <out.json>')
+# ---- Per-dashboard scoping ------------------------------------------------
+# `--dashboard "<name>"` (repeatable) and `--page <id>` let a LARGE workbook
+# (14+ dashboards) be migrated ONE tab at a time: only the matching
+# dashboard(s) are emitted in the layout JSON, and the *-meta.json worksheets /
+# shared_filters are scoped to those used by the selected dashboard(s). No
+# filter ⇒ current behavior (all dashboards, full meta). The dashboard name
+# match is case-insensitive and accepts either an exact match or a unique
+# substring (so `--dashboard "Regional"` resolves a long Tableau caption).
+# `--page <id>` filters on the dashboard's zone-root id (rarely needed; name is
+# the ergonomic handle) and is treated as an additional accepted token.
+DASHBOARD_FILTERS = []
+PAGE_FILTERS = []
+positional = []
+i = 0
+while i < ARGV.length
+  a = ARGV[i]
+  case a
+  when '--dashboard'
+    DASHBOARD_FILTERS << ARGV[i + 1].to_s
+    i += 2
+  when '--page'
+    PAGE_FILTERS << ARGV[i + 1].to_s
+    i += 2
+  else
+    positional << a
+    i += 1
+  end
+end
+
+INP = positional[0] || abort('usage: parse-twb-layout.rb <workbook-content.twb> <out.json> [--dashboard "<name>"] [--page <id>]')
+OUT = positional[1] || abort('usage: parse-twb-layout.rb <workbook-content.twb> <out.json> [--dashboard "<name>"] [--page <id>]')
+
+# True when no scoping requested → keep every dashboard (current behavior).
+def dashboard_scoping?
+  !DASHBOARD_FILTERS.empty? || !PAGE_FILTERS.empty?
+end
+
+# Decide whether a dashboard (by name + zone-root id) is in scope. Name match is
+# case-insensitive exact OR unique substring; page match is exact on the id.
+def dashboard_in_scope?(name, page_id)
+  return true unless dashboard_scoping?
+  n = name.to_s.downcase
+  name_hit = DASHBOARD_FILTERS.any? do |f|
+    fl = f.downcase
+    n == fl || (!fl.empty? && n.include?(fl))
+  end
+  page_hit = PAGE_FILTERS.any? { |p| !p.empty? && p == page_id.to_s }
+  name_hit || page_hit
+end
 
 xml = TwbXml.parse(File.read(INP))
 
@@ -837,6 +884,10 @@ end
 
 dashboards = []
 xml.elements.each('//dashboard') do |d|
+  dash_name = d.attributes['name']
+  # Zone-root id is the handle `--page` filters on.
+  zone_root_id = (r = d.elements['zones']) ? r.attributes['id'] : nil
+  next unless dashboard_in_scope?(dash_name, zone_root_id)
   zones = []
   seen_ids = {}
   d.elements.each('.//zone') do |z|
@@ -928,6 +979,9 @@ end
 # worksheet so the parser output looks normal to the build script.
 if dashboards.empty? && !worksheets.empty?
   worksheets.each_key do |ws_name|
+    # In a sheet-only workbook the worksheet IS the page, so `--dashboard`
+    # filters on the worksheet name (zone-root id n/a → nil).
+    next unless dashboard_in_scope?(ws_name, nil)
     ws_meta    = worksheets[ws_name]
     chart_kind = chart_kind_for(ws_meta)
     dashboards << {
@@ -1163,17 +1217,51 @@ unless stories.empty?
        'run scripts/build-story-pages.rb to emit one Sigma page per story point'
 end
 
+# When per-dashboard scoping is active, narrow the meta worksheets/shared_filters
+# to only what the in-scope dashboard(s) actually use, so a single-tab build
+# doesn't drag the whole workbook's worksheet metadata along. Worksheets are
+# referenced by a chart zone's `caption`; shared_filters are kept when their
+# resolved column_caption is filtered by an in-scope worksheet (conservative —
+# keep any whose column is referenced, plus all when we can't tell).
+scoped_worksheets = worksheets
+scoped_shared_filters = shared_filters
+if dashboard_scoping?
+  used_captions = {}
+  dashboards.each do |d|
+    d['zones'].each do |z|
+      cap = z['caption']
+      used_captions[cap] = true if cap && worksheets.key?(cap)
+    end
+  end
+  scoped_worksheets = worksheets.select { |name, _| used_captions[name] }
+  # Shared filters apply workbook-wide; keep those whose target column is filtered
+  # by an in-scope worksheet (matched on column_caption), so the auto-control
+  # builder still surfaces the relevant dashboard filters without the full set.
+  used_filter_captions = {}
+  scoped_worksheets.each_value do |w|
+    (w[:filters] || []).each do |f|
+      c = f['column_caption']
+      used_filter_captions[c] = true if c
+    end
+  end
+  scoped_shared_filters = shared_filters.select do |f|
+    c = f['column_caption']
+    c.nil? || used_filter_captions[c]
+  end
+end
+
 meta = {
-  'worksheets'     => worksheets.transform_values { |v| v.transform_keys(&:to_s) },
+  'worksheets'     => scoped_worksheets.transform_values { |v| v.transform_keys(&:to_s) },
   'stories'        => stories,
-  'shared_filters' => shared_filters,
+  'shared_filters' => scoped_shared_filters,
   'parameters'     => parameters,
   'column_aliases' => column_aliases,
   'columns_by_guid'=> COL_BY_GUID.transform_values { |v| { 'caption' => v[:caption], 'datatype' => v[:datatype] } }
 }
 META_OUT = OUT.sub(/\.json$/, '-meta.json')
 File.write(META_OUT, JSON.pretty_generate(meta))
-puts "wrote #{META_OUT} (#{meta['worksheets'].size} worksheets, #{shared_filters.size} shared filters)"
+scope_note = dashboard_scoping? ? " [scoped: #{(DASHBOARD_FILTERS + PAGE_FILTERS).join(', ')}]" : ''
+puts "wrote #{META_OUT} (#{meta['worksheets'].size} worksheets, #{meta['shared_filters'].size} shared filters)#{scope_note}"
 
 File.write(OUT, JSON.pretty_generate(dashboards))
 puts "wrote #{OUT} (#{dashboards.size} dashboards, #{dashboards.sum { |d| d['zones'].size }} zones total)"
