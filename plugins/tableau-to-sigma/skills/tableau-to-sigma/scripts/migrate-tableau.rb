@@ -151,6 +151,12 @@ DASH_SCOPE = (opts[:dashboards] || []).flat_map { |d| ['--dashboard', d] } +
              (opts[:pages]      || []).flat_map { |p| ['--page', p] }
 SCOPED = !DASH_SCOPE.empty?
 
+# Per-dashboard scope flags, assembled once and threaded into parse-twb-layout,
+# build-charts, and auto-parity. Empty ⇒ whole-workbook (current behavior).
+DASH_SCOPE = (opts[:dashboards] || []).flat_map { |d| ['--dashboard', d] } +
+             (opts[:pages]      || []).flat_map { |p| ['--page', p] }
+SCOPED = !DASH_SCOPE.empty?
+
 slug = (opts[:wb_name] || opts[:wb_id]).gsub(/[^A-Za-z0-9_-]/, '-').squeeze('-')
 WORK = opts[:out] || File.expand_path("~/tableau-migration/#{slug}")
 FileUtils.mkdir_p(File.join(WORK, 'views'))

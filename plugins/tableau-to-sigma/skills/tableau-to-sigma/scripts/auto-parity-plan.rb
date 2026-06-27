@@ -293,8 +293,75 @@ puts "  NOTE: actuals must be fetched via mcp__sigma-mcp-v2__query (MCP), not RE
 puts "        Fire all #{plan_entries.size} per-chart queries in ONE parallel tool-use batch,"
 puts "        then merge the rows into the parity plan's actual.rows arrays."
 
+# ---- Hidden calc-filter gate -----------------------------------------------
+# Worksheet-level filters on calc fields (Calculation_* refs) are invisible in
+# CSV exports — they silently reduce row counts and break parity. Parse them
+# from the dashboard layout if available; each requires either:
+#   status: "translated"  — the filter has been applied to the Sigma source
+#   status: "waived"      — explicitly waived with a reason
+# Any unresolved filter blocks plan status to "needs_review" (never "green").
+#
+# The dashboard-layout path is looked up next to the --tableau dir as
+# `dashboard-layout.json` (the default parse-twb-layout output location).
+hidden_filters_gate = []
+dash_layout_path = File.join(opts[:tab], 'dashboard-layout.json')
+if File.exist?(dash_layout_path)
+  begin
+    dash_layout = JSON.parse(File.read(dash_layout_path))
+    if dash_layout.is_a?(Array)
+      # Collect all tiles in scope (scoped to matched pages/dashboards when
+      # --dashboard was given; otherwise everything in the layout).
+      scoped_dash_names = opts[:dashboards]&.map(&:downcase)
+      dash_layout.each do |d|
+        next if scoped_dash_names &&
+                !scoped_dash_names.any? { |dn| d['dashboard'].to_s.downcase.include?(dn) }
+        (d['zones'] || []).each do |z|
+          next unless z['kind'] == 'chart'
+          hf_list = z['hidden_filters']
+          next if hf_list.nil? || hf_list.empty?
+          hf_list.each do |hf|
+            hidden_filters_gate << {
+              'tile'        => z['caption'],
+              'calc_ref'    => hf['calc_ref'],
+              'caption'     => hf['caption'],
+              'filter_type' => hf['filter_type'],
+              'members'     => hf['members'],
+              # Default status: unresolved. Caller must set "translated" or "waived".
+              'status'      => 'unresolved'
+            }.compact
+          end
+        end
+      end
+      if hidden_filters_gate.any?
+        warn "hidden_filters gate: #{hidden_filters_gate.size} unresolved calc-filter(s) found — " \
+             "plan will be 'needs_review' until each is translated or waived"
+        hidden_filters_gate.each do |hf|
+          warn "  [#{hf['tile']}] #{hf['calc_ref']} (#{hf['caption']}) filter_type=#{hf['filter_type']}"
+        end
+      else
+        warn "hidden_filters gate: no hidden calc-filters found in dashboard layout"
+      end
+    end
+  rescue JSON::ParserError => e
+    warn "hidden_filters gate: could not parse #{dash_layout_path}: #{e.message}"
+  end
+else
+  warn "hidden_filters gate: no dashboard-layout.json at #{dash_layout_path} (run parse-twb-layout first)"
+end
+
+# Derive plan-level status
+unresolved_hf = hidden_filters_gate.reject { |hf| %w[translated waived].include?(hf['status']) }
+plan_status = unresolved_hf.any? ? 'needs_review' : 'green'
+warn "plan status: #{plan_status}" \
+     "#{unresolved_hf.any? ? " (#{unresolved_hf.size} unresolved hidden calc-filter(s))" : ''}"
+
 # Wrap output
-output = { 'extract' => extract, 'charts' => plan_entries }
+output = {
+  'extract'        => extract,
+  'charts'         => plan_entries,
+  'hidden_filters' => hidden_filters_gate,
+  'plan_status'    => plan_status
+}
 File.write(opts[:out], JSON.pretty_generate(output))
 
 puts "wrote #{opts[:out]}"

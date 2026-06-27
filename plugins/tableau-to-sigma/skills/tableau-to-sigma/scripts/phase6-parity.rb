@@ -43,6 +43,11 @@ OptionParser.new do |p|
   p.on('--extract-tol F', Float) { |v| opts[:extract_tol] = v }
   p.on('--rename PAIR', 'Tableau-name=Sigma-name (repeat)') { |v| opts[:renames] << v }
   p.on('--dashboard-layout PATH', 'parse-twb-layout output for the tile census (default <tableau-dir>/dashboard-layout.json)') { |v| opts[:dash_layout] = v }
+  # Per-dashboard parity scoping: scope parity checks to only tiles on the
+  # named dashboard (case-insensitive exact or unique substring). Repeatable.
+  # Threaded through to auto-parity-plan.rb's --dashboard flag so both the
+  # plan and the gate operate on the same scoped tile set.
+  p.on('--dashboard NAME', 'Scope parity checks to tiles on this dashboard only (exact or substring). Repeatable.') { |v| (opts[:dashboards] ||= []) << v }
   p.on('--finalize')             { opts[:finalize] = true }
   p.on('--actuals PATH', 'JSON: { "<chart name>": [[dim, val], ...] } — for --finalize') { |v| opts[:actuals] = v }
 end.parse!
@@ -80,12 +85,51 @@ if !opts[:finalize]
                '--workbook-spec', File.join(opts[:tab], 'wb-readback.json'),
                '--out', plan_path]
   opts[:renames].each { |r| plan_args.concat(['--rename', r]) }
+  # Thread --dashboard scoping through to the parity plan so both the chart
+  # matching and the hidden_filters gate operate on the same tile set.
+  (opts[:dashboards] || []).each { |d| plan_args.concat(['--dashboard', d]) }
   out, err, status = Open3.capture3(*plan_args)
   warn out unless out.empty?
   warn err unless err.empty?
   abort('auto-parity-plan failed') unless status.success?
 
   plan = JSON.parse(File.read(plan_path))
+
+  # ---- Hidden calc-filter gate (Phase 6 enforcement) -----------------------
+  # If the parity plan contains unresolved hidden calc-filters, Phase 6 must
+  # refuse to proceed. Worksheet-level calc-field filters are invisible in CSV
+  # exports; an unresolved filter means the Sigma source was NOT filtered to
+  # match, so any parity comparison would be against a row-superset and could
+  # silently PASS with wrong numbers. A real case dropped 248→52 rows.
+  unresolved_hf = (plan['hidden_filters'] || []).reject do |hf|
+    %w[translated waived].include?(hf['status'])
+  end
+  if unresolved_hf.any?
+    warn ""
+    warn "=" * 70
+    warn "PHASE 6 BLOCKED — unresolved hidden worksheet calc-filter(s)"
+    warn "=" * 70
+    warn ""
+    warn "The following worksheet-level filters target calculated fields and are"
+    warn "invisible in Tableau CSV exports. They must be either:"
+    warn "  translated — applied to the Sigma source so row counts match, OR"
+    warn "  waived     — explicitly waived (set status: 'waived' + reason in"
+    warn "               #{plan_path})"
+    warn ""
+    unresolved_hf.each_with_index do |hf, i|
+      warn "  [#{i + 1}] tile=#{hf['tile'].inspect} calc_ref=#{hf['calc_ref'].inspect}" \
+           " caption=#{hf['caption'].inspect} filter_type=#{hf['filter_type']}"
+      if hf['members'] && !hf['members'].empty?
+        warn "       members: #{hf['members'].inspect}"
+      end
+    end
+    warn ""
+    warn "To waive: open #{plan_path}, find each entry in hidden_filters, and"
+    warn "set \"status\": \"waived\" + add \"waive_reason\": \"<your reason>\"."
+    warn "Then re-run this script."
+    warn ""
+    abort("Phase 6 blocked: #{unresolved_hf.size} unresolved hidden calc-filter(s)")
+  end
 
   # Pooled Sigma-side actuals collection (collect-parity-actuals.rb): the
   # element CSV export serves every chart kind except pivot-tables, N-wide,

@@ -656,6 +656,44 @@ xml.elements.each('//worksheet') do |ws|
   is_kpi = kpi_capable_mark && !is_crosstab &&
            total_dim_count == 0 && total_measure_count >= 1
 
+  # Hidden calc filters: worksheet-level filters whose target column is a
+  # calculated field. These are invisible in Tableau CSV exports — they silently
+  # reduce row counts and cause parity divergences with no warning. A filter is
+  # "calc-targeted" when:
+  #   - the column ref contains `Calculation_`
+  #   - the column ref starts with `[Parameters.`
+  #   - OR the resolved COL_BY_GUID entry matches a calc we know about
+  # We walk the already-built filters_info (worksheet-level only, NOT
+  # shared-view filters — those are dashboard-level).
+  # Build a set of known calc column names from this worksheet's calcs plus
+  # top-level datasource calcs for quick membership test.
+  ws_calc_names = calcs.map { |c| c['name'].to_s }.to_set
+  ws_calc_captions = calcs.map { |c| c['caption'].to_s }.reject(&:empty?).to_set
+  hidden_filters = filters_info.select do |fi|
+    raw = fi['raw_param'].to_s
+    guid = fi['column_guid'].to_s
+    # Check 1: raw param contains Calculation_ or Parameters.
+    next true if raw =~ /Calculation_\d+/i
+    next true if raw =~ /\[Parameters\./i
+    # Check 2: resolved guid is a Calculation_ id
+    next true if guid =~ /\ACalculation_\d+\z/i
+    # Check 3: caption matches a known calc in this worksheet
+    cap = fi['column_caption'].to_s
+    next true if !cap.empty? && (ws_calc_captions.include?(cap) || ws_calc_names.include?("[#{cap}]"))
+    false
+  end.map do |fi|
+    hf = {
+      'calc_ref'    => fi['raw_param'],
+      'caption'     => fi['column_caption'],
+      'filter_type' => fi['raw_class'],
+      'kind'        => fi['kind']
+    }
+    hf['members'] = fi['members'] if fi['kind'] == 'list' && fi['members']
+    hf['min']     = fi['min']     if fi['min']
+    hf['max']     = fi['max']     if fi['max']
+    hf.compact
+  end
+
   worksheets[name] = {
     mark_class:       mark_class,
     geo_role:         geo_role,
@@ -664,6 +702,7 @@ xml.elements.each('//worksheet') do |ws|
     has_geometry:     has_geometry,
     sort:             sort_info,
     filters:          filters_info,
+    hidden_filters:   hidden_filters,
     aggregations:     aggregations,
     channels:         channels,
     formats:          formats,
@@ -933,9 +972,10 @@ xml.elements.each('//dashboard') do |d|
       'mark_class'   => ws_meta&.dig(:mark_class),
       'geo_role'     => ws_meta&.dig(:geo_role),
       # New per-worksheet signal fields (nil for non-chart zones)
-      'sort'         => (kind == 'chart' ? ws_meta&.dig(:sort)          : nil),
-      'filters'      => (kind == 'chart' ? ws_meta&.dig(:filters)       : nil),
-      'aggregations' => (kind == 'chart' ? ws_meta&.dig(:aggregations)  : nil),
+      'sort'           => (kind == 'chart' ? ws_meta&.dig(:sort)           : nil),
+      'filters'        => (kind == 'chart' ? ws_meta&.dig(:filters)       : nil),
+      'hidden_filters' => (kind == 'chart' ? (ws_meta&.dig(:hidden_filters) || []) : nil),
+      'aggregations'   => (kind == 'chart' ? ws_meta&.dig(:aggregations)  : nil),
       'channels'     => (kind == 'chart' ? ws_meta&.dig(:channels)      : nil),
       'formats'      => (kind == 'chart' ? ws_meta&.dig(:formats)       : nil),
       'calculations' => (kind == 'chart' ? ws_meta&.dig(:calculations)  : nil),
@@ -995,12 +1035,13 @@ if dashboards.empty? && !worksheets.empty?
         'y_pct'        => 0.0,
         'w_pct'        => 100.0,
         'h_pct'        => 100.0,
-        'chart_kind'   => chart_kind,
-        'mark_class'   => ws_meta[:mark_class],
-        'geo_role'     => ws_meta[:geo_role],
-        'sort'         => ws_meta[:sort],
-        'filters'      => ws_meta[:filters],
-        'aggregations' => ws_meta[:aggregations],
+        'chart_kind'     => chart_kind,
+        'mark_class'     => ws_meta[:mark_class],
+        'geo_role'       => ws_meta[:geo_role],
+        'sort'           => ws_meta[:sort],
+        'filters'        => ws_meta[:filters],
+        'hidden_filters' => ws_meta[:hidden_filters] || [],
+        'aggregations'   => ws_meta[:aggregations],
         'channels'     => ws_meta[:channels],
         'formats'      => ws_meta[:formats],
         'calculations' => ws_meta[:calculations],
