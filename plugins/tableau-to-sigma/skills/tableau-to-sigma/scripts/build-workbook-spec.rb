@@ -91,6 +91,22 @@ master_columns =
   end
 abort('no master columns to emit') if master_columns.empty?
 
+# Dedupe master column ids: two DM columns whose distinct display names slug to the
+# same id (e.g. a calc "Market Maker" alongside the physical "MARKET_MAKER") would
+# emit a duplicate id and 400 the workbook POST ("Duplicate id"). Names/formulas stay
+# distinct (charts reference by name), so we only need to make the ids unique — keep
+# the first, suffix later collisions (-2, -3, …).
+seen_master_ids = {}
+master_columns.each do |c|
+  base = c['id']
+  next unless seen_master_ids[base]
+  n = 2
+  n += 1 while seen_master_ids["#{base}-#{n}"]
+  c['id'] = "#{base}-#{n}"
+ensure
+  seen_master_ids[c['id']] = true
+end
+
 # Build the data page
 data_page = {
   'id'   => 'page-data',
