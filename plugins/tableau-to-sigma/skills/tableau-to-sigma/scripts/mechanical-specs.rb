@@ -139,7 +139,12 @@ module MechanicalSpecs
     derived = els.select { |e| e.dig('source', 'kind') == 'table' && e.dig('source', 'elementId') }
                  .reject { |e| elem_name(e) =~ dim_re }
     return derived.max_by { |e| (e['columns'] || []).size } if derived.any?
-    base = els.select { |e| e.dig('source', 'kind') == 'warehouse-table' }
+    # Base candidates are warehouse-table elements OR custom-SQL ('sql') elements —
+    # the modern Tableau object/relationship model emits one kind:'sql' element per
+    # logical object (often the only kind present in a multi-custom-SQL workbook).
+    # Without 'sql' here, pick_fact returned nil and the whole mechanical path
+    # FATAL-aborted on object-model workbooks (the DDMX empty-DM dead-end).
+    base = els.select { |e| %w[warehouse-table sql].include?(e.dig('source', 'kind')) }
     return nil if base.empty?
     facts = base.reject { |e| elem_name(e) =~ dim_re }
     (facts.empty? ? base : facts).max_by { |e| (e['columns'] || []).size }
@@ -400,6 +405,10 @@ module MechanicalSpecs
   # { "TABLE" => [{'name','type'}] } for picking the dim's date payload column.
   # Returns an array of human-readable action messages.
   def recover_computed_key_joins!(model, twb_xml, real_cols, dim_catalogs = {})
+    # Binary / mixed-encoding .twb content (some exports embed non-UTF-8 bytes)
+    # makes the raw caption regex .scan below throw "invalid byte sequence in
+    # UTF-8", aborting the whole mechanical pass. Scrub to valid UTF-8 first.
+    twb_xml = twb_xml.to_s.encode('UTF-8', 'binary', invalid: :replace, undef: :replace, replace: '')
     msgs = []
     els = all_elements(model)
     fact = els.select { |e| e.dig('source', 'kind') == 'warehouse-table' }

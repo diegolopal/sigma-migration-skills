@@ -69,6 +69,8 @@
 #      (broken extraction — re-run calc discovery; NO Sigma objects created);
 # 14 = migration GREEN + Phase E proposals pending acceptance (re-run
 #      --finalize with --enhance --enhance-accept ...);
+# 15 = converter produced an EMPTY data model (0 elements/columns) — unsupported
+#      datasource shape; NO Sigma objects created (capture the .twb for the converter);
 # 3 = parity/guard fail; 4 = workbook layer needs the agent path; other = error.
 require 'json'
 require 'csv'
@@ -601,6 +603,28 @@ if mechanical
   st = conv['stats'] || {}
   line "mechanical converter: #{st['elements']} element(s), #{st['columns']} column(s), " \
        "#{st['metrics']} metric(s), #{st['relationships']} relationship(s); #{(conv['warnings'] || []).size} warning(s)"
+
+  # CONVERTER EMPTY-MODEL GUARD (never silently blank): if the converter parsed
+  # the datasource but produced ZERO data-model elements/columns, the mechanical
+  # path has nothing to build — proceeding ships an element-less workbook (the
+  # object-model "empty DM" dead-end). Hard-stop with the converter's own warnings
+  # and a clear pointer, before any Sigma object is created. (The encapsulated
+  # object model is now supported; this catches the next unsupported shape loudly
+  # instead of as a blank dashboard.)
+  if st['elements'].to_i.zero? || st['columns'].to_i.zero?
+    puts
+    puts '==================== CONVERTER STOP (empty data model) ===================='
+    puts "The Tableau→Sigma converter produced #{st['elements'].to_i} element(s) / " \
+         "#{st['columns'].to_i} column(s) from this workbook — nothing to build a data model from."
+    puts 'Likely an unsupported datasource shape (e.g. a relationship/object model variant'
+    puts "the converter can't yet model). Converter warnings:"
+    (conv['warnings'] || []).first(8).each { |w| puts "  - #{w.to_s[0, 160]}" }
+    puts ''
+    puts 'No Sigma objects were created. Capture the .twb datasource shape for the converter repo.'
+    mark('phase1-join')
+    phase_summary
+    exit 15
+  end
 
   # ---- RLS gate (never silently drop) -------------------------------------
   # The converter detects row-level security (USERNAME/USERATTRIBUTE/ISMEMBEROF

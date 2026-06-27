@@ -12,6 +12,11 @@ require 'json'
 VIEWS_DIR = ARGV[0] || abort('usage: fetch-view-data.rb <views-dir> <out-signals.json>')
 OUT       = ARGV[1] || abort('usage: fetch-view-data.rb <views-dir> <out-signals.json>')
 
+# Files larger than this (bytes) are sampled rather than fully loaded.
+SIZE_CAP_BYTES  = 5 * 1024 * 1024  # 5 MB
+# Maximum rows to collect when sampling a large or oversized file.
+SAMPLE_ROW_LIMIT = 5_000
+
 def parse_num(s)
   s = s.to_s.strip.delete(',')
   return nil if s.empty?
@@ -54,39 +59,113 @@ def detect_aggregation(header)
   { agg: agg, of: m[2].strip }
 end
 
-signals = {}
-Dir["#{VIEWS_DIR}/*.csv"].sort.each do |path|
-  view_id = File.basename(path, '.csv')
-  csv     = CSV.read(path, headers: true)
-  headers = csv.headers.map { |h| h.strip }
+# Scrub raw file bytes to clean UTF-8 before handing to the CSV parser.
+def safe_read(path)
+  File.binread(path).encode('UTF-8', 'binary',
+    invalid: :replace, undef: :replace, replace: '')
+end
 
-  by_col = {}
-  agg_hint = {}
-  headers.each do |h|
-    col_vals = csv.map { |r| r[h] }.compact
-    kind = column_kind(col_vals)
-    by_col[h] = {
-      kind: kind,
-      distinct_count: col_vals.uniq.size,
-      sample: col_vals.first(5),
-      distinct: (kind == 'dimension' ? col_vals.uniq.sort_by(&:to_s) : nil),
-      numeric_range: (kind == 'numeric' ?
-        [col_vals.map { |v| parse_num(v) }.compact.min,
-         col_vals.map { |v| parse_num(v) }.compact.max] : nil)
-    }
-    if (d = detect_aggregation(h))
-      agg_hint[h] = d
-    end
+# Collect up to limit CSV::Row objects from content using opts.
+# Uses block form of CSV.parse so rows are always CSV::Row objects.
+def collect_rows(content, opts, limit)
+  rows = []
+  CSV.parse(content, **opts) do |row|
+    rows << row
+    break if rows.size >= limit
+  end
+  rows
+end
+
+# Parse a CSV, tolerating malformed quoting.
+# Returns [rows_array, sampled_bool]:
+#   rows_array — CSV::Row objects (bounded by SAMPLE_ROW_LIMIT when large)
+#   sampled    — true when the file was truncated / row-sampled
+#
+# Strategy:
+#   1. Try liberal_parsing: true (handles most minor quote issues).
+#   2. If that raises, retry with quote_char: "\x00" (disables quoting
+#      entirely), which tolerates severely unbalanced quote characters.
+# Either way one bad file does NOT propagate an exception to the caller.
+def parse_csv_safe(path)
+  large_file = File.size(path) > SIZE_CAP_BYTES
+  limit      = SAMPLE_ROW_LIMIT
+  content    = safe_read(path)
+
+  base_opts = { headers: true, liberal_parsing: true }
+
+  rows = begin
+    collect_rows(content, base_opts, limit)
+  rescue CSV::MalformedCSVError
+    warn "  [fetch-view-data] liberal_parsing failed for #{File.basename(path)}, " \
+         "retrying with quote_char=NUL"
+    collect_rows(content, base_opts.merge(quote_char: "\x00"), limit)
   end
 
-  signals[view_id] = {
-    headers: headers,
-    row_count: csv.size,
-    columns: by_col,
-    aggregation_hints: agg_hint.empty? ? nil : agg_hint
-  }
+  total_rows = rows.size
+  sampled    = large_file || total_rows >= limit
+
+  # Warn if we had to truncate (sampled flag is also recorded in the output).
+  if sampled
+    warn "  [fetch-view-data] SAMPLED #{File.basename(path, '.csv')}: " \
+         "#{File.size(path)} bytes, using first #{total_rows} rows " \
+         "(distinct values / ranges are approximate)"
+  end
+
+  [rows, sampled]
+end
+
+signals  = {}
+warnings = []
+
+Dir["#{VIEWS_DIR}/*.csv"].sort.each do |path|
+  view_id = File.basename(path, '.csv')
+
+  begin
+    rows, sampled = parse_csv_safe(path)
+    next if rows.empty?
+
+    headers = rows.first.headers.map { |h| h.to_s.strip }
+
+    by_col   = {}
+    agg_hint = {}
+    headers.each do |h|
+      col_vals = rows.map { |r| r[h] }.compact
+      kind = column_kind(col_vals)
+      col_entry = {
+        kind:           kind,
+        distinct_count: col_vals.uniq.size,
+        sample:         col_vals.first(5),
+        distinct:       (kind == 'dimension' ? col_vals.uniq.sort_by(&:to_s) : nil),
+        numeric_range:  (kind == 'numeric' ?
+          [col_vals.map { |v| parse_num(v) }.compact.min,
+           col_vals.map { |v| parse_num(v) }.compact.max] : nil)
+      }
+      col_entry[:sampled] = true if sampled
+      by_col[h] = col_entry
+      if (d = detect_aggregation(h))
+        agg_hint[h] = d
+      end
+    end
+
+    view_entry = {
+      headers:           headers,
+      row_count:         rows.size,
+      columns:           by_col,
+      aggregation_hints: agg_hint.empty? ? nil : agg_hint
+    }
+    view_entry[:sampled] = true if sampled
+    signals[view_id] = view_entry
+
+  rescue => e
+    msg = "  [fetch-view-data] SKIPPED #{view_id} (#{File.basename(path)}): " \
+          "#{e.class}: #{e.message.lines.first&.chomp}"
+    warn msg
+    warnings << { view_id: view_id, path: path,
+                  error: "#{e.class}: #{e.message.lines.first&.chomp}" }
+  end
 end
 
 File.write(OUT, JSON.pretty_generate(signals))
 puts "wrote #{OUT}  (#{signals.size} views, total " \
      "#{signals.values.sum { |v| v[:row_count] || 0 }} rows)"
+warn "  [fetch-view-data] #{warnings.size} view(s) skipped due to parse errors" unless warnings.empty?
