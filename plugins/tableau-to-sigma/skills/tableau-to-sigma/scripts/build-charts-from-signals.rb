@@ -1341,6 +1341,49 @@ def pick_tableau_format(formats, header)
   nil
 end
 
+# ---- "Measure Names on rows" → ordered values[] members -------------------
+# First-class the DDMX crosstab pattern (N bespoke calc measures stacked as the
+# rows of a crosstab). z['measures'] is the parser's document-order walk of the
+# worksheet's quantitative column-instances — i.e. the ORDERED Measure-Names
+# members as Tableau renders them. Return them as add_col-shaped field hashes,
+# IN ORDER, so build_pivot_element emits one ordered values[] entry per member:
+#
+#   - DROP dim-shaped entries (None / date-trunc derivations land in
+#     z['measures'] too; a Sum() over a date silently corrupts the grid).
+#   - A member whose caption matches a worksheet CALCULATION is emitted with
+#     derivation 'usr' so it registers in user_vals and the User-derivation
+#     resolver downstream translates its window/ratio formula (instead of the
+#     blind Sum([Master/<calc name>]) that the SHELF_AGG fallback would emit and
+#     which would HARD-FAIL the POST — the exact one-off-per-measure breakage
+#     this recipe replaces).
+#   - A plain warehouse measure keeps its OWN Tableau aggregation (Sum/Avg/
+#     CountD/…); add_col then resolves its per-measure format from z['formats'].
+#
+# Returns [] when there are no measure members (caller falls back / warns).
+def measure_names_members(z, meta)
+  cbg = meta['columns_by_guid'] || {}
+  calc_names = (z['calculations'] || []).map { |c| c['name'].to_s.gsub(/^\[|\]$/, '').strip.downcase }.reject(&:empty?)
+  (z['measures'] || []).each_with_object([]) do |m, out|
+    deriv = (m['derivation'] || 'Sum').to_s
+    next if deriv == 'None' || DATE_TRUNC.key?(deriv)
+    col_ref = m['column'].to_s
+    guid = guid_from_text(col_ref)
+    # Resolve the member's display caption (calc fields surface as a GUID /
+    # Calculation_ internal id; the human caption lives in columns_by_guid).
+    cap = (guid && cbg.dig(guid, 'caption')) ||
+          col_ref.sub(/^\[[^\]]+\]\./, '').gsub(/^\[|\]$/, '').sub(/^[a-z]+:/i, '').sub(/:[a-z]+$/i, '')
+    is_calc = calc_names.include?(cap.to_s.strip.downcase)
+    out << {
+      'role'       => 'measure',
+      # 'usr' routes calc members to the User-derivation resolver (window/ratio
+      # translation); plain measures keep their own warehouse aggregation.
+      'derivation' => is_calc ? 'usr' : deriv.downcase,
+      'raw'        => col_ref,
+      'guid'       => guid
+    }
+  end
+end
+
 # ---- Pivot-table emission --------------------------------------------------
 # Tableau crosstab worksheets (mark=Text or mark=Square with dims on both
 # Rows AND Cols shelves, OR the Measure Names crosstab pattern) translate to
@@ -1471,21 +1514,27 @@ def build_pivot_element(z, meta, mmap, opts, warnings, data_elements = [])
     add_col.call(f, :value) if f['role'] == 'measure'
   end
 
-  # Measure-Names pattern: shelves carry the placeholder but the actual
-  # measures live in z['measures']. Materialize them here — SKIPPING entries
-  # that are really shelf DIMS (date-trunc / None derivations land in
-  # z['measures'] too; emitting Sum() over a date silently corrupted the grid).
-  if values_arr.empty? && (z['measures'] || []).any?
-    z['measures'].each do |m|
-      deriv = (m['derivation'] || 'Sum').to_s
-      next if deriv == 'None' || DATE_TRUNC.key?(deriv)
-      add_col.call({
-        'role'       => 'measure',
-        'derivation' => deriv.downcase,
-        'raw'        => m['column'],
-        'guid'       => guid_from_text(m['column'].to_s)
-      }, :value)
-    end
+  # ---- "Measure Names on rows" crosstab recipe (first-classed) -------------
+  # The DDMX-class pattern: a worksheet stacks N bespoke calc measures as the
+  # rows of a crosstab (Measure Names on rows × week/quarter on columns) with
+  # Measure Values in the pane. The shelves carry only the [Measure Names]
+  # placeholder pill — the actual ORDERED members live in z['measures'] (the
+  # parser walks them in .twb document order, which IS the displayed stack
+  # order). Rather than treating each measure as a one-off, map the ordered
+  # members → an ordered Sigma pivot `values[]` array, one column per measure,
+  # in the same order Tableau renders them. add_col appends to values_arr in
+  # call order, so iterating the members in order yields an ordered values[].
+  #
+  # Per-member resolution mirrors the chart-side Measure-Names path: a member
+  # backed by a worksheet CALC is left for the User-derivation resolver below
+  # (emitted with derivation 'usr' so it registers in user_vals and gets its
+  # window/ratio formula translated), while a plain warehouse measure carries
+  # its own Tableau aggregation (Sum/Avg/CountD/…) instead of a blind Sum().
+  # Per-measure formats are picked by add_col from z['formats'] / the master
+  # map, so each stacked value keeps its own number/percent/currency format.
+  if values_arr.empty?
+    members = measure_names_members(z, meta)
+    members.each { |m| add_col.call(m, :value) }
   end
 
   if values_arr.empty? || (rows_by.empty? && cols_by.empty?)
