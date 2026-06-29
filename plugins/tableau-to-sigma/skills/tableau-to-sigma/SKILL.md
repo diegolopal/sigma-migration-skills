@@ -68,8 +68,26 @@ ruby scripts/migrate-tableau.rb --workbook "<name>" \
 > `.twb` contents (schema/SQL/formulas) off-box. The **hosted** converter
 > (`https://sigma-data-model-mcp.onrender.com/mcp`) is used **only** with explicit consent
 > (`--converter hosted` or `SIGMA_CONVERTER_ALLOW_HOSTED=1`) because it uploads the `.twb`
-> to a third-party server. With neither, pass 1 STOPS and prints both options — it never
+> to a third-party server. With neither, pass 1 STOPS and prints the options — it never
 > falls back to hosted on its own. See QUICKSTART "the data-model converter backend".
+>
+> **No converter available? Re-enter the GATED spine — do NOT hand-drive raw POSTs.**
+> When no backend is configured, the fallback is *not* "build everything by hand and POST
+> it yourself" (that skips preflight/control lint, Phase-6 parity, and the
+> `assert-phase6-ran` hard gate — the exact way a workbook ships with missing controls and
+> an unverified parity claim). Instead author the specs *once* and let the scripts run them:
+> 1. Get the **DM spec** — call the `sigma-data-model` MCP's `convert_tableau_to_sigma` on
+>    the `.twb` if it's available to you, else author it by hand (see `sigma-data-models`).
+> 2. Author the **workbook spec** (see the companion `sigma-workbooks` skill). Reference the
+>    data model with placeholders the orchestrator binds to the live readback ids:
+>    `"__DM_ID__"` (top-level `dataModelId`) and `"__DM_ELEMENT__:<ElementName>"` per element
+>    (the fact element is `"__DM_ELEMENT__:__FACT__"`). An unresolved element ref aborts loudly.
+> 3. Write `dm-spec.json` + `wb-spec.json` into the workdir and re-run the orchestrator with
+>    `--dm-spec <path> --wb-spec <path>` (fresh build) — or, when the DM is **already posted**
+>    (exit 4 workbook-layer handoff), `--reuse-dm <dataModelId> --wb-spec <path>`. Either way
+>    the spec runs through validate → post-and-readback (preflight/control lint + column guard)
+>    → layout → parity, and stops at exit 12 to collect actuals + `--finalize`. **A conversion
+>    is not done until `assert-phase6-ran.rb` exits 0**, on this path too.
 
 > **Parity is EXACT for warehouse-backed migrations — never blame "drift."** Sigma
 > queries the **same warehouse** the Tableau source reads, so a value gap is a real
@@ -92,7 +110,7 @@ stop/gate fires exactly as in the serial flow. A `PHASE TIMINGS` summary line
 prints at every terminal exit so the speedup stays visible. Exit codes: `10` = OPEN QUESTIONS
 (re-run with `--yes`/`--answers`), `11` = ❌-unhandled gap-scan features (close via
 gap-scout or `--force`), `12` = pass 1 done, parity PENDING (collect mcp-v2 actuals,
-then `--finalize`), `4` = DM posted but the workbook layer needs the agent path,
+then `--finalize`), `4` = DM posted but the workbook layer needs an agent-authored spec — re-enter the gated spine with `--reuse-dm <id> --wb-spec <path>` (never hand-POST),
 `3` = a gate failed, `14` = migration GREEN + Phase E proposals pending
 acceptance, `0` = ALL gates green (only reachable via `--finalize`).
 DM-reuse is **reuse-first** — auto-reuses an existing DM that covers all the
@@ -950,6 +968,20 @@ Prefer a **workbook-level control filtering the master table** — every chart t
 > **A relative-date filter that "rolls forward" in Tableau** ("this year", "last 30 days", "year to date") must be translated as a relative `date-range` control (`mode: "current"`, `unit: ...`) — not a fixed start/end date. Hard-coding `startDate`/`endDate` freezes the filter to today's date and breaks tomorrow.
 
 > **Phase 6 will not catch a missed filter on its own.** Data parity in Phase 6 compares Sigma rows to Tableau rows for the dimensions you query — if your Sigma chart includes extra rows the CSV never had, the comparison only flags missing rows from Tableau, not extra rows in Sigma. Always sanity-check distinct values and date ranges side-by-side before declaring parity.
+
+> **Element-level filters DO work on viz elements — verify them the right way.** A boolean
+> `filters: [{columnId, kind:"list", mode:"include", values:[true]}]` on a `bar-chart` /
+> `kpi-chart` is enforced in the render AND round-trips intact on `GET /v2/workbooks/{id}/spec`
+> (live-verified 2026-06-29 on `tj-wells-1989`: a not-null filter cut 731→397 on both kinds,
+> confirmed via element CSV export and rendered PNG). So if a filter *looks* like it "doesn't
+> work," do NOT assume the API silently dropped it — the cause is almost always a `columnId`
+> that doesn't resolve to a real column on that element, which `validate-spec.rb` / `control_lint.rb`
+> catch on the gated path. **Validate filter behavior via the element's CSV export or a rendered
+> PNG — NOT via a base-grain `mcp__sigma-mcp-v2__query` against the connection**, which reads the
+> underlying table and is blind to element-level `filters`, `groupings`, and sort (use MCP only
+> for raw-data spot-checks and explicit-`GROUP BY` aggregation checks). A helper-table element
+> carrying the filter (chart sources the helper) also works, but is NOT required for simple
+> boolean/not-null slices — reserve it for the LOD/grain cases above.
 
 ---
 

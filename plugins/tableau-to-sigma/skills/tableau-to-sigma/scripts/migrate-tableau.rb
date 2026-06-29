@@ -98,6 +98,17 @@ OptionParser.new do |o|
   o.on('--db NAME')          { |v| opts[:db]      = v }
   o.on('--schema NAME')      { |v| opts[:schema]  = v }
   o.on('--specs PATH')       { |v| opts[:specs]   = File.expand_path(v) }
+  # Agent-authored JSON specs — the manual path's re-entry into the GATED spine.
+  # When the mechanical converter backend is unavailable, the agent authors the DM
+  # (and optionally the workbook) spec as JSON and re-runs with these flags, instead
+  # of hand-driving raw POSTs that skip preflight/control lint + Phase-6 + the hard
+  # gate. The JSON is wrapped into the same `Specs` contract the .rb override uses,
+  # so POST → lint → layout → parity → assert-phase6-ran all run unchanged.
+  # The workbook JSON may reference the data model via the placeholder idiom
+  # "__DM_ID__" (top-level dataModelId) and "__DM_ELEMENT__:<ElementName>"
+  # (per-element source) — both are substituted against the live readback ids.
+  o.on('--dm-spec PATH')     { |v| opts[:dm_spec] = File.expand_path(v) }
+  o.on('--wb-spec PATH')     { |v| opts[:wb_spec] = File.expand_path(v) }
   o.on('--out DIR')          { |v| opts[:out]     = File.expand_path(v) }
   o.on('--answers JSON')     { |v| opts[:answers] = v }
   o.on('--yes')              {     opts[:yes]     = true }
@@ -584,6 +595,51 @@ if specs_path && File.exist?(specs_path)
   end
 end
 
+# Agent-authored JSON specs (--dm-spec / --wb-spec). The manual path's re-entry
+# into the GATED spine: instead of hand-driving raw POSTs (which skip preflight/
+# control lint, Phase 6 parity, and the assert-phase6-ran hard gate), the agent
+# drops JSON specs and re-runs. We wrap them into the same `Specs` contract the
+# .rb override uses, so the DOWNSTREAM flow (validate → post-and-readback →
+# layout → parity → assert) is byte-for-byte identical to the hand-authored-.rb
+# path. `wb_spec` returns the raw JSON; live-id binding happens at the workbook
+# assembly step (where dm_id / fact_eid / the DM readback elements are known).
+if opts[:dm_spec] || opts[:wb_spec]
+  # The workbook spec is always agent-authored on this path.
+  abort 'FATAL: --wb-spec is required for the agent-authored manual path ' \
+        '(pair it with --dm-spec for a fresh build, or --reuse-dm for an existing model).' \
+    unless opts[:wb_spec]
+  # The DATA-MODEL source is exactly one of: --dm-spec (build it fresh) OR
+  # --reuse-dm (attach to a model already in the org — the exit-4 re-entry, where
+  # the DM is already posted). Both/neither is ambiguous.
+  dm_sources = (opts[:dm_spec] ? 1 : 0) + (opts[:reuse_dm] ? 1 : 0)
+  abort 'FATAL: provide the data model via EITHER --dm-spec <json> (fresh build) OR ' \
+        '--reuse-dm <id> (attach to an existing model) — not both, not neither.' \
+    unless dm_sources == 1
+  abort "FATAL: --wb-spec #{opts[:wb_spec]} not found" unless File.exist?(opts[:wb_spec])
+  begin
+    wb_json = JSON.parse(File.read(opts[:wb_spec]))
+    dm_json = opts[:dm_spec] ? JSON.parse(File.read(opts[:dm_spec])) : nil
+  rescue JSON::ParserError => e
+    abort "FATAL: --dm-spec/--wb-spec is not valid JSON: #{e.message}"
+  rescue Errno::ENOENT => e
+    abort "FATAL: #{e.message}"
+  end
+  abort 'FATAL: --dm-spec JSON is not a page-bearing data-model spec (no top-level "pages" array)' \
+    if dm_json && !(dm_json.is_a?(Hash) && dm_json['pages'].is_a?(Array))
+  abort 'FATAL: --wb-spec JSON is not a page-bearing workbook spec (no top-level "pages" array)' \
+    unless wb_json.is_a?(Hash) && wb_json['pages'].is_a?(Array)
+  Object.const_set(:Specs, Module.new do
+    # nil on the --reuse-dm path: the DM is read back from the API, never rebuilt
+    # from this module (so dm_spec is only consulted on the fresh --dm-spec path).
+    define_singleton_method(:dm_spec) { dm_json }
+    # Raw passthrough — live-id binding (the __DM_ID__/__DM_ELEMENT__ placeholders)
+    # is applied at the assembly step where the readback ids exist.
+    define_singleton_method(:wb_spec) { |_dm_id, _fact_eid| wb_json }
+  end)
+  have_specs = true
+  line "spec generator: agent-authored JSON specs (#{opts[:dm_spec] ? "--dm-spec #{opts[:dm_spec]}" : "--reuse-dm #{opts[:reuse_dm]}"}, --wb-spec #{opts[:wb_spec]}) — routing through the gated spine"
+end
+
 # Mechanical converter run (the default). Requires the .twb (parse-twb-layout
 # already gated on have_twb above) and a converter backend — local build by
 # default, hosted MCP only on explicit consent (see backend resolution below).
@@ -624,13 +680,38 @@ if mechanical
     sleep 0.1 until lane_done.call # reap the background lane before aborting
     print_lane_log.call
     abort <<~MSG
-      FATAL: no local Tableau→Sigma converter, and hosted conversion was not consented to.
-      The .twb holds customer schema/SQL/formulas, so this skill will NOT upload it to the
-      hosted converter without explicit consent. Choose one:
-        • LOCAL (no data egress): set TABLEAU_MCP_BUILD to a local build/tableau.js (or run the
-          sigma-data-model MCP locally), then re-run. See QUICKSTART "Converter backend".
-        • HOSTED (uploads the .twb to sigma-data-model-mcp.onrender.com): re-run with
-          --converter hosted (or SIGMA_CONVERTER_ALLOW_HOSTED=1) to consent.
+      ==================== CONVERTER STOP (no backend) ====================
+      No mechanical Tableau→Sigma converter is configured, and hosted conversion was not
+      consented to. The .twb holds customer schema/SQL/formulas, so this skill will NOT
+      upload it to the hosted converter without explicit consent.
+
+      DO NOT hand-drive raw POSTs from here — that path skips preflight/control lint, the
+      Phase-6 parity check, and the assert-phase6-ran hard gate (the exact regression that
+      ships a workbook with missing controls and an unverified parity claim). Instead pick
+      one of the three options below; the spec you produce re-enters the SAME gated spine.
+
+        1. LOCAL converter (no data egress, RECOMMENDED): set TABLEAU_MCP_BUILD to a local
+           build/tableau.js (or run the sigma-data-model MCP locally), then re-run this command
+           verbatim. The mechanical path takes over. See QUICKSTART "Converter backend".
+
+        2. AGENT-AUTHORED SPECS (when no local build is available): produce the specs once,
+           then re-enter the gated spine — DO NOT POST them yourself:
+             • If the sigma-data-model MCP is available to you, call convert_tableau_to_sigma
+               on this .twb to get the DM spec; author the matching workbook spec (use the
+               companion sigma-workbooks skill). Reference the data model via the placeholders
+               "__DM_ID__" and "__DM_ELEMENT__:<ElementName>" (fact = "__DM_ELEMENT__:__FACT__").
+             • Write #{WORK}/dm-spec.json and #{WORK}/wb-spec.json, then re-run:
+                 ruby scripts/migrate-tableau.rb <same flags> \\
+                   --dm-spec #{WORK}/dm-spec.json --wb-spec #{WORK}/wb-spec.json
+             • This runs validate → post-and-readback (preflight/control lint + column guard)
+               → layout → parity, and STOPS at exit 12 for you to collect actuals + --finalize.
+
+        3. HOSTED converter (uploads the .twb to sigma-data-model-mcp.onrender.com): re-run with
+           --converter hosted (or SIGMA_CONVERTER_ALLOW_HOSTED=1) to consent.
+
+      A conversion is NOT done until `scripts/assert-phase6-ran.rb` exits 0 — that is a hard
+      gate, not a guideline, on every path above.
+      =====================================================================
     MSG
   end
   conv = MechanicalSpecs.run_converter(
@@ -1464,6 +1545,14 @@ if mechanical
     folder_id: opts[:folder])
 else
   spec = Specs.wb_spec(dm_id, fact_eid)
+  # Agent-authored JSON path: bind the DM placeholders ("__DM_ID__" and
+  # "__DM_ELEMENT__:<name>") in the workbook spec to the live readback ids now
+  # that the data model is posted. A reference to a non-existent element aborts
+  # loudly (same contract as the mechanical grain-helper resolver), so the manual
+  # path can't silently misbind a chart source.
+  spec = MechanicalSpecs.bind_manual_wb_spec(
+    spec, dm_id: dm_id, fact_eid: fact_eid,
+    dm_els: (defined?(dm_els) && dm_els) || []) if opts[:wb_spec]
   spec['name'] = display_wb_name if opts[:name]
   spec['folderId'] = opts[:folder] if opts[:folder]
   layout_xml = (Specs.respond_to?(:layout_xml) ? Specs.layout_xml : nil)
@@ -1567,9 +1656,16 @@ rescue WorkbookBuildError => e
   puts "      Speed Category'), translate its Tableau formula (see calc-fields.json) to"
   puts '      a Sigma formula over master columns and re-run this exact command with:'
   puts "        --master-col '<Name>=<Sigma formula>'   (repeatable)"
-  puts '   2. Otherwise fall back to the agent path: rebuild the workbook via the'
-  puts "      skill's agent-authored flow (see SKILL.md) against this DM."
-  puts '   The data model is posted and ready to attach either way.'
+  puts '   2. Otherwise author the workbook spec yourself and RE-ENTER THE GATED SPINE —'
+  puts '      do NOT hand-POST it (that skips control lint + Phase-6 + the hard gate):'
+  puts "        • Author #{WORK}/wb-spec.json against the posted DM (dataModelId=#{dm_id});"
+  puts '          reference elements via "__DM_ID__" / "__DM_ELEMENT__:<Name>"'
+  puts '          (fact = "__DM_ELEMENT__:__FACT__"). See the sigma-workbooks skill.'
+  puts '        • Re-run this exact command adding (REUSE the posted DM — do not rebuild it):'
+  puts "            --reuse-dm #{dm_id} --wb-spec #{WORK}/wb-spec.json"
+  puts '          (attaches to the existing DM; the workbook re-POST is re-gated).'
+  puts '   The data model is posted and ready to attach either way. A conversion is NOT done'
+  puts '   until scripts/assert-phase6-ran.rb exits 0 — that hard gate applies on both paths.'
   mark('phase4-workbook')
   phase_summary
   exit 4
