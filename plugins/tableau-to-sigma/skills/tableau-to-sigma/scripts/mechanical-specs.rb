@@ -954,4 +954,42 @@ module MechanicalSpecs
     spec['folderId'] = folder_id if folder_id
     spec
   end
+
+  # Bind an agent-authored (--wb-spec) workbook spec to the LIVE data model. The
+  # agent authors the JSON before the DM is posted, so it can't know the real ids;
+  # it uses two placeholders, substituted here against the readback:
+  #   "__DM_ID__"               → the posted dataModelId (anywhere a string value)
+  #   "__DM_ELEMENT__:<Name>"   → the readback element id whose name == <Name>
+  #                               (case-insensitive); the fact element is also
+  #                               reachable as "__DM_ELEMENT__:__FACT__".
+  # An unresolved "__DM_ELEMENT__:<Name>" aborts loudly (same no-silent-misbind
+  # contract as the mechanical grain-helper resolver in migrate-tableau.rb) — a
+  # chart bound to a non-existent element would otherwise render blank.
+  def bind_manual_wb_spec(node, dm_id:, fact_eid:, dm_els: [])
+    by_name = {}
+    (dm_els || []).each { |e| by_name[e['name'].to_s.strip.downcase] = e['id'] }
+    walk = lambda do |n|
+      case n
+      when Hash  then n.transform_values { |v| walk.call(v) }
+      when Array then n.map { |v| walk.call(v) }
+      when String
+        if n == '__DM_ID__'
+          dm_id
+        elsif n.start_with?('__DM_ELEMENT__:')
+          want = n.split(':', 2).last.to_s.strip
+          if want == '__FACT__'
+            fact_eid
+          else
+            by_name[want.downcase] ||
+              raise("--wb-spec references DM element '#{want}' but the posted data model has no element by that name " \
+                    "(have: #{by_name.keys.join(', ')})")
+          end
+        else
+          n
+        end
+      else n
+      end
+    end
+    walk.call(node)
+  end
 end
