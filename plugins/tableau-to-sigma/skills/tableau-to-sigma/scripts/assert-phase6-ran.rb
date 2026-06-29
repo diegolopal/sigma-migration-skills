@@ -98,6 +98,10 @@
 #      sent or declined (no telemetry-sent.json marker; gate 10, delegated to
 #      assert-telemetry-ran.rb). Ask the user, then run report-telemetry.py
 #      (--declined if they decline). Escape hatch: --skip-telemetry-gate "<reason>".
+#  13  Visual comparison not recorded (gate 8b) — only when --require-visual-comparison
+#      is set: a valid render exists but parity-final.json carries no visual_checked/
+#      screenshot_path verdict. Run record-visual-check.rb after reading the rendered
+#      page against the source dashboard PNG, then re-run.
 #
 # Prints a per-gate summary to stdout regardless of exit code.
 
@@ -130,6 +134,7 @@ OptionParser.new do |p|
   p.on('--skip-parity-gate REASON', 'waive gate 1 (Phase 6 source-parity) — REQUIRED reason string. Use ONLY when source parity is genuinely unavailable (e.g. no source workspace/dataset/warehouse access). The reason MUST be named in your migration report.') { |v| opts[:skip_parity] = v }
   p.on('--sigma-render PATH', 'gate 8: path to the rendered Sigma dashboard PNG (default: <workdir>/sigma-render.png; also accepts <workdir>/screenshots/_manifest.json)') { |v| opts[:sigma_render] = v }
   p.on('--skip-visual-gate REASON', 'waive gate 8 (Phase 6f visual render) — REQUIRED reason string. Use ONLY when the workbook genuinely cannot be rendered (e.g. export API unavailable). The reason MUST be named in your migration report.') { |v| opts[:skip_visual] = v }
+  p.on('--require-visual-comparison', 'gate 8b (opt-in): HARD-FAIL (exit 13) unless parity-final.json records a visual_checked/screenshot_path verdict (written by record-visual-check.rb after the source-vs-target read). Without this flag the missing-verdict case is only a soft WARN — preserves behavior for converters that have not adopted it.') { opts[:require_visual_cmp] = true }
   p.on('--skip-visual-tiles REASON', 'waive gate 9 (build-from-signals tile image-verification) — REQUIRED reason string. The reason MUST be named in your migration report.') { |v| opts[:skip_visual_tiles] = v }
   p.on('--skip-telemetry-gate REASON', 'waive gate 10 (telemetry consent decision) — REQUIRED reason string. Use ONLY when the run genuinely cannot prompt (e.g. unattended CI). The reason MUST be named in your migration report.') { |v| opts[:skip_telemetry] = v }
 end.parse!
@@ -687,13 +692,27 @@ else
   size_kb = (File.size(ok_png) / 1024.0).round
   puts "[OK] gate 8: Phase 6f visual render present (#{ok_png}, #{size_kb} KB) — " \
        'valid PNG produced for source-vs-target comparison'
-  # Soft nudge: the conversion result should record that the comparison ran.
-  if File.exist?(summary_path)
-    s = (JSON.parse(File.read(summary_path)) rescue {})
-    unless s['screenshot_path'] || s['visual_checked']
-      warn "[WARN] gate 8: parity-final.json records no screenshot_path/visual_checked flag — " \
-           'render exists but confirm you actually compared it to the source and noted any divergence.'
-    end
+  # gate 8b — the comparison itself can't be fully mechanized, but we CAN require
+  # that a VERDICT was recorded (record-visual-check.rb stamps visual_checked into
+  # parity-final.json after the agent reads the rendered page against the source).
+  # Opt-in via --require-visual-comparison; otherwise a soft nudge, preserving
+  # current behavior for converters that have not adopted the recorder yet.
+  s = File.exist?(summary_path) ? (JSON.parse(File.read(summary_path)) rescue {}) : {}
+  recorded = s['visual_checked'] || s['screenshot_path']
+  if recorded
+    v = s['visual_verdict'] ? " (#{s['visual_verdict']})" : ''
+    puts "[OK] gate 8b: source-vs-target visual comparison recorded#{v}."
+  elsif opts[:require_visual_cmp]
+    warn '[FAIL] gate 8b: --require-visual-comparison set, but parity-final.json records no'
+    warn '       visual_checked/screenshot_path — the full-dashboard source-vs-target comparison'
+    warn '       was not recorded (a valid render exists, but nobody confirmed it matches the source).'
+    warn '       After reading the rendered page against the source dashboard PNG, run:'
+    warn '         ruby scripts/record-visual-check.rb --workdir <dir> --verdict pass|divergent --notes "..."'
+    warn '       then re-run. Escape hatch (genuinely un-renderable): --skip-visual-gate "<reason>".'
+    exit 13
+  else
+    warn '[WARN] gate 8: parity-final.json records no screenshot_path/visual_checked flag — ' \
+         'render exists but confirm you actually compared it to the source and noted any divergence.'
   end
 end
 

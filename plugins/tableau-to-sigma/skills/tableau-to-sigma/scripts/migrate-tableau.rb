@@ -291,6 +291,11 @@ if opts[:finalize]
 
   # The census-aware hard gate. NEVER bypassed — this command fails when it fails.
   gate = ['ruby', File.join(HERE, 'assert-phase6-ran.rb'), '--tableau', WORK, '--workbook-id', wb_id]
+  # Require a RECORDED source-vs-target visual comparison (gate 8b) — not just a
+  # render that exists. The agent records the verdict with record-visual-check.rb
+  # after the Phase 6f side-by-side read (see SKILL.md); without it the gate
+  # exits 13. tableau-to-sigma is the reference adopter of this opt-in gate.
+  gate += ['--require-visual-comparison']
   gate += ['--allow-extract'] if state['extract_mode']
   gate += ['--allow-missing-tiles', opts[:allow_missing_tiles].to_s] if opts[:allow_missing_tiles]
   gate += ['--min-pass-rate', opts[:min_pass_rate].to_s] if opts[:min_pass_rate]
@@ -332,11 +337,26 @@ if opts[:finalize]
     puts "  2. READ #{File.join(WORK, 'sigma-render.png')} with the Read tool and compare it"
     puts "     side-by-side against the source dashboard PNG in #{WORK} (Phase 1d)."
     puts '     Fix any visual divergence (re-PUT the spec) and re-render until they match.'
-    puts '  3. Record screenshot_path (and visual_checked:true) in parity-final.json so the'
-    puts '     gate confirms the comparison ran, then re-run --finalize.'
+    puts '  3. Record the verdict so gate 8b confirms the comparison ran, then re-run --finalize:'
+    puts "       ruby scripts/record-visual-check.rb --workdir #{WORK} --verdict pass --notes \"<what you compared>\""
     puts '  If the workbook genuinely cannot be rendered (export API unavailable), the gate'
     puts '  can be waived ONLY via assert-phase6-ran.rb --skip-visual-gate "<reason>" —'
     puts '  name the reason in your migration report.'
+    puts '============================================================================='
+  end
+
+  if gst.exitstatus == 13
+    puts
+    puts '==================== VISUAL STOP (comparison not recorded) =================='
+    puts 'A valid Sigma render exists, but no source-vs-target visual comparison was'
+    puts 'RECORDED (gate 8b). CSV/number parity does NOT prove the dashboard looks right.'
+    puts 'Do this, then re-run this exact --finalize command:'
+    puts "  1. READ the rendered page (#{File.join(WORK, 'sigma-render.png')}) side-by-side"
+    puts "     against the source dashboard PNG in #{WORK} (Phase 1d)."
+    puts '  2. Record your verdict (this is what the gate checks):'
+    puts "       ruby scripts/record-visual-check.rb --workdir #{WORK} --verdict pass --notes \"<what matched>\""
+    puts '     If they DIVERGE: --verdict divergent --notes "<gap>", fix the spec, re-render, re-read,'
+    puts '     then re-record --verdict pass. The gate stays blocked until the verdict is pass.'
     puts '============================================================================='
   end
 
