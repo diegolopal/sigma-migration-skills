@@ -116,11 +116,14 @@ OptionParser.new do |p|
   p.on('--min-pass-rate F', Float)   { |v| opts[:min_pass_rate] = v }
   p.on('--min-parity-score F', Float, 'gate 1: fail if value_parity_score (mean per-tile, parity-score.json) < F (0..1, default 0 = off)') { |v| opts[:min_parity_score] = v }
   p.on('--allow-extract')            { opts[:allow_extract] = true }
-  p.on('--skip-column-check')        { opts[:skip_column] = true }
-  p.on('--skip-orphan-check')        { opts[:skip_orphan] = true }
-  p.on('--skip-layout-check')        { opts[:skip_layout] = true }
-  p.on('--skip-layout-lint')         { opts[:skip_lint] = true }
-  p.on('--skip-control-lint')        { opts[:skip_control_lint] = true }
+  # These five accept an OPTIONAL reason (kept backward-compatible: a bare flag
+  # still works). A skip with no reason is recorded as "NO REASON GIVEN" and
+  # logged loudly so a silent bypass can't hide — see record_waiver below.
+  p.on('--skip-column-check [REASON]')  { |v| opts[:skip_column] = v || true }
+  p.on('--skip-orphan-check [REASON]')  { |v| opts[:skip_orphan] = v || true }
+  p.on('--skip-layout-check [REASON]')  { |v| opts[:skip_layout] = v || true }
+  p.on('--skip-layout-lint [REASON]')   { |v| opts[:skip_lint] = v || true }
+  p.on('--skip-control-lint [REASON]')  { |v| opts[:skip_control_lint] = v || true }
   p.on('--control-scope PATH')       { |v| opts[:control_scope] = v }
   p.on('--min-layout-elements N', Integer) { |v| opts[:min_layout_elements] = v }
   p.on('--allow-missing-tiles N', Integer, 'tolerate N unmatched dashboard zones in the tile census') { |v| opts[:allow_missing_tiles] = v }
@@ -131,6 +134,20 @@ OptionParser.new do |p|
   p.on('--skip-telemetry-gate REASON', 'waive gate 10 (telemetry consent decision) — REQUIRED reason string. Use ONLY when the run genuinely cannot prompt (e.g. unattended CI). The reason MUST be named in your migration report.') { |v| opts[:skip_telemetry] = v }
 end.parse!
 abort('--workdir (or --tableau) required') unless opts[:tab]
+
+# A waived gate must never pass SILENTLY. record_waiver prints a loud banner and
+# appends to <workdir>/waivers.json so the migration report (and any future
+# check) can see every gate that was bypassed and why. A bare skip (no reason)
+# is recorded as "NO REASON GIVEN" — visible, not invisible. (CoCo run wrapped
+# up GREEN after silently skipping checks — this makes that impossible.)
+waivers = []
+record_waiver = lambda do |flag, gate, reason|
+  r = (reason.is_a?(String) && !reason.strip.empty?) ? reason.strip : nil
+  waivers << { 'flag' => flag, 'gate' => gate, 'reason' => r }
+  puts "[SKIP] #{gate} WAIVED via #{flag}#{r ? " (#{r})" : ' — NO REASON GIVEN'}"
+  puts "       MUST be named in the migration report#{r ? '' : ' WITH a reason'}; this gate did NOT verify the workbook."
+  File.write(File.join(opts[:tab], 'waivers.json'), JSON.pretty_generate(waivers)) rescue nil
+end
 
 summary_path = File.join(opts[:tab], 'parity-final.json')
 
@@ -279,7 +296,7 @@ unless opts[:skip_orphan]
     puts "[OK] gate 2/7: posted-workbooks.jsonl missing — assuming no orphans (legacy or external POST flow)"
   end
 else
-  puts "[SKIP] gate 2/7: --skip-orphan-check"
+  record_waiver.call('--skip-orphan-check', 'gate 2 (orphan-workbook cleanup)', opts[:skip_orphan])
 end
 
 # ---------------------------------------------------------------------------
@@ -333,7 +350,7 @@ unless opts[:skip_column]
     end
   end
 else
-  puts "[SKIP] gate 3/7: --skip-column-check"
+  record_waiver.call('--skip-column-check', 'gate 3 (live column type=error scan)', opts[:skip_column])
 end
 
 # ---------------------------------------------------------------------------
@@ -439,7 +456,7 @@ unless opts[:skip_layout]
     end
   end
 else
-  puts "[SKIP] gate 4/7: --skip-layout-check"
+  record_waiver.call('--skip-layout-check', 'gate 4 (top-level layout applied)', opts[:skip_layout])
 end
 
 # ---------------------------------------------------------------------------
@@ -483,7 +500,7 @@ end
 # This gate mechanizes those checks on the LIVE spec.
 # ---------------------------------------------------------------------------
 if opts[:skip_lint]
-  puts "[SKIP] gate 6/7: --skip-layout-lint (name the reason in your report)"
+  record_waiver.call('--skip-layout-lint', 'gate 6 (layout-quality lint)', opts[:skip_lint])
 else
   wb_id = opts[:wb]
   if wb_id.nil?
@@ -549,7 +566,7 @@ end
 # (zero controls built from an interactive source = FAIL, the Qlik class).
 # ---------------------------------------------------------------------------
 if opts[:skip_control_lint]
-  puts "[SKIP] gate 7/7: --skip-control-lint (name the reason in your report)"
+  record_waiver.call('--skip-control-lint', 'gate 7 (control-wiring lint)', opts[:skip_control_lint])
 else
   wb_id = opts[:wb]
   if wb_id.nil?
