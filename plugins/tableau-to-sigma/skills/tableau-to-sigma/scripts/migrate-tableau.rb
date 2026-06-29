@@ -670,6 +670,24 @@ if mechanical
     line "WARN: TABLEAU_MCP_BUILD=#{mcp_build} does not exist — ignoring"
     mcp_build = nil
   end
+  # Auto-discover a LOCAL converter build when TABLEAU_MCP_BUILD is unset, so
+  # anyone who has the sigma-data-model MCP checked out (or ran scripts/dev/
+  # fetch-converter.sh) gets the no-egress local path with ZERO config — the
+  # mechanical path becomes the default instead of dropping to the manual STOP.
+  # First hit wins; purely filesystem (never the network), so a miss just falls
+  # through to the consent/STOP logic below. Set TABLEAU_MCP_BUILD to override.
+  if mcp_build.nil?
+    auto = [
+      (ENV['SIGMA_DATA_MODEL_MCP'] && File.join(ENV['SIGMA_DATA_MODEL_MCP'], 'build', 'tableau.js')),
+      File.join(HERE, 'vendor', 'sigma-data-model-mcp', 'build', 'tableau.js'), # fetch-converter.sh target (gitignored)
+      File.expand_path('~/sigma-data-model-mcp/build/tableau.js'),
+      File.expand_path('~/Desktop/sigma-data-model-mcp/build/tableau.js')
+    ].compact.find { |p| File.exist?(p) }
+    if auto
+      mcp_build = auto
+      line "converter: auto-discovered LOCAL build #{auto} (no data leaves this machine; set TABLEAU_MCP_BUILD to override)"
+    end
+  end
   allow_hosted = opts[:converter] == 'hosted' || ENV['SIGMA_CONVERTER_ALLOW_HOSTED'] == '1'
   if mcp_build
     line "converter: LOCAL build #{mcp_build} (no data leaves this machine)"
