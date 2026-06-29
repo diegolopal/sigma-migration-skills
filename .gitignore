@@ -6,3 +6,6 @@ node_modules/
 # Generated at vendor/release time by tools/stamp-version.rb (do not commit)
 shared/lib/VERSION
 plugins/*/skills/*/scripts/lib/VERSION
+
+# vendored local converter build (fetched on demand by fetch-converter.sh; never committed — drifts)
+plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/vendor/
