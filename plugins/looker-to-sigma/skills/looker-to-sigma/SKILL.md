@@ -484,12 +484,24 @@ referenced_columns (dimension/measure names), measures}` straight from the LookM
 files — the same files you fed `convert_dm.mjs`. Decision:
 - **Score ≥ 0.6** → **ASK the user** reuse-vs-new: surface the candidate name, matched
   cols (N/M), and the inherited-extras warning from `dm-match.json`. If they reuse, run a
-  **shape preflight** first — read the candidate DM's spec back and confirm every column
-  the dashboards reference resolves on the element you'll wire to (no `type=error`
-  columns; fact vs separate-dim location) — then **skip 2c/2d** and point Phase 3's
-  workbook masters at the matched `recommended_dm_id` + its element ids. With
-  `--auto-pick` a clear winner (no tie within 0.05) skips the prompt — still WARN about
-  inherited columns/RLS/metrics.
+  **shape preflight** first — read the candidate DM's spec back and confirm:
+  1. every column the dashboards reference resolves on the element you'll wire to (no
+     `type=error` columns; fact vs separate-dim location);
+  2. **the element is usable as a source** — i.e. it is NOT `visibleAsSource: false`. The
+     flag **defaults to `true` and is omitted from the spec when true**, so absence = visible
+     and you only act when you literally see `"visibleAsSource": false`. A hidden element
+     builds fine via the API but **users can't pick it as a source in the workbook UI** —
+     wire to a visible sibling, or `PUT` the DM spec setting `visibleAsSource: true`, before
+     proceeding (verified live 2026-06-29);
+  3. **how related columns are exposed** — if the columns you need live on a *separate*
+     element reached by a `relationships[]` entry (a reused relational DM, NOT a flat denorm
+     element), note the relationship's exact `name`; Phase 3 will reference them as
+     `[<element>/<RelationshipName>/<col>]` (see 3b). Confirm the join is 1:1 on its key — a
+     non-unique target key silently fans out (see the fan-out troubleshooting row).
+
+  Then **skip 2c/2d** and point Phase 3's workbook masters at the matched
+  `recommended_dm_id` + its element ids. With `--auto-pick` a clear winner (no tie within
+  0.05) skips the prompt — still WARN about inherited columns/RLS/metrics.
 - **Score < 0.6** → POST new (2c) and TELL the user no reusable DM was found.
 
 ### 2c. POST the data model
@@ -605,6 +617,30 @@ Newspaper layout math (a single arithmetic transform, no spatial heuristic):
 - **Joined-view columns** in the denorm DM element are named `<Field> (<joinAlias>)` (Sigma
   disambiguates cross-element lookup cols) — master/tile refs must include the suffix, e.g.
   `[Order Fact/Region (customer_dim)]`.
+- **Cross-element relationship refs (reused relational DMs) — the form is LAYER-DEPENDENT.**
+  When the converter builds the DM it flattens joined columns into one denorm element, so the
+  workbook only ever does `[<element>/<col>]`. But when you **reuse an existing DM** whose
+  element reaches other columns through a `relationships[]` entry (instead of a flat denorm),
+  the ref form differs by where you write it (all verified live 2026-06-29):
+    - **In a workbook formula** (master/tile/chart column) → `[<SourceElement>/<RelationshipName>/<col display>]`
+      — uses the **relationship's `name`**. e.g. `[Plugs Fact/Plugs to Customer/Cust Region]` ✅.
+    - **In a DM calc column** → `[<TargetElementName>/<col display>]` (or `Lookup([<TargetElementName>/<col>], <localKey>, [<TargetElementName>/<key>])`)
+      — uses the **target element's name**, NOT the relationship name. e.g. `[Customer Dim/Cust Region]` ✅.
+    - **Both layers reject the raw warehouse/staging table name** (e.g. `STG_…`/`D_CUSTOMER`)
+      → the column resolves as `type=error`. The relationship `name` is whatever the DM author
+      set (often a phrase like `"Plugs to Customer"`, **not** the table name) — read it from the
+      DM spec's `relationships[].name`; don't guess it from the table. Two-segment guesses like
+      `[<RelationshipName>/<col>]` hard-reject the whole spec POST ("dependency not found").
+- **VARIANT / JSON columns — extract with DOT NOTATION, not a function.** Sigma has **no**
+  `JsonExtractText()` / `CallVariant()` / `Variant()`-extraction function (those error the
+  column — don't trial-and-error them). To pull a value out of a JSON/VARIANT column, write a
+  **dot-notation** formula and wrap it in `Text()` to land a typed column:
+  `Text([Cust Json].AGE_GROUP)`, nested `Text([Cust Json].LOYALTY_EXTRA.LOYALTY_TIER)`, array
+  `Text([Cart Details].cart[0])` (0-based). Best practice is to extract **upstream in the DM**
+  (the extracted column then flows into the workbook as a normal column — verified live
+  2026-06-29); the UI equivalent is the column menu's **Extract columns…**. So a JSON field is
+  migratable — surface it as a dot-notation column, don't leave it as raw JSON and don't block
+  on it. (`Variant()`/`Json()` exist only to *cast* a column's type, not to extract.)
 - **Table calcs** → workbook formula columns: `running_total` → `CumulativeSum`,
   `pct_of_total`/`sum()` → `GrandTotal`, `offset(…,-1)` → `Lag`. (`build_workbook.py` translates
   these; `dynamic_fields` arrives JSON-parsed from discovery.)
@@ -793,6 +829,9 @@ declaring Phase 4 green.
 | LookML model 404s on query right after deploy | Model not registered | `POST /lookml_models {name, project_name, allowed_db_connection_names}` |
 | `PUT /projects/{id}` 404 when setting git remote | Wrong verb | Use `PATCH /projects/{id}` |
 | Looker dev-workspace mutation has no effect | The calls ran in separate processes/sessions (the bearer cache is per-process; a 401 re-login also starts a NEW session that resets the workspace to production) | Do the whole dev flow in ONE process — `looker_api.py`'s cached token keeps one session, so `PATCH /session {workspace_id: dev}` sticks for subsequent `call()`s; re-PATCH after any forced re-login |
+| Reused DM element builds via API but users can't select it as a source in the workbook UI | The element is `visibleAsSource: false` (hidden); the API doesn't enforce visibility on build | Wire to a visible sibling, or `PUT` the DM spec setting `visibleAsSource: true`. NB the flag defaults true and is **omitted when true** — only `"visibleAsSource": false` in the spec means hidden. Catch it in the Phase 2.5 shape preflight |
+| Related-element column resolves as `type=error` | Referenced the raw warehouse/staging table name, or used the wrong layer's form | **Workbook** formula → `[<element>/<RelationshipName>/<col>]` (relationship name); **DM** calc → `[<TargetElementName>/<col>]` or `Lookup(…)`. Read the exact name from `relationships[].name` — never the table name (see 3b) |
+| Reused relationship returns 2+ matches per row / inflated KPI & chart totals | The relationship key is incomplete (e.g. fact related to a dim on a non-unique attribute, or missing a 2nd key like Region) so it fans out — a non-unique target key multiplies fact rows silently (e.g. relating on a 5-value Region column vs a 4,972-row dim ≈ 994× inflation) | Relate on the dim's true primary key (or add the missing key to make the join 1:1) in the DM — manual. A single-key fan-out produces **wrong** aggregates with no error; flag it, don't ship |
 
 ---
 
