@@ -24,6 +24,7 @@ require 'json'
 require 'optparse'
 require 'fileutils'
 require_relative 'lib/tableau_rest'
+require_relative 'lib/py_resolve' # real-Python resolver (Windows Store-stub safe)
 
 opts = {}
 OptionParser.new do |p|
@@ -75,7 +76,7 @@ tiles.each do |t|
 
   # 2) Sigma element render
   if t['element_id']
-    ok = system('python3', png_script, '--workbook', opts[:wb], '--element', t['element_id'],
+    ok = system(*PyResolve.argv, png_script, '--workbook', opts[:wb], '--element', t['element_id'],
                 '--out', sigma_png, '--w', opts[:w].to_s, '--h', opts[:h].to_s,
                 out: File::NULL, err: File::NULL)
     rec['sigma_png'] = sigma_png if ok && File.size?(sigma_png)

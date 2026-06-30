@@ -31,6 +31,7 @@
 require 'set'
 require 'json'
 require 'open3'
+require_relative 'lib/py_resolve' # real-Python resolver (Windows Store-stub safe)
 
 module MechanicalSpecs
   module_function
@@ -160,12 +161,14 @@ module MechanicalSpecs
 
   # Run the Tableau→Sigma converter. Two backends, same output contract
   # ({ model, warnings, stats, security }):
-  #   - mcp_build present → node shim importing a LOCAL build/tableau.js
-  #     (fast/offline; the converter author's dev path)
+  #   - mcp_build present → node shim importing a LOCAL build/tableau.(m)js
+  #     (fast/offline, no data egress). By default this is the VENDORED
+  #     converter/tableau.mjs shipped in the skill (zero config — no clone, no
+  #     npm install, no network); the orchestrator also auto-discovers a dev's
+  #     fresher build when present. This is the normal path.
   #   - mcp_build nil     → the HOSTED converter MCP over HTTP
   #     (https://sigma-data-model-mcp.onrender.com/mcp via lib/mcp_convert.py),
-  #     so the skill works for anyone who installed the MCP on their agent —
-  #     no local converter clone required.
+  #     used ONLY on explicit --converter hosted opt-in (uploads the .twb).
   def run_converter(twb_path:, conn:, db:, schema:, mcp_build:, workdir:, datasource_index: 0, table_mapping: nil)
     return run_converter_hosted(twb_path: twb_path, conn: conn, db: db, schema: schema,
                                 workdir: workdir, datasource_index: datasource_index,
@@ -220,7 +223,7 @@ module MechanicalSpecs
     raw_text  = File.join(workdir, 'conv-hosted-out.json')
     meta_out  = File.join(workdir, 'conv-meta.json')
     File.write(args_file, JSON.pretty_generate(args))
-    o, e, st = Open3.capture3('python3', client, 'convert_tableau_to_sigma', args_file, raw_text)
+    o, e, st = Open3.capture3(*PyResolve.argv, client, 'convert_tableau_to_sigma', args_file, raw_text)
     raise "hosted converter failed (sigma-data-model-mcp.onrender.com): #{e}#{o}" unless st.success?
     out = JSON.parse(File.read(raw_text))
     bare = out['model'] || out['sigmaDataModel'] || out

@@ -49,6 +49,7 @@ require 'optparse'
 require 'fileutils'
 require 'open3'
 require_relative 'lib/scout_gate'
+require_relative 'lib/py_resolve' # real-Python resolver (Windows Store-stub safe)
 
 HERE = __dir__
 $LOAD_PATH.unshift File.expand_path('lib', HERE)
@@ -147,10 +148,10 @@ if File.exist?(File.join(WORK, 'analysis.json')) && File.exist?(File.join(WORK, 
    Dir[File.join(WORK, 'datasets', '*.json')].any?
   puts "   reusing discovery artifacts already in #{WORK}"
 elsif opts[:fixtures]
-  run!(['python3', File.join(HERE, 'quicksight-discover.py'),
+  run!([*PyResolve.argv, File.join(HERE, 'quicksight-discover.py'),
         '--from-fixtures', opts[:fixtures], '--out-dir', WORK])
 else
-  disc_cmd = ['python3', File.join(HERE, 'quicksight-discover.py'),
+  disc_cmd = [*PyResolve.argv, File.join(HERE, 'quicksight-discover.py'),
               '--account-id', opts[:account], '--region', opts[:region],
               '--analysis-id', opts[:analysis], '--out-dir', WORK]
   disc_cmd += ['--profile', opts[:profile]] if opts[:profile]
@@ -396,7 +397,7 @@ elsif opts[:skip_reuse]
 else
   begin
     sig_path = File.join(WORK, 'dm-signature.json')
-    run!(['python3', File.join(HERE, 'qs-dm-signature.py'),
+    run!([*PyResolve.argv, File.join(HERE, 'qs-dm-signature.py'),
           '--discover-dir', WORK, '--out', sig_path])
     match_path = File.join(WORK, 'dm-match.json')
     fop_out, = Open3.capture2e('ruby', File.join(HERE, 'find-or-pick-dm.rb'),
@@ -562,7 +563,7 @@ tok = (Sigma.auth_token rescue ENV['SIGMA_API_TOKEN'])
 pngs = []
 content_pages.each do |pg|
   out = File.join(vqa, "#{pg['id']}.png")
-  _o, st = Open3.capture2e({ 'SIGMA_API_TOKEN' => tok.to_s }, 'python3',
+  _o, st = Open3.capture2e({ 'SIGMA_API_TOKEN' => tok.to_s }, *PyResolve.argv,
                            File.join(HERE, 'sigma-export-png.py'),
                            '--workbook', wb_id, '--page', pg['id'], '--out', out,
                            '--w', '1800', '--h', '1000')

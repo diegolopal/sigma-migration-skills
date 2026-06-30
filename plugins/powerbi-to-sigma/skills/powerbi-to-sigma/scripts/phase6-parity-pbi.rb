@@ -45,6 +45,7 @@ require 'json'
 require 'optparse'
 require 'open3'
 require 'time'
+require_relative 'lib/py_resolve' # real-Python resolver (Windows Store-stub safe)
 
 opts = { extract: false, tol: 0.02 }
 OptionParser.new do |p|
@@ -193,10 +194,13 @@ if opts[:emit]
   write_harness
   chart_dax = JSON.parse(File.read(opts[:cdax]))
   # Find python (needs truststore+msal): $PBI_PY, else the legacy /tmp/pbiauth
-  # venv, else python3 (bead 7o01 — see scripts/requirements.txt / run.sh bootstrap).
+  # venv, else a real system Python via PyResolve (Windows Store-stub safe; bead
+  # 7o01 — see scripts/requirements.txt / run.sh bootstrap). py_argv is an array
+  # so a multi-token launcher (`py -3`) survives the splat.
   py = ENV['PBI_PY'] ||
-       (File.exist?('/tmp/pbiauth/bin/python') ? '/tmp/pbiauth/bin/python' : 'python3')
-  out, err, st = Open3.capture3(py, HARNESS, opts[:ws], opts[:ds], stdin_data: JSON.dump(chart_dax))
+       (File.exist?('/tmp/pbiauth/bin/python') ? '/tmp/pbiauth/bin/python' : nil)
+  py_argv = py ? [py] : PyResolve.argv
+  out, err, st = Open3.capture3(*py_argv, HARNESS, opts[:ws], opts[:ds], stdin_data: JSON.dump(chart_dax))
   warn err unless err.empty?
   abort('executeQueries harness failed') unless st.success?
   expected = JSON.parse(out)
