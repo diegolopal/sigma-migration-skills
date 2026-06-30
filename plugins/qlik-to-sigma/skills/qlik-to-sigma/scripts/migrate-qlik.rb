@@ -140,11 +140,21 @@ abort 'missing --app (or --from-discovery)' unless opts[:app] || opts[:from]
 opts[:conn] ||= (JSON.parse(File.read(File.join(opts[:out], 'connection.json')))['connection_id'] rescue nil) if opts[:out]
 abort 'missing --connection (pass --connection <id>, or run intake.rb first and point --out at its --workdir)' unless opts[:conn]
 
-# Locate the sigma-data-model-mcp converter build (exports convertQlikToSigma).
+# Converter (exports convertQlikToSigma) — ZERO-config, local, no MCP. A dev's
+# own build wins via QLIK_MCP_DIR (or a local sigma-data-model-mcp checkout);
+# otherwise the self-contained bundle VENDORED in the skill (converter/qlik.mjs)
+# is used — no clone, no npm install, no network. Refresh it with
+# tools/vendor-converters.sh (see converter/PROVENANCE.json).
 MCP_DIR = ENV['QLIK_MCP_DIR'] || %w[
   /Users/tjwells/Desktop/sigma-data-model-mcp
   /Users/tjwells/sigma-data-model-mcp
 ].find { |d| File.exist?(File.join(d, 'build', 'qlik.js')) }
+VENDORED_QLIK = File.expand_path('../converter/qlik.mjs', __dir__)
+# The converter module the Phase-2 shim imports: a dev build if present, else the
+# vendored bundle. nil only if BOTH are somehow absent (a prior converter-out.json
+# may then still be reused).
+CONV_MODULE = MCP_DIR ? File.join(MCP_DIR, 'build', 'qlik.js') :
+              (File.exist?(VENDORED_QLIK) ? VENDORED_QLIK : nil)
 
 name_slug = (opts[:app] || File.basename(opts[:from].to_s)).gsub(/[^A-Za-z0-9_-]/, '-')
 WORK = opts[:out] || File.expand_path("~/qlik-migration/#{name_slug}")
@@ -325,15 +335,16 @@ end
 # ---------------------------------------------------------------------------
 hdr(2, TOTAL, 'Convert')
 conv_out_path = File.join(WORK, 'converter-out.json')
-if MCP_DIR.nil? && File.exist?(conv_out_path)
-  puts "   converter build not found — reusing existing #{conv_out_path}"
-elsif MCP_DIR.nil?
-  abort 'FATAL: cannot locate sigma-data-model-mcp build (set QLIK_MCP_DIR) and no converter-out.json present'
+if CONV_MODULE.nil? && File.exist?(conv_out_path)
+  puts "   converter build/bundle not found — reusing existing #{conv_out_path}"
+elsif CONV_MODULE.nil?
+  abort 'FATAL: no Qlik converter available (vendored converter/qlik.mjs missing and no QLIK_MCP_DIR) and no converter-out.json present'
 else
+  puts "   converter: #{CONV_MODULE == VENDORED_QLIK ? 'vendored bundle (converter/qlik.mjs)' : CONV_MODULE} (no data leaves this machine)"
   shim = File.join(WORK, '_convert.mjs')
   File.write(shim, <<~JS)
     import { readFileSync, writeFileSync } from 'node:fs';
-    import { convertQlikToSigma } from #{File.join(MCP_DIR, 'build', 'qlik.js').to_json};
+    import { convertQlikToSigma } from #{CONV_MODULE.to_json};
     const model = JSON.parse(readFileSync(#{File.join(WORK, 'converter-input.json').to_json}, 'utf8'));
     const out = convertQlikToSigma(model, {
       connectionId: #{opts[:conn].to_json},

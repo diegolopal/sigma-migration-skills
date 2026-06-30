@@ -103,6 +103,13 @@ MCP_DIR = [opts[:mcp_dir], ENV['QS_MCP_DIR'],
            File.expand_path('~/Desktop/sigma-data-model-mcp'),
            File.expand_path('~/sigma-data-model-mcp')]
           .compact.find { |d| File.exist?(File.join(d, 'build', 'quicksight.js')) }
+# ZERO-config local converter: a dev's build (above) wins, else the self-contained
+# bundle VENDORED in the skill (converter/quicksight.mjs) — no clone, no npm, no
+# network, no MCP. CONV_MODULE is what the Phase-2 shim imports; nil only if the
+# bundle is also absent (then --converted / the MCP gate applies).
+VENDORED_QS = File.expand_path('../converter/quicksight.mjs', __dir__)
+CONV_MODULE = MCP_DIR ? File.join(MCP_DIR, 'build', 'quicksight.js') :
+              (File.exist?(VENDORED_QS) ? VENDORED_QS : nil)
 
 name_slug = (opts[:analysis] || File.basename(opts[:fixtures].to_s)).gsub(/[^A-Za-z0-9_-]/, '-')
 WORK = opts[:out] || File.expand_path("~/quicksight-migration/#{name_slug}")
@@ -184,11 +191,12 @@ if opts[:converted]
   FileUtils.cp(opts[:converted], File.join(WORK, 'converter-out.json')) unless
     File.expand_path(opts[:converted]) == File.join(WORK, 'converter-out.json')
   puts "   converter output ingested from #{opts[:converted]} (MCP-tool route)"
-elsif MCP_DIR
+elsif CONV_MODULE
+  puts "   converter: #{CONV_MODULE == VENDORED_QS ? 'vendored bundle (converter/quicksight.mjs)' : CONV_MODULE} (no data leaves this machine)"
   shim = File.join(WORK, '_convert.mjs')
   File.write(shim, <<~JS)
     import { readFileSync, writeFileSync } from 'node:fs';
-    import { convertQuickSightToSigma } from #{File.join(MCP_DIR, 'build', 'quicksight.js').to_json};
+    import { convertQuickSightToSigma } from #{CONV_MODULE.to_json};
     const files = #{conv_files.to_json}.map(p => ({ name: p.split('/').pop(), content: readFileSync(p, 'utf8') }));
     const out = convertQuickSightToSigma(files, {
       connectionId: #{opts[:conn].to_json},
@@ -201,7 +209,6 @@ elsif MCP_DIR
     process.stderr.write('CONVSTATS ' + JSON.stringify({ warnings: w, stats: out.stats || {} }) + '\\n');
   JS
   c_out, c_err, c_st = Open3.capture3('node', shim)
-  puts "   converter ran (build: #{MCP_DIR})"
   abort "FATAL: converter failed:\n#{c_err}#{c_out}" unless c_st.success?
 else
   puts '   no local sigma-data-model-mcp build found (set --mcp-dir / QS_MCP_DIR for the in-process route).'
