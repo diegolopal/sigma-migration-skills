@@ -62,6 +62,7 @@ require 'fileutils'
 require 'open3'
 require 'digest'
 require 'set'
+require_relative 'lib/py_resolve' # real-Python resolver (Windows Store-stub safe)
 
 HERE = __dir__
 $LOAD_PATH.unshift File.expand_path('lib', HERE)
@@ -257,15 +258,18 @@ abort "FATAL: PBIR bundle has no definition/ parts and no classic report.json �
 signals_path = File.join(WORK, 'signals.json')
 # bead 7o01: Python resolution — --python / PBI_PY, else a bootstrapped venv
 # (run.sh creates <work-dir>/.venv), else the legacy /tmp/pbiauth venv, else
-# system python3 (sufficient here: the offline PBIR parse is stdlib-only).
-PY = opts[:python] || ENV['PBI_PY'] ||
+# a real system Python via PyResolve (Windows Store-stub safe; the offline PBIR
+# parse is stdlib-only). PY_ARGV is an array so a multi-token launcher (`py -3`)
+# survives the splat below.
+py = opts[:python] || ENV['PBI_PY'] ||
      [File.join(WORK, '.venv', 'bin', 'python'), '/tmp/pbiauth/bin/python']
-       .find { |p| File.exist?(p) } || 'python3'
+       .find { |p| File.exist?(p) }
+PY_ARGV = py ? [py] : PyResolve.argv
 if classic_rj
   puts '   classic single report.json detected — branching to extract-report-classic.py'
-  run!([PY, File.join(HERE, 'extract-report-classic.py'), '--report-json', classic_rj, '--out', signals_path])
+  run!([*PY_ARGV, File.join(HERE, 'extract-report-classic.py'), '--report-json', classic_rj, '--out', signals_path])
 else
-  run!([PY, File.join(HERE, 'extract-pbir.py'), '--pbir-dir', pbir_dir, '--out', signals_path])
+  run!([*PY_ARGV, File.join(HERE, 'extract-pbir.py'), '--pbir-dir', pbir_dir, '--out', signals_path])
 end
 signals = JSON.parse(File.read(signals_path))
 
@@ -299,7 +303,7 @@ fresh_waiter = nil
 if File.exist?(fresh_path) && !opts[:skip_fresh]
   puts "   freshness.json already present — reusing (delete #{fresh_path} to re-probe)"
 elsif opts[:ws] && opts[:dataset] && !opts[:skip_fresh] && modes.include?('import')
-  fresh_pid = Process.spawn(PY, File.join(HERE, 'pbi-freshness.py'),
+  fresh_pid = Process.spawn(*PY_ARGV, File.join(HERE, 'pbi-freshness.py'),
                             '--workspace', opts[:ws], '--dataset', opts[:dataset],
                             '--tmsl', opts[:tmsl], '--out', fresh_path,
                             out: fresh_log, err: fresh_log)
@@ -518,7 +522,7 @@ elsif !opts[:no_reuse]
     match_path = File.join(WORK, 'dm-match.json')
     # Signature is parsed from the TMSL/model.bim (warehouse FQNs from the M
     # partition expressions). Best-effort — tolerate a non-zero exit.
-    _so, _ss = Open3.capture2e(PY, File.join(HERE, 'pbi-dm-signature.py'),
+    _so, _ss = Open3.capture2e(*PY_ARGV, File.join(HERE, 'pbi-dm-signature.py'),
                                '--bim', opts[:tmsl], '--out', sig_path)
     _so.each_line { |l| puts "   #{l.rstrip}" } unless _so.strip.empty?
     if File.exist?(sig_path)
@@ -1206,7 +1210,7 @@ begin
   pngs = []
   content_pages_qa.each do |pg|
     out = File.join(vqa, "#{pg['id']}.png")
-    _o, st = Open3.capture2e({ 'SIGMA_API_TOKEN' => tok.to_s }, PY,
+    _o, st = Open3.capture2e({ 'SIGMA_API_TOKEN' => tok.to_s }, *PY_ARGV,
                              File.join(HERE, 'sigma-export-png.py'),
                              '--workbook', wb_id, '--page', pg['id'], '--out', out,
                              '--w', '1800', '--h', '1000')

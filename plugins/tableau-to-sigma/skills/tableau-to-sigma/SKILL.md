@@ -61,15 +61,19 @@ ruby scripts/migrate-tableau.rb --workbook "<name>" \
   --finalize --actuals <workdir>/parity-actuals.json [--allow-missing-tiles N]
 ```
 
-> **Converter backend — LOCAL by default, never upload customer data silently.** The
-> mechanical path needs the Tableau→Sigma converter. It runs **locally** when
-> `TABLEAU_MCP_BUILD` points at a `build/tableau.js` (or a locally-run `sigma-data-model`
-> MCP) — **nothing leaves the machine**, which is required for customers who can't send
-> `.twb` contents (schema/SQL/formulas) off-box. The **hosted** converter
-> (`https://sigma-data-model-mcp.onrender.com/mcp`) is used **only** with explicit consent
-> (`--converter hosted` or `SIGMA_CONVERTER_ALLOW_HOSTED=1`) because it uploads the `.twb`
-> to a third-party server. With neither, pass 1 STOPS and prints the options — it never
-> falls back to hosted on its own. See QUICKSTART "the data-model converter backend".
+> **Converter backend — LOCAL by default, zero config, never upload customer data silently.**
+> The mechanical path needs the Tableau→Sigma converter, which is **not a server** — it's a
+> pure function (`.twb` XML → Sigma JSON) run via `node`; nothing leaves the machine. A
+> **prebuilt converter ships inside the skill** at `converter/tableau.mjs` and is auto-discovered
+> as the guaranteed fallback, so the local path works with **no clone, no `npm install`, no
+> network** (only `node` on PATH). A developer's own build still wins when present — set
+> `TABLEAU_MCP_BUILD` to a `build/tableau.js`, `SIGMA_DATA_MODEL_MCP` to a checkout, or run
+> `scripts/dev/fetch-converter.sh`. Refresh the vendored copy after the converter changes with
+> `scripts/dev/vendor-converter.sh` (pinned source in `converter/PROVENANCE.json`). The
+> **hosted** converter (`https://sigma-data-model-mcp.onrender.com/mcp`) uploads the `.twb` to
+> a third-party server and is used **only** with explicit `--converter hosted` (which overrides
+> local auto-discovery) or `SIGMA_CONVERTER_ALLOW_HOSTED=1` — never on its own. See QUICKSTART
+> "the data-model converter backend".
 >
 > **No converter available? Re-enter the GATED spine — do NOT hand-drive raw POSTs.**
 > When no backend is configured, the fallback is *not* "build everything by hand and POST

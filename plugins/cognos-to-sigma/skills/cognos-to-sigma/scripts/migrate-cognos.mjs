@@ -58,6 +58,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as scoutGate from './lib/scout_gate.mjs';
+import { pythonArgv } from './lib/py_resolve.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONV = join(HERE, '..', 'converter');
@@ -340,7 +341,8 @@ if (opt['skip-reuse-scan'] || opt['dry-run']) {
 } else {
   sigmaLogin();
   const sigPath = join(WORK, 'dm-signature.json');
-  run('python3', [join(HERE, 'cognos-dm-signature.py'), '--dm-spec', dmPath, '--out', sigPath]);
+  const PY = pythonArgv();
+  run(PY[0], [...PY.slice(1), join(HERE, 'cognos-dm-signature.py'), '--dm-spec', dmPath, '--out', sigPath]);
   const matchPath = join(WORK, 'dm-match.json');
   run('ruby', [join(HERE, 'find-or-pick-dm.rb'), '--workbook-signature', sigPath, '--out', matchPath,
     '--auto-pick', '--auto-pick-threshold', '0.5'],

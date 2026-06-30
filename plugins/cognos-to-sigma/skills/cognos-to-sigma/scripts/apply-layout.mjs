@@ -25,6 +25,7 @@
 // Idempotent (band elements are re-derived each run). Run it as the last step
 // of the build/verify phase.
 import { api, parseArgs } from './lib/sigma-rest.mjs';
+import { pythonArgv } from './lib/py_resolve.mjs';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -198,11 +199,12 @@ if (!a['skip-visual-qa'] && rb.json) {
   const vqaDir = join(tmpdir(), `cognos-visual-qa-${a.workbook}`);
   mkdirSync(vqaDir, { recursive: true });
   const tok = process.env.SIGMA_API_TOKEN || '';
+  const PY = pythonArgv();
   let rendered = 0;
   for (const p of contentPages) {
     const out = join(vqaDir, `${p.id}.png`);
-    const png = spawnSync('python3',
-      [join(HERE, 'sigma-export-png.py'), '--workbook', a.workbook, '--page', p.id,
+    const png = spawnSync(PY[0],
+      [...PY.slice(1), join(HERE, 'sigma-export-png.py'), '--workbook', a.workbook, '--page', p.id,
         '--out', out, '--w', '1800', '--h', '1000'],
       { encoding: 'utf8', env: { ...process.env, SIGMA_API_TOKEN: tok } });
     if (png.status === 0) { rendered++; }

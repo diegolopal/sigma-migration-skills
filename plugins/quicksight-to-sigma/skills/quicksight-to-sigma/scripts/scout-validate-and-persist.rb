@@ -43,6 +43,7 @@ require 'shellwords'
 require 'time'
 require_relative 'learned-rules'
 require_relative 'lib/scout_gate'
+require_relative 'lib/py_resolve' # real-Python resolver (Windows Store-stub safe)
 
 opts = { max_attempts: 1 }
 OptionParser.new do |p|
@@ -139,7 +140,7 @@ else
     'error_columns' => res['error_columns']
   }.compact
   esc_cmd = [
-    'python3', escalate,
+    *PyResolve.argv, escalate,
     '--skill',              'quicksight-to-sigma',
     '--category',           'converter',
     '--feature',            opts[:feature],

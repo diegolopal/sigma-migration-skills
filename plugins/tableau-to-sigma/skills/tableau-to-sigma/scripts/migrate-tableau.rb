@@ -78,6 +78,7 @@ require 'yaml'
 require 'optparse'
 require 'fileutils'
 require 'open3'
+require_relative 'lib/py_resolve' # real-Python resolver (Windows Store-stub safe)
 require 'date'
 require 'time'
 require 'set'
@@ -135,9 +136,10 @@ OptionParser.new do |o|
   # --finalize with --enhance-accept <id,id,...> or 'all-low-risk'.
   o.on('--enhance')          {     opts[:enhance] = true }
   o.on('--enhance-accept L') { |v| opts[:enhance_accept] = v }
-  o.on('--converter MODE', %w[local hosted], "converter backend: 'local' (default; no data egress — " \
-       "needs TABLEAU_MCP_BUILD) or 'hosted' (sends the .twb to sigma-data-model-mcp.onrender.com — " \
-       'explicit consent to upload customer schema/SQL).') { |v| opts[:converter] = v }
+  o.on('--converter MODE', %w[local hosted], "converter backend: 'local' (default; zero-config, no " \
+       'data egress — uses the vendored converter/tableau.mjs unless TABLEAU_MCP_BUILD points at a ' \
+       "fresher build) or 'hosted' (sends the .twb to sigma-data-model-mcp.onrender.com — explicit " \
+       'consent to upload customer schema/SQL).') { |v| opts[:converter] = v }
   # ---- Per-dashboard scoping (LARGE workbooks: build+gate ONE tab at a time) ----
   # `--dashboard "<name>"` (repeatable) scopes parse-twb-layout, build-charts, and
   # the parity plan to a single Tableau dashboard, so a 14-tab workbook is built
@@ -690,22 +692,34 @@ if mechanical
     line "WARN: TABLEAU_MCP_BUILD=#{mcp_build} does not exist — ignoring"
     mcp_build = nil
   end
-  # Auto-discover a LOCAL converter build when TABLEAU_MCP_BUILD is unset, so
-  # anyone who has the sigma-data-model MCP checked out (or ran scripts/dev/
-  # fetch-converter.sh) gets the no-egress local path with ZERO config — the
-  # mechanical path becomes the default instead of dropping to the manual STOP.
-  # First hit wins; purely filesystem (never the network), so a miss just falls
-  # through to the consent/STOP logic below. Set TABLEAU_MCP_BUILD to override.
-  if mcp_build.nil?
+  # Auto-discover a LOCAL converter build when TABLEAU_MCP_BUILD is unset, so the
+  # no-egress local path is the ZERO-config default — the mechanical path runs
+  # without any setup instead of dropping to the manual STOP. The VENDORED build
+  # (converter/tableau.js, shipped inside this skill) is the guaranteed final
+  # fallback: no clone, no npm install, no network. The local converter is NOT a
+  # server — it's a pure function (XML → Sigma JSON) run via `node`; nothing
+  # leaves the box. First hit wins; purely filesystem (never the network), so a
+  # miss just falls through to the consent/STOP logic below. Earlier entries (env
+  # override, a local sigma-data-model-mcp checkout) win when present, so a dev
+  # with a fresher converter still uses it. Set TABLEAU_MCP_BUILD to override.
+  # Explicit `--converter hosted` is a deliberate opt-in to off-box conversion —
+  # don't let local auto-discovery (esp. the always-present vendored build)
+  # silently override it. SIGMA_CONVERTER_ALLOW_HOSTED is only a *permission*, not
+  # a preference, so it still prefers local when a build is found.
+  if mcp_build.nil? && opts[:converter] != 'hosted'
     auto = [
       (ENV['SIGMA_DATA_MODEL_MCP'] && File.join(ENV['SIGMA_DATA_MODEL_MCP'], 'build', 'tableau.js')),
       File.join(HERE, 'vendor', 'sigma-data-model-mcp', 'build', 'tableau.js'), # fetch-converter.sh target (gitignored)
       File.expand_path('~/sigma-data-model-mcp/build/tableau.js'),
-      File.expand_path('~/Desktop/sigma-data-model-mcp/build/tableau.js')
+      File.expand_path('~/Desktop/sigma-data-model-mcp/build/tableau.js'),
+      File.expand_path('../converter/tableau.mjs', HERE) # vendored in-skill — always present
     ].compact.find { |p| File.exist?(p) }
     if auto
       mcp_build = auto
-      line "converter: auto-discovered LOCAL build #{auto} (no data leaves this machine; set TABLEAU_MCP_BUILD to override)"
+      vendored = auto == File.expand_path('../converter/tableau.mjs', HERE)
+      msg = vendored ? 'vendored build (converter/tableau.mjs)' : "build #{auto}"
+      line "converter: auto-discovered LOCAL #{msg} (no data leaves this machine" \
+           "#{vendored ? '' : '; set TABLEAU_MCP_BUILD to override'})"
     end
   end
   allow_hosted = opts[:converter] == 'hosted' || ENV['SIGMA_CONVERTER_ALLOW_HOSTED'] == '1'
@@ -1775,7 +1789,7 @@ content_pages = (wbspec_local['pages'] || []).reject { |p| p['id'].to_s.downcase
 rendered = 0
 content_pages.each do |pg|
   out = File.join(vqa, "#{pg['id']}.png")
-  _o, st = sigma_run!(['python3', File.join(HERE, 'sigma-export-png.py'),
+  _o, st = sigma_run!([*PyResolve.argv, File.join(HERE, 'sigma-export-png.py'),
                        '--workbook', wb_id, '--page', pg['id'], '--out', out, '--w', '1800', '--h', '1000'],
                       allow_fail: true)
   st.success? ? (rendered += 1) : line("WARN: visual-QA render failed for page #{pg['id']}")

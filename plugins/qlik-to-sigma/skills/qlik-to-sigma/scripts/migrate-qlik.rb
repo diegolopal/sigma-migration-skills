@@ -57,6 +57,7 @@ require 'fileutils'
 require 'open3'
 require 'time'
 require_relative 'lib/scout_gate'
+require_relative 'lib/py_resolve' # real-Python resolver (Windows Store-stub safe)
 
 $stdout.sync = true # lane/foreground progress lines interleave correctly
 
@@ -200,7 +201,7 @@ if opts[:from]
   end
   puts "   reusing discovery artifacts from #{opts[:from]}"
 else
-  disc_lane = spawn_lane(['python3', File.join(HERE, 'qlik-discover.py'),
+  disc_lane = spawn_lane([*PyResolve.argv, File.join(HERE, 'qlik-discover.py'),
                           '--app', opts[:app], '--context', opts[:context],
                           '--out', WORK, '--defer-snapshot'],
                          File.join(WORK, 'phase1-discover.log'))
@@ -273,7 +274,7 @@ else
   PHASE_T['phase1-discovery(bg)'] = (disc_lane[:ended] - disc_lane[:started])
 
   # Engine-snapshot lane: runs under Phases 2-4, joined at Phase 6. Read-only.
-  snap_lane = spawn_lane(['python3', File.join(HERE, 'qlik-discover.py'),
+  snap_lane = spawn_lane([*PyResolve.argv, File.join(HERE, 'qlik-discover.py'),
                           '--app', opts[:app], '--context', opts[:context],
                           '--out', WORK, '--snapshot-only'],
                          File.join(WORK, 'phase1-snapshot.log'))
@@ -369,7 +370,7 @@ elsif opts[:no_reuse]
 else
   begin
     sig_path = File.join(WORK, 'dm-signature.json')
-    run!(['python3', File.join(HERE, 'qlik-dm-signature.py'),
+    run!([*PyResolve.argv, File.join(HERE, 'qlik-dm-signature.py'),
           '--model', File.join(WORK, 'converter-input.json'),
           '--database', opts[:database], '--schema', opts[:schema], '--out', sig_path])
     match_path = File.join(WORK, 'dm-match.json')
@@ -560,10 +561,10 @@ end
 # ---------------------------------------------------------------------------
 hdr(3, TOTAL, 'Build data model')
 reconcile = File.join(WORK, 'reconcile.json')
-run!(['python3', File.join(HERE, 'reconcile-columns.py'),
+run!([*PyResolve.argv, File.join(HERE, 'reconcile-columns.py'),
       '--script', File.join(WORK, 'script.qvs'), '--out', reconcile])
 denorm_out = File.join(WORK, 'denorm.json')
-run!(['python3', File.join(HERE, 'gen-denorm-sql.py'),
+run!([*PyResolve.argv, File.join(HERE, 'gen-denorm-sql.py'),
       '--reconcile', reconcile, '--database', opts[:database], '--schema', opts[:schema],
       '--connection', opts[:conn], '--out', denorm_out])
 
@@ -601,7 +602,7 @@ if reuse_denorm_eid
   DM_ID = opts[:reuse_dm]
   puts "   REUSING DM #{DM_ID}  ·  denorm element 'Custom SQL' (#{reuse_denorm_eid})  — convert + POST skipped"
 else
-  dm_cmd = ['python3', File.join(HERE, 'build-sigma-dm.py'),
+  dm_cmd = [*PyResolve.argv, File.join(HERE, 'build-sigma-dm.py'),
             '--converter-out', conv_out_path, '--reconcile', reconcile,
             '--denorm', denorm_out, '--measures', File.join(WORK, 'measures.json'),
             '--name', "#{base_name} (Qlik→Sigma)",
@@ -625,7 +626,7 @@ mark('phase3-dm')
 # Phase 4 — Build workbook (one Sigma page per Qlik sheet, from charts.json)
 # ---------------------------------------------------------------------------
 hdr(4, TOTAL, 'Build workbook')
-wb_cmd = ['python3', File.join(HERE, 'build-sigma-workbook.py'),
+wb_cmd = [*PyResolve.argv, File.join(HERE, 'build-sigma-workbook.py'),
           '--charts', File.join(WORK, 'charts.json'), '--layout', File.join(WORK, 'layout.json'),
           '--denorm', denorm_out,
           '--dm-id', DM_ID || 'DRY-RUN', '--denorm-element-id', dm_res['denormElementId'].to_s,
@@ -675,7 +676,7 @@ unless opts[:dry_run]
   pngs = []
   content_pages.each do |pg|
     out = File.join(vqa, "#{pg['id']}.png")
-    _o, st = Open3.capture2e({ 'SIGMA_API_TOKEN' => tok.to_s }, 'python3',
+    _o, st = Open3.capture2e({ 'SIGMA_API_TOKEN' => tok.to_s }, *PyResolve.argv,
                              File.join(HERE, 'sigma-export-png.py'),
                              '--workbook', WB_ID, '--page', pg['id'], '--out', out, '--w', '1800', '--h', '1000')
     st.success? ? (pngs << out) : (puts "   [warn] visual-QA render failed for page #{pg['id']}")

@@ -63,6 +63,15 @@
       ]
     },
     {
+      "canonical": "shared/lib/py_resolve.rb",
+      "targets": [
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/lib/py_resolve.rb",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/lib/py_resolve.rb",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/lib/py_resolve.rb",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/lib/py_resolve.rb"
+      ]
+    },
+    {
       "canonical": "shared/lib/sigma_telemetry.py",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/lib/sigma_telemetry.py",

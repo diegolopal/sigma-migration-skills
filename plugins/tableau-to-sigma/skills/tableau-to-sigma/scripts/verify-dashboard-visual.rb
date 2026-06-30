@@ -25,6 +25,7 @@ require 'json'
 require 'optparse'
 require 'fileutils'
 require_relative 'lib/tableau_rest'
+require_relative 'lib/py_resolve' # real-Python resolver (Windows Store-stub safe)
 
 opts = { w: 1700, h: 1100 }
 OptionParser.new do |p|
@@ -74,7 +75,7 @@ dash_layout.each do |d|
   # 2) Sigma page render
   pid = page_id_by_name[name] || page_id_by_name.reject { |k, _| k == 'Data' }.values.first
   if pid
-    ok = system('python3', png_script, '--workbook', opts[:wb], '--page', pid,
+    ok = system(*PyResolve.argv, png_script, '--workbook', opts[:wb], '--page', pid,
                 '--out', sig_png, '--w', opts[:w].to_s, '--h', opts[:h].to_s,
                 out: File::NULL, err: File::NULL)
     rec['sigma_png'] = sig_png if ok && File.size?(sig_png)

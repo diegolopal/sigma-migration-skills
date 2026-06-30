@@ -7,9 +7,11 @@
 # skill and builds it. migrate-tableau.rb then auto-discovers vendor/sigma-data-model-mcp/
 # build/tableau.js (see the auto-discover block) — no TABLEAU_MCP_BUILD needed.
 #
-# We deliberately do NOT commit the build artifact: the converter is actively
-# developed and not self-contained (build/tableau.js imports siblings), so a vendored
-# snapshot would silently drift. Re-run this script to refresh.
+# This fetches the FRESH converter for DEVELOPERS. A committed, pinned snapshot also
+# ships in the skill at converter/ (the zero-config floor everyone gets with no clone/
+# network — see scripts/dev/vendor-converter.sh). Auto-discovery prefers this fresh
+# build over the committed snapshot, so a dev always tests the latest; the snapshot
+# only kicks in when no fresher build exists. Re-run this script to refresh the dev copy.
 #
 #   ./scripts/dev/fetch-converter.sh            # clone/update + build (default branch)
 #   ./scripts/dev/fetch-converter.sh <ref>      # build a specific branch/tag/sha
