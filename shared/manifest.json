@@ -350,6 +350,87 @@
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/test-build-parity-plan.rb",
         "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-build-parity-plan.rb"
       ]
+    },
+    {
+      "canonical": "shared/scripts/doctor.sh",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-assessment/scripts/doctor.sh",
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/doctor.sh",
+        "plugins/gooddata-to-sigma/skills/gooddata-assessment/scripts/doctor.sh",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/doctor.sh",
+        "plugins/looker-to-sigma/skills/looker-assessment/scripts/doctor.sh",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/doctor.sh",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-assessment/scripts/doctor.sh",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/doctor.sh",
+        "plugins/powerbi-to-sigma/skills/powerbi-assessment/scripts/doctor.sh",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/doctor.sh",
+        "plugins/qlik-to-sigma/skills/qlik-assessment/scripts/doctor.sh",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/doctor.sh",
+        "plugins/quicksight-to-sigma/skills/quicksight-assessment/scripts/doctor.sh",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/doctor.sh",
+        "plugins/sigma-authoring/skills/custom-sql-to-data-model/scripts/doctor.sh",
+        "plugins/sigma-authoring/skills/sigma-workbooks/scripts/doctor.sh",
+        "plugins/sisense-to-sigma/skills/sisense-assessment/scripts/doctor.sh",
+        "plugins/sisense-to-sigma/skills/sisense-to-sigma/scripts/doctor.sh",
+        "plugins/tableau-to-sigma/skills/tableau-assessment/scripts/doctor.sh",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/doctor.sh",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-assessment/scripts/doctor.sh",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/doctor.sh"
+      ]
+    },
+    {
+      "canonical": "shared/scripts/doctor.ps1",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-assessment/scripts/doctor.ps1",
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/doctor.ps1",
+        "plugins/gooddata-to-sigma/skills/gooddata-assessment/scripts/doctor.ps1",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/doctor.ps1",
+        "plugins/looker-to-sigma/skills/looker-assessment/scripts/doctor.ps1",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/doctor.ps1",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-assessment/scripts/doctor.ps1",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/doctor.ps1",
+        "plugins/powerbi-to-sigma/skills/powerbi-assessment/scripts/doctor.ps1",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/doctor.ps1",
+        "plugins/qlik-to-sigma/skills/qlik-assessment/scripts/doctor.ps1",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/doctor.ps1",
+        "plugins/quicksight-to-sigma/skills/quicksight-assessment/scripts/doctor.ps1",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/scripts/doctor.ps1",
+        "plugins/sigma-authoring/skills/custom-sql-to-data-model/scripts/doctor.ps1",
+        "plugins/sigma-authoring/skills/sigma-workbooks/scripts/doctor.ps1",
+        "plugins/sisense-to-sigma/skills/sisense-assessment/scripts/doctor.ps1",
+        "plugins/sisense-to-sigma/skills/sisense-to-sigma/scripts/doctor.ps1",
+        "plugins/tableau-to-sigma/skills/tableau-assessment/scripts/doctor.ps1",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/doctor.ps1",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-assessment/scripts/doctor.ps1",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/scripts/doctor.ps1"
+      ]
+    },
+    {
+      "canonical": "shared/refs/environment.md",
+      "targets": [
+        "plugins/cognos-to-sigma/skills/cognos-assessment/refs/environment.md",
+        "plugins/cognos-to-sigma/skills/cognos-to-sigma/refs/environment.md",
+        "plugins/gooddata-to-sigma/skills/gooddata-assessment/refs/environment.md",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/refs/environment.md",
+        "plugins/looker-to-sigma/skills/looker-assessment/refs/environment.md",
+        "plugins/looker-to-sigma/skills/looker-to-sigma/refs/environment.md",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-assessment/refs/environment.md",
+        "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/refs/environment.md",
+        "plugins/powerbi-to-sigma/skills/powerbi-assessment/refs/environment.md",
+        "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/refs/environment.md",
+        "plugins/qlik-to-sigma/skills/qlik-assessment/refs/environment.md",
+        "plugins/qlik-to-sigma/skills/qlik-to-sigma/refs/environment.md",
+        "plugins/quicksight-to-sigma/skills/quicksight-assessment/refs/environment.md",
+        "plugins/quicksight-to-sigma/skills/quicksight-to-sigma/refs/environment.md",
+        "plugins/sigma-authoring/skills/custom-sql-to-data-model/refs/environment.md",
+        "plugins/sigma-authoring/skills/sigma-workbooks/refs/environment.md",
+        "plugins/sisense-to-sigma/skills/sisense-assessment/refs/environment.md",
+        "plugins/sisense-to-sigma/skills/sisense-to-sigma/refs/environment.md",
+        "plugins/tableau-to-sigma/skills/tableau-assessment/refs/environment.md",
+        "plugins/tableau-to-sigma/skills/tableau-to-sigma/refs/environment.md",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-assessment/refs/environment.md",
+        "plugins/thoughtspot-to-sigma/skills/thoughtspot-to-sigma/refs/environment.md"
+      ]
     }
   ]
 }
