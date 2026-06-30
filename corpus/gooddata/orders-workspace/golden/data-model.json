@@ -1,0 +1,191 @@
+{
+  "sigmaDataModel": {
+    "name": "GoodData Migration",
+    "schemaVersion": 1,
+    "folderId": "inode-FOLDER00",
+    "pages": [
+      {
+        "id": "p1",
+        "name": "Model",
+        "elements": [
+          {
+            "id": "el_customer",
+            "name": "CUSTOMER_DIM",
+            "kind": "table",
+            "source": {
+              "kind": "warehouse-table",
+              "connectionId": "inode-CONN0000",
+              "path": [
+                "DEMO_DB",
+                "PUBLIC",
+                "CUSTOMER_DIM"
+              ]
+            },
+            "columns": [
+              {
+                "id": "c_acquisition_channel",
+                "name": "Acquisition Channel",
+                "formula": "[CUSTOMER_DIM/ACQUISITION_CHANNEL]"
+              },
+              {
+                "id": "c_customer",
+                "name": "Customer Key",
+                "formula": "[CUSTOMER_DIM/CUSTOMER_KEY]"
+              },
+              {
+                "id": "c_customer_segment",
+                "name": "Customer Segment",
+                "formula": "[CUSTOMER_DIM/CUSTOMER_SEGMENT]"
+              },
+              {
+                "id": "c_loyalty_tier",
+                "name": "Loyalty Tier",
+                "formula": "[CUSTOMER_DIM/LOYALTY_TIER]"
+              },
+              {
+                "id": "c_region",
+                "name": "Region",
+                "formula": "[CUSTOMER_DIM/REGION]"
+              },
+              {
+                "id": "c_lifetime_order_count",
+                "name": "Lifetime Order Count",
+                "formula": "[CUSTOMER_DIM/LIFETIME_ORDER_COUNT]"
+              },
+              {
+                "id": "c_lifetime_revenue",
+                "name": "Lifetime Revenue",
+                "formula": "[CUSTOMER_DIM/LIFETIME_REVENUE]"
+              }
+            ]
+          },
+          {
+            "id": "el_order",
+            "name": "ORDER_FACT",
+            "kind": "table",
+            "source": {
+              "kind": "warehouse-table",
+              "connectionId": "inode-CONN0000",
+              "path": [
+                "DEMO_DB",
+                "PUBLIC",
+                "ORDER_FACT"
+              ]
+            },
+            "columns": [
+              {
+                "id": "c_order_channel",
+                "name": "Order Channel",
+                "formula": "[ORDER_FACT/ORDER_CHANNEL]"
+              },
+              {
+                "id": "c_order_id",
+                "name": "Order Id",
+                "formula": "[ORDER_FACT/ORDER_ID]"
+              },
+              {
+                "id": "c_order_line",
+                "name": "Order Line",
+                "formula": "[ORDER_FACT/ORDER_LINE]"
+              },
+              {
+                "id": "c_order_status",
+                "name": "Order Status",
+                "formula": "[ORDER_FACT/ORDER_STATUS]"
+              },
+              {
+                "id": "c_ship_method",
+                "name": "Ship Method",
+                "formula": "[ORDER_FACT/SHIP_METHOD]"
+              },
+              {
+                "id": "c_gross_profit",
+                "name": "Gross Profit",
+                "formula": "[ORDER_FACT/GROSS_PROFIT]"
+              },
+              {
+                "id": "c_gross_revenue",
+                "name": "Gross Revenue",
+                "formula": "[ORDER_FACT/GROSS_REVENUE]"
+              },
+              {
+                "id": "c_net_profit",
+                "name": "Net Profit",
+                "formula": "[ORDER_FACT/NET_PROFIT]"
+              },
+              {
+                "id": "c_net_revenue",
+                "name": "Net Revenue",
+                "formula": "[ORDER_FACT/NET_REVENUE]"
+              },
+              {
+                "id": "c_quantity_ordered",
+                "name": "Quantity Ordered",
+                "formula": "[ORDER_FACT/QUANTITY_ORDERED]"
+              },
+              {
+                "id": "c_unit_price",
+                "name": "Unit Price",
+                "formula": "[ORDER_FACT/UNIT_PRICE]"
+              },
+              {
+                "id": "fk_CUSTOMER_KEY",
+                "name": "Customer Key",
+                "formula": "[ORDER_FACT/CUSTOMER_KEY]"
+              }
+            ],
+            "relationships": [
+              {
+                "id": "rel_order_customer",
+                "name": "CUSTOMER_DIM",
+                "targetElementId": "el_customer",
+                "keys": [
+                  {
+                    "sourceColumnId": "fk_CUSTOMER_KEY",
+                    "targetColumnId": "c_customer"
+                  }
+                ]
+              }
+            ],
+            "metrics": [
+              {
+                "id": "m_m_avg_order_value",
+                "name": "Avg Order Value",
+                "formula": "[Net Revenue] / [Order Count]"
+              },
+              {
+                "id": "m_m_gross_revenue",
+                "name": "Gross Revenue",
+                "formula": "Sum([Gross Revenue])"
+              },
+              {
+                "id": "m_m_net_profit",
+                "name": "Net Profit",
+                "formula": "Sum([Net Profit])"
+              },
+              {
+                "id": "m_m_net_revenue",
+                "name": "Net Revenue",
+                "formula": "Sum([Net Revenue])"
+              },
+              {
+                "id": "m_m_order_count",
+                "name": "Order Count",
+                "formula": "CountDistinct([Order Id])"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "warnings": [
+    {
+      "metric": "m_pct_rev_region",
+      "title": "% Revenue (of all regions)",
+      "category": "CONTEXT",
+      "maql": "SELECT {metric/m_net_revenue} / (SELECT {metric/m_net_revenue} BY ALL {attribute/region})",
+      "reason": "context aggregation 'BY ALL' \u2192 Sigma workbook grouping / Level-scoped aggregate (workbook-level, not a DM metric)"
+    }
+  ]
+}

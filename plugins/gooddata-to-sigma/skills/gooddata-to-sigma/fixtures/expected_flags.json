@@ -1,0 +1,8 @@
+[
+  {
+    "metric": "m_pct_rev_region",
+    "title": "% Revenue (of all regions)",
+    "maql": "SELECT {metric/m_net_revenue} / (SELECT {metric/m_net_revenue} BY ALL {attribute/region})",
+    "reason": "MAQL context/time keyword 'BY ALL' has no pure data-model-metric equivalent (workbook-level); flagged"
+  }
+]
