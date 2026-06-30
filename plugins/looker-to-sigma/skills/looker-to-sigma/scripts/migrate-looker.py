@@ -595,6 +595,14 @@ def main():
         build = os.environ.get("CONVERTER_PATH") or next(
             (os.path.join(h, "build", "lookml.js") for h in CONVERTER_HOMES
              if os.path.exists(os.path.join(h, "build", "lookml.js"))), None)
+        # Zero-config fallback: the converter is VENDORED in the skill as a
+        # self-contained ESM bundle (converter/lookml.mjs) — no clone, no MCP, no
+        # network. A dev's CONVERTER_SRC/CONVERTER_PATH (or a CONVERTER_HOMES
+        # checkout) still wins above; this is the guaranteed floor so conversion
+        # runs locally out of the box. Imported by the same `build` node shim below.
+        vendored = os.path.join(HERE, "..", "converter", "lookml.mjs")
+        if not src and not build and os.path.exists(vendored):
+            build = vendored
         if src or build:
             print(f"   converter: {src or build}")
             warn_converter_skew(src or build)

@@ -60,8 +60,11 @@ node scripts/migrate-cognos.mjs \
 `--folder` is optional: when omitted, the DM + workbook land in **your My
 Documents** (resolved automatically via `GET /v2/whoami`). To target a shared
 folder, look its id up first — `GET /v2/files?typeFilters=folder&limit=500`
-(match on `name`/`path`) — and pass `--folder <id>`. Converter deps install
-themselves on first run (`npm install` in `converter/`; needs Node ≥ 18 + npm).
+(match on `name`/`path`) — and pass `--folder <id>`. **The converter is zero-config:**
+a self-contained bundle ships in the skill at `converter/cli.mjs` and runs via plain
+`node` — no `npm install`, no `tsx`, no network, no MCP (needs only Node ≥ 18). Devs
+editing the TS source can rebuild it with `tools/vendor-converters.sh`; if the bundle
+is ever missing the orchestrator falls back to `tsx cli.ts` (one `npm install`).
 
 Chains every phase below in one process: module convert → DM-reuse scan
 (reuse-first: auto-reuses an existing DM covering all the report's source
@@ -161,8 +164,9 @@ windows are the workaround for session-replay auth, not a substitute for asking.
 ## Phase 1 — Convert the Data Module → Sigma data model
 
 ```bash
-cd converter && npm install
-node --import tsx/esm cli.ts ../path/to/module.json --connection <SIGMA_CONN> --database <DB> --schema <SCHEMA>
+# zero-config: the self-contained bundle runs via plain node (no npm install, no tsx)
+node converter/cli.mjs path/to/module.json --connection <SIGMA_CONN> --database <DB> --schema <SCHEMA>
+# (dev fallback, only if editing the TS source: cd converter && npm install && node --import tsx/esm cli.ts …)
 ```
 Emits the Sigma data-model JSON on stdout; stats + warnings on stderr. Read the
 warnings aloud to the user — they are the parts that need manual authoring

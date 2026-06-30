@@ -108,11 +108,16 @@ python3 scripts/migrate-looker.py --lookml-dir /path/to/lookml \
   project (Looker only serves raw LookML in the dev workspace); without it the
   command fails loud and tells you to clone the Git repo and use `--lookml-dir`.
   `scripts/looker_project.py` is the standalone helper (`pull` / `connection`).
-- **Converter paths:** `CONVERTER_SRC` (patched `src/lookml.ts` via tsx) or
-  `CONVERTER_PATH` (`build/lookml.js`) — both auto-located; with neither, the
-  command writes `<workdir>/convert-request.json` (the exact
-  `convert_lookml_to_sigma` MCP arguments) and exits 3 — call the tool, save its
-  JSON, re-run with `--converted <file>` (mirrors thoughtspot's exit-3 design).
+- **Converter — zero-config, local, no MCP.** A self-contained converter bundle
+  ships in the skill at `converter/lookml.mjs` and is the default: conversion runs
+  locally via `node` with no clone, no `npm install`, no network, no MCP. A dev's
+  own build still wins when set — `CONVERTER_SRC` (`src/lookml.ts` via tsx) or
+  `CONVERTER_PATH` (`build/lookml.js`), both auto-located. Refresh the vendored
+  bundle with `tools/vendor-converters.sh` (see `converter/PROVENANCE.json`). Only
+  if the bundle is missing AND no build is found does the command fall back to the
+  MCP path: it writes `<workdir>/convert-request.json` (the exact
+  `convert_lookml_to_sigma` arguments) and exits 3 — call the tool, save its JSON,
+  re-run with `--converted <file>`.
 - **Parity is fully scripted** (the Phase-4 gate below): ACTUAL = Sigma CSV
   export per chart; EXPECTED = a Looker inline query (live) or a
   SOURCE-LookML-derived re-aggregation of the master's warehouse rows (offline —

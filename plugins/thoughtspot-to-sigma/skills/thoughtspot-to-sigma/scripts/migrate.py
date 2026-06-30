@@ -41,6 +41,12 @@ import yaml, ts_common, apply_layouts, scout_gate
 yaml.SafeLoader.add_constructor("tag:yaml.org,2002:value", lambda l, n: l.construct_scalar(n))
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Zero-config converter: default CONVERTER_PATH to the vendored bundle shipped in
+# the skill (converter/thoughtspot.mjs) so the local one-shot path runs out of the
+# box — no clone, no MCP. An explicit CONVERTER_PATH still wins. (See convert_model.)
+_VENDORED_CONV = os.path.join(HERE, "..", "converter", "thoughtspot.mjs")
+if not os.environ.get("CONVERTER_PATH") and os.path.exists(_VENDORED_CONV):
+    os.environ["CONVERTER_PATH"] = _VENDORED_CONV
 _SSL = ssl._create_unverified_context()
 MCP_TOOL = "mcp__sigma-data-model__convert_thoughtspot_to_sigma"
 

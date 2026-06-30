@@ -293,25 +293,33 @@ if (opt.resume) {
 // Phase 1 — Convert the Data Module → Sigma DM spec (converter/cli.ts).
 // ---------------------------------------------------------------------------
 hdr(1, 'Convert data module');
-// One-time converter-deps preflight (bead eqom): node_modules existing is NOT
-// enough — the converter shells `node --import tsx/esm`, so require the tsx
-// binary specifically and fail with a clear, actionable error (not a cryptic
-// ERR_MODULE_NOT_FOUND three phases in).
-if (!existsSync(join(CONV, 'node_modules', '.bin', 'tsx'))) {
-  line('converter deps missing — running npm install (once)…');
-  const inst = run('npm', ['install', '--silent'], { cwd: CONV, allowFail: true });
-  if (inst.status !== 0 || !existsSync(join(CONV, 'node_modules', '.bin', 'tsx'))) {
-    die(`converter dependencies could not be installed automatically.\n` +
-        `  Run manually:  cd ${CONV} && npm install\n` +
-        `  (requires Node >= 18 and npm on PATH; the converter runs via tsx)`);
+// Converter resolution — ZERO-config by default. The converter ships as a
+// self-contained ESM bundle (converter/cli.mjs) run by plain `node`: no npm
+// install, no tsx, no network, no MCP. Only if the bundle is absent (a dev
+// editing the TS source) do we fall back to `node --import tsx/esm cli.ts`,
+// installing tsx once. Rebuild the bundle with tools/vendor-converters.sh.
+const cliBundle = join(CONV, 'cli.mjs');
+let cliCmd, cliPre;
+if (existsSync(cliBundle)) {
+  cliCmd = cliBundle; cliPre = [];
+} else {
+  if (!existsSync(join(CONV, 'node_modules', '.bin', 'tsx'))) {
+    line('converter bundle (cli.mjs) missing and tsx deps absent — running npm install (once)…');
+    const inst = run('npm', ['install', '--silent'], { cwd: CONV, allowFail: true });
+    if (inst.status !== 0 || !existsSync(join(CONV, 'node_modules', '.bin', 'tsx'))) {
+      die(`converter bundle missing and dependencies could not be installed.\n` +
+          `  Rebuild the bundle:  tools/vendor-converters.sh  (commits converter/cli.mjs)\n` +
+          `  or run manually:     cd ${CONV} && npm install   (dev tsx fallback)`);
+    }
   }
+  cliCmd = join(CONV, 'cli.ts'); cliPre = ['--import', 'tsx/esm'];
 }
 const modulePath = resolve(opt.module);
 const reportPath = resolve(opt.report);
 const db = opt.database || 'CSA';
 const schema = opt.schema || 'TJ';
 const securityPath = join(WORK, 'security.json');
-const conv = spawnSync('node', ['--import', 'tsx/esm', join(CONV, 'cli.ts'), modulePath,
+const conv = spawnSync('node', [...cliPre, cliCmd, modulePath,
   '--connection', opt.connection, '--database', db, '--schema', schema,
   '--security-out', securityPath],
   { encoding: 'utf8', cwd: CONV, maxBuffer: 64 * 1024 * 1024 });
@@ -465,7 +473,7 @@ if (opt['dry-run']) {
   hdr(3, 'Build data model');
   line(`DRY RUN: DM spec → ${dmPath} (no POST)`);
   hdr(4, 'Convert report');
-  const rconv = spawnSync('node', ['--import', 'tsx/esm', join(CONV, 'cli.ts'), reportPath, '--dm', 'DRY-RUN'],
+  const rconv = spawnSync('node', [...cliPre, cliCmd, reportPath, '--dm', 'DRY-RUN'],
     { encoding: 'utf8', cwd: CONV, maxBuffer: 64 * 1024 * 1024 });
   if (rconv.status !== 0) die(`report converter failed:\n${rconv.stderr}`);
   writeFileSync(join(WORK, 'wb.json'), rconv.stdout);
@@ -504,7 +512,7 @@ writeFileSync(statePath, JSON.stringify(state, null, 2));
 // Phase 4 — Convert the report → workbook spec, remap to the real DM ids.
 // ---------------------------------------------------------------------------
 hdr(4, 'Convert report + remap');
-const rconv = spawnSync('node', ['--import', 'tsx/esm', join(CONV, 'cli.ts'), reportPath, '--dm', dmId],
+const rconv = spawnSync('node', [...cliPre, cliCmd, reportPath, '--dm', dmId],
   { encoding: 'utf8', cwd: CONV, maxBuffer: 64 * 1024 * 1024 });
 if (rconv.status !== 0) die(`report converter failed:\n${rconv.stderr}`);
 const wbSpec = JSON.parse(rconv.stdout);

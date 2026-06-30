@@ -119,15 +119,17 @@ prefix applied to BOTH the data model and every workbook; workbooks and pages
 are named after the Liveboard's **display name** (resolved from its TML, never
 the UUID).
 
-**Converter paths** (no unvendored build required):
-- `CONVERTER_PATH` set (a local `sigma-data-model-mcp` `build/thoughtspot.js`)
-  → fully scripted one-shot via `convert_model.mjs`.
-- `CONVERTER_PATH` unset → **MCP fallback**: migrate.py writes
-  `<workdir>/model.tml` + `<workdir>/convert-request.json` (the exact
-  `mcp__sigma-data-model__convert_thoughtspot_to_sigma` arguments), prints the
-  instructions, and exits 3. Call the MCP tool, save its JSON output to
-  `<workdir>/converted.json`, and re-run the same command with
-  `--converted <workdir>/converted.json` to continue the pipeline.
+**Converter — zero-config, local, no MCP.** A self-contained converter bundle
+ships in the skill at `converter/thoughtspot.mjs` and is the default: conversion
+runs locally via `node` with no clone, no `npm install`, no network, no MCP.
+`CONVERTER_PATH` defaults to it; a dev's own `build/thoughtspot.js` still wins when
+set. Refresh the bundle with `tools/vendor-converters.sh` (see
+`converter/PROVENANCE.json`). Only if the bundle is missing AND `CONVERTER_PATH` is
+unset does migrate.py fall back to the **MCP path**: it writes `<workdir>/model.tml`
++ `<workdir>/convert-request.json` (the exact
+`mcp__sigma-data-model__convert_thoughtspot_to_sigma` arguments) and exits 3 — call
+the tool, save its JSON to `<workdir>/converted.json`, and re-run with
+`--converted <workdir>/converted.json`.
 
 **Offline mode** (no live ThoughtSpot needed): `--model-tml <file>` +
 `--liveboard-tml <file>` read exported TML from disk — `fixtures/` ships a real
