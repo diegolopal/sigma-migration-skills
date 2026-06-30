@@ -76,6 +76,24 @@ mapping:
 | C9 Security/RLS | Phase 1.5 — RLS scan (opt-in: `detect_rls.py` + `apply_sigma_rls.py`) |
 | C10 Enhance | — (defer to `sigma-workbooks`) |
 
+### gooddata-to-sigma
+
+GoodData Cloud / .CN uses "Phase" numbering (it joined after the table was
+set). Its local mapping:
+
+| Canonical | gooddata-to-sigma |
+|---|---|
+| C1 Assess | Phase 0 — Assess (gooddata-assessment skill) + Phase 1b gap-scout (`scan_gaps.py`, MAQL coverage) |
+| C2 Discover | Phase 1 — Discover (`discover.py`, declarative layout export: LDM + analytics model) |
+| C3 Reuse-check | Phase 1c — Reuse check (`find-or-pick-dm.rb`) before POSTing a new DM |
+| C4 Convert | Phase 2 — Data model (`convert.py`; MAQL metrics → Sigma formulas via `maql.py`) |
+| C5 Post-DM gate | Phase 2 — POST `/v2/dataModels/spec` + read back server-assigned ids (hard gate) |
+| C6 Build workbook | Phase 3 — Workbook (`build_workbook.py`: insights → charts/KPIs/pivots) |
+| C7 Layout | within Phase 3 — apply the dashboard grid layout as the LAST write |
+| C8 Parity hard gate | Phase 4 — Parity vs the same warehouse |
+| C9 Security/RLS | Phase 6 — RLS (user data filters → Sigma user attributes; detect always, apply opt-in) |
+| C10 Enhance | Phase 6 — theme registry + final visual-QA (defer idioms to `sigma-workbooks`) |
+
 Notes:
 
 - **Looker runs the RLS gate early** (before building, C9 ahead of C4) by
