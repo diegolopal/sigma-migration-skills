@@ -17,6 +17,10 @@ user-invocable: true
 
 # Sisense → Sigma migration
 
+> **Windows / first run — run the environment doctor before anything else:**
+> `bash scripts/doctor.sh` (macOS/Linux/Git Bash) or `powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1` (Windows).
+> It checks Ruby/Python/Node/bash and flags the Python "Store stub" + CRLF with exact fixes. Details: `refs/environment.md`.
+
 Convert a **Sisense** data model + dashboards into a Sigma **data model** +
 **workbook**. Pull the model schema export and the widget definitions over REST,
 translate JAQL / widget types / filters, emit the specs, then **verify parity**

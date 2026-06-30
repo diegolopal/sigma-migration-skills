@@ -11,6 +11,10 @@ user-invocable: true
 
 # Tableau → Sigma Conversion
 
+> **Windows / first run — run the environment doctor before anything else:**
+> `bash scripts/doctor.sh` (macOS/Linux/Git Bash) or `powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1` (Windows).
+> It checks Ruby/Python/Node/bash and flags the Python "Store stub" + CRLF with exact fixes. Details: `refs/environment.md`.
+
 Convert a Tableau datasource into a Sigma data model, then build a Sigma workbook
 that mirrors the Tableau dashboard layout as closely as possible.
 
