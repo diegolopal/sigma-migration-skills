@@ -356,6 +356,7 @@
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-assessment/scripts/doctor.sh",
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/doctor.sh",
+        "plugins/gooddata-to-sigma/skills/gooddata-assessment/scripts/doctor.sh",
         "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/doctor.sh",
         "plugins/looker-to-sigma/skills/looker-assessment/scripts/doctor.sh",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/doctor.sh",
@@ -382,6 +383,7 @@
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-assessment/scripts/doctor.ps1",
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/doctor.ps1",
+        "plugins/gooddata-to-sigma/skills/gooddata-assessment/scripts/doctor.ps1",
         "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/doctor.ps1",
         "plugins/looker-to-sigma/skills/looker-assessment/scripts/doctor.ps1",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/doctor.ps1",
@@ -408,6 +410,7 @@
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-assessment/refs/environment.md",
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/refs/environment.md",
+        "plugins/gooddata-to-sigma/skills/gooddata-assessment/refs/environment.md",
         "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/refs/environment.md",
         "plugins/looker-to-sigma/skills/looker-assessment/refs/environment.md",
         "plugins/looker-to-sigma/skills/looker-to-sigma/refs/environment.md",

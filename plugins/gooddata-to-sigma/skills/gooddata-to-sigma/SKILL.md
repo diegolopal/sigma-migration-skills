@@ -17,6 +17,10 @@ user-invocable: true
 
 # GoodData → Sigma
 
+> **Windows / first run — run the environment doctor before anything else:**
+> `bash scripts/doctor.sh` (macOS/Linux/Git Bash) or `powershell -ExecutionPolicy Bypass -File scripts\doctor.ps1` (Windows).
+> It checks Ruby/Python/Node/bash and flags the Python "Store stub" + CRLF with exact fixes. Details: `refs/environment.md`.
+
 > **Status: LIVE-VALIDATED — exact parity, data model + workbook.**
 > Proven end-to-end on a GoodData Cloud trial → Sigma (both on Snowflake): a
 > workspace (LDM + MAQL metrics + insights + dashboard) migrated to a Sigma data
