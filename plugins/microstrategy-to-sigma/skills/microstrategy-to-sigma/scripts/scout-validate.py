@@ -80,7 +80,7 @@ def build_escalation(a, err):
     except Exception:
         json.dump(payload, open(esc_path, "w"), indent=2)
     filer = os.path.join(os.path.dirname(os.path.abspath(__file__)), "escalate-gap.py")
-    cmd = ["python3", filer, "--skill", skill, "--category", "converter",
+    cmd = [sys.executable, filer, "--skill", skill, "--category", "converter",
            "--feature", a.feature, "--description", a.description or "",
            "--source-pattern", a.pattern or "", "--template-attempted", a.template or "",
            "--test-formula", a.formula, "--sigma-response", json.dumps(err)[:1500],

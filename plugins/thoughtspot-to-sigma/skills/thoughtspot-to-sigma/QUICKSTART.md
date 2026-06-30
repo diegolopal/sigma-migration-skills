@@ -10,6 +10,13 @@ python3 scripts/migrate-thoughtspot.py --model <TS_MODEL_ID> [--liveboard <ID> .
     [--name PREFIX] [--workdir /tmp/ts-run]
 # offline: --model-tml fixtures/retail-analytics-model.tml --liveboard-tml fixtures/retail-analytics-liveboard.tml
 ```
+> **Windows:** launch with the `py` launcher — `py -3 scripts/migrate-thoughtspot.py …` —
+> not a bare `python3`. A bare `python`/`python3` on Windows often resolves to the
+> Microsoft Store *App Execution Alias* stub, which silently does nothing (the command
+> exits instantly with no output). Disable those aliases (Settings → Apps → Advanced
+> app settings → App execution aliases) or use `py -3`. Child steps the orchestrator
+> spawns already reuse the running interpreter (`sys.executable`), so only the first
+> launch needs this.
 Runs everything below — discover → DM-reuse check (candidates PRINTED; default
 build-new, reuse only via `--reuse-dm <id>`) → convert (exit 3 + `--converted`
 resume when no local converter build) → DM → workbooks → layout → **freshness

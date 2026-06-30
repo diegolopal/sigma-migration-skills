@@ -488,10 +488,10 @@ def main():
     hdr(1, TOTAL, "Parse")
     contract_path = os.path.join(wd, "contract.json")
     if offline:
-        run(["python3", os.path.join(HERE, "parse_lookml_dashboard.py"),
+        run([sys.executable, os.path.join(HERE, "parse_lookml_dashboard.py"),
              a.dashboard, "--out", contract_path])
     else:
-        run(["python3", os.path.join(HERE, "fetch_looker_dashboard.py"),
+        run([sys.executable, os.path.join(HERE, "fetch_looker_dashboard.py"),
              a.dashboard_id, contract_path])
     dash = json.load(open(contract_path))
     if isinstance(dash, list):
@@ -536,7 +536,7 @@ def main():
         scope_args += ["--scope-models", ",".join(dash_models)]
     if dash_explores:
         scope_args += ["--scope-explores", ",".join(dash_explores)]
-    p = subprocess.run(["python3", os.path.join(HERE, "detect_rls.py"), lookml_dir,
+    p = subprocess.run([sys.executable, os.path.join(HERE, "detect_rls.py"), lookml_dir,
                         "--json"] + scope_args, capture_output=True, text=True)
     findings, info_findings = [], []
     try:
@@ -703,7 +703,7 @@ console.error('stats:', JSON.stringify(res.stats));
     else:
         sig = os.path.join(wd, "dm-signature.json")
         match_out = os.path.join(wd, "dm-match.json")
-        run(["python3", os.path.join(HERE, "lookml-dm-signature.py"),
+        run([sys.executable, os.path.join(HERE, "lookml-dm-signature.py"),
              "--lookml-dir", lookml_dir, "--label", dash["title"], "--out", sig])
         # Auto-pick is OFF by default (POSTMORTEM 2026-06-18 #4): the gate fires on
         # TABLE coverage, not COLUMN coverage, so a DM that covers the tables but
@@ -736,7 +736,7 @@ console.error('stats:', JSON.stringify(res.stats));
 
     if a.dry_run:
         wb_spec = os.path.join(wd, "wb-spec.json")
-        run(["python3", os.path.join(HERE, "build_workbook.py"), contract_path,
+        run([sys.executable, os.path.join(HERE, "build_workbook.py"), contract_path,
              "--views", views_dir, "--out", wb_spec])
         print("\n================ RESULT (dry run) ================")
         print(f"artifacts   : {wd}  (contract, dm-spec/convert-request, wb-spec — no Sigma objects created)")
@@ -756,7 +756,7 @@ console.error('stats:', JSON.stringify(res.stats));
         swap_args = []
         for s in a.source_swap:
             swap_args += ["--source-swap", s]
-        rc, out = run(["python3", os.path.join(HERE, "post_dm.py"), dm_spec_path,
+        rc, out = run([sys.executable, os.path.join(HERE, "post_dm.py"), dm_spec_path,
                        "--folder-id", folder] + swap_args)
         m = re.search(r'dataModelId"?\s*[:=]\s*"?([0-9a-f-]{36})', out)
         if not m:
@@ -814,7 +814,7 @@ console.error('stats:', JSON.stringify(res.stats));
                for e in els], open(dm_els_path, "w"))
     # Use --flag=value for ids: Sigma-reassigned element ids can start with '-'
     # (e.g. "-BGy34L4Yj"), which argparse otherwise mis-reads as a flag.
-    run(["python3", os.path.join(HERE, "build_workbook.py"), contract_path,
+    run([sys.executable, os.path.join(HERE, "build_workbook.py"), contract_path,
          "--views", views_dir, f"--dm-id={dm}", f"--element-id={denorm['id']}",
          f"--dm-element-name={denorm_name}", f"--dm-elements={dm_els_path}",
          f"--folder-id={folder}", f"--out={wb_spec_path}"])
@@ -900,15 +900,18 @@ console.error('stats:', JSON.stringify(res.stats));
     content_pages = [pg for pg in (wspec.get("pages") or [])
                      if "data" not in str(pg.get("id")).lower()]
     rendered = 0
+    render_png = None  # first successful page PNG — wired to gate 8 (--sigma-render)
     for pg in content_pages:
         out = os.path.join(vqa, f"{pg['id']}.png")
-        rc, _ = run(["python3", os.path.join(HERE, "sigma-export-png.py"),
+        rc, _ = run([sys.executable, os.path.join(HERE, "sigma-export-png.py"),
                      "--workbook", wb, "--page", pg["id"], "--out", out,
                      "--w", "1800", "--h", "1000"],
                     env={"SIGMA_API_TOKEN": os.environ.get("SIGMA_API_TOKEN", "")},
                     check=False)
         if rc == 0:
             rendered += 1
+            if render_png is None and os.path.exists(out):
+                render_png = out
         else:
             print(f"   WARN: visual-QA render failed for page {pg['id']}")
     print(f"   rendered {rendered}/{len(content_pages)} full-page PNG(s) → {vqa}")
@@ -1014,8 +1017,15 @@ console.error('stats:', JSON.stringify(res.stats));
     json.dump(actuals, open(os.path.join(wd, "parity-actuals.json"), "w"), indent=2)
     rc, _ = run(["ruby", os.path.join(HERE, "phase6-parity-looker.rb"),
                  "--workdir", wd, "--finalize"], check=False)
-    grc, _ = run(["ruby", os.path.join(HERE, "assert-phase6-ran.rb"),
-                  "--workdir", wd, "--workbook-id", wb], check=False)
+    gate_cmd = ["ruby", os.path.join(HERE, "assert-phase6-ran.rb"),
+                "--workdir", wd, "--workbook-id", wb]
+    # Wire the Phase-4c render to gate 8 (visual render). We render to
+    # visual-qa/<pageId>.png, but the gate defaults to looking for
+    # <workdir>/sigma-render.png — without this the gate never finds the PNG and
+    # every migration fails gate 8 despite a clean render.
+    if render_png and os.path.exists(render_png):
+        gate_cmd += ["--sigma-render", render_png]
+    grc, _ = run(gate_cmd, check=False)
     summary = json.load(open(os.path.join(wd, "parity-final.json")))
 
     # ── Parity-RED triage (POSTMORTEM 2026-06-18 #4) ─────────────────────────
