@@ -81,6 +81,11 @@ eval "$(scripts/sisense-auth.sh)"
 python3 scripts/discover.py --out ~/sisense-migration        # all cubes + dashboards
 python3 scripts/discover.py --out ~/sisense-migration --cube "Sample ECommerce"
 ```
+> **Windows:** run these with the `py` launcher (`py -3 scripts/…py`), not a bare
+> `python3`. A bare `python`/`python3` on Windows often resolves to the Microsoft
+> Store *App Execution Alias* stub, which silently does nothing. Disable those
+> aliases (Settings → Apps → Advanced app settings → App execution aliases) or use
+> `py -3`. Child steps reuse the running interpreter (`sys.executable`).
 Writes `~/sisense-migration/discovery/`: `elasticubes.json`,
 `model_<title>.json` (full schema export), `dashboards.json` (widgets inlined).
 

@@ -52,6 +52,11 @@ Duration: 2
 - **The same warehouse on both sides** — Sigma's connection must reach the
   database MicroStrategy queries. In-memory cubes migrate as their
   *underlying* warehouse tables.
+- **Windows:** run the scripts with the `py` launcher (`py -3 scripts/…py`), not a
+  bare `python3`. A bare `python`/`python3` on Windows often resolves to the
+  Microsoft Store *App Execution Alias* stub, which silently does nothing. Disable
+  those aliases (Settings → Apps → Advanced app settings → App execution aliases)
+  or use `py -3`. Child steps reuse the running interpreter (`sys.executable`).
 
 ## Assess the estate (optional, ~minutes)
 Duration: 5

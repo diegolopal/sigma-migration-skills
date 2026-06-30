@@ -364,7 +364,7 @@ def main():
     else:
         sig = os.path.join(wd, "dm-signature.json")
         match_out = os.path.join(wd, "dm-match.json")
-        sig_cmd = ["python3", os.path.join(HERE, "ts-dm-signature.py"), "--tml",
+        sig_cmd = [sys.executable, os.path.join(HERE, "ts-dm-signature.py"), "--tml",
                    os.path.join(wd, "model.tml"), "--out", sig]
         if os.environ.get("TS_DB"):
             sig_cmd += ["--database", os.environ["TS_DB"]]
@@ -414,7 +414,7 @@ def main():
         print("==================================================")
         return 0
     resolve_folder()
-    mig_cmd = ["python3", os.path.join(HERE, "migrate.py"), "--workdir", wd]
+    mig_cmd = [sys.executable, os.path.join(HERE, "migrate.py"), "--workdir", wd]
     if a.model:
         mig_cmd += ["--model", a.model]
     if a.model_tml:
