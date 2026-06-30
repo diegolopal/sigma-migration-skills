@@ -142,6 +142,13 @@ MCP_DIR = [opts[:mcp_dir], ENV['PBI_MCP_DIR'],
            File.expand_path('~/Desktop/sigma-data-model-mcp'),
            File.expand_path('~/sigma-data-model-mcp')]
           .compact.find { |d| File.exist?(File.join(d, 'build', 'powerbi.js')) }
+# ZERO-config local converter: a dev's build (above) wins, else the self-contained
+# bundle VENDORED in the skill (converter/powerbi.mjs) — no clone, no npm, no
+# network, no MCP. CONV_MODULE is what the Phase-2 shim imports; nil only if the
+# bundle is also absent (then --converter-out / the MCP gate applies).
+VENDORED_PBI = File.expand_path('../converter/powerbi.mjs', __dir__)
+CONV_MODULE = MCP_DIR ? File.join(MCP_DIR, 'build', 'powerbi.js') :
+              (File.exist?(VENDORED_PBI) ? VENDORED_PBI : nil)
 
 name_slug = File.basename(opts[:tmsl], '.*').gsub(/[^A-Za-z0-9_-]/, '-')
 WORK = opts[:out] || File.expand_path("~/powerbi-migration/#{name_slug}")
@@ -328,8 +335,8 @@ if opts[:cvt_out]
              JSON.pretty_generate({ 'model' => bare, 'warnings' => raw['warnings'] || [],
                                     'stats' => raw['stats'] || {} }))
   puts "   converter output ingested from #{opts[:cvt_out]}"
-elsif MCP_DIR.nil?
-  puts '   no local sigma-data-model-mcp build found (set --mcp-dir / PBI_MCP_DIR for the in-process route).'
+elsif CONV_MODULE.nil?
+  puts '   vendored converter (converter/powerbi.mjs) missing and no local sigma-data-model-mcp build (--mcp-dir / PBI_MCP_DIR).'
   puts
   puts '   >>> GATE: run the convert_powerbi_to_sigma MCP tool on the TMSL model'
   puts "       (#{opts[:tmsl]}) with connectionId=#{opts[:conn]} database=#{opts[:db]} schema=#{opts[:schema]},"
@@ -338,10 +345,11 @@ elsif MCP_DIR.nil?
   exit 10
 end
 unless opts[:cvt_out]
+puts "   converter: #{CONV_MODULE == VENDORED_PBI ? 'vendored bundle (converter/powerbi.mjs)' : CONV_MODULE} (no data leaves this machine)"
 shim = File.join(WORK, '_convert.mjs')
 File.write(shim, <<~JS)
   import { readFileSync, writeFileSync } from 'node:fs';
-  import { convertPowerBIToSigma } from #{File.join(MCP_DIR, 'build', 'powerbi.js').to_json};
+  import { convertPowerBIToSigma } from #{CONV_MODULE.to_json};
   const model = JSON.parse(readFileSync(#{opts[:tmsl].to_json}, 'utf8'));
   const out = convertPowerBIToSigma(model, {
     connectionId: #{(opts[:conn] || '').to_json},

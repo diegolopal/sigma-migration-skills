@@ -175,7 +175,13 @@ staleness) blocks GREEN.
 > field name only; review join directions.
 
 ## Phase 2 — Translate (convert_qlik_to_sigma)
-Call `mcp__sigma-data-model__convert_qlik_to_sigma(model_json, connection_id, database, schema)`.
+**Converter — zero-config, local, no MCP.** `migrate-qlik.rb` runs
+`convertQlikToSigma` in-process via a `node` shim against the self-contained bundle
+VENDORED in the skill (`converter/qlik.mjs`) — no clone, no npm, no network, no MCP.
+A dev's own build still wins via `QLIK_MCP_DIR` (or a local `sigma-data-model-mcp`
+checkout); refresh the bundle with `tools/vendor-converters.sh`. (The
+`mcp__sigma-data-model__convert_qlik_to_sigma` MCP tool produces the same
+`model_json → Sigma DM spec` and remains available for manual/agent use.)
 Output = Sigma DM spec (warehouse-table elements + relationships on shared keys +
 metrics from measures + auto "Dim View" denormalized elements).
 
