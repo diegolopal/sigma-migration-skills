@@ -777,6 +777,32 @@ console.error('stats:', JSON.stringify(res.stats));
     print(f"   DM {dm} · denorm '{denorm_name}' ({denorm['id']}, "
           f"{len(denorm.get('columns') or [])} cols) · {len(els)} element(s)")
 
+    # ── Phase 4a.5 — shape preflight (REUSE only) ────────────────────────────
+    # Mechanical reuse gate for the failure modes a spec POST won't catch and that
+    # otherwise ship silently: a hidden (visibleAsSource:false) element, missing
+    # columns, and relationship FAN-OUT. Only meaningful when reusing a DM we did
+    # NOT just build (a freshly-converted DM's elements are visible and 1:1 by
+    # construction). The orchestrator can't run ad-hoc SQL, so fan-out relationships
+    # are SURFACED with the exact Sigma-MCP query (--ack-fanout); visibility hard-fails.
+    # The agent path (SKILL.md Phase 2.5) runs the emitted queries to confirm 1:1.
+    if a.reuse_dm:
+        pf_out = os.path.join(wd, "shape-preflight.json")
+        rc_pf, _ = run(["ruby", os.path.join(HERE, "shape-preflight.rb"),
+                        "--dm-id", dm, "--element", denorm_name,
+                        "--ack-fanout", "--out", pf_out], check=False)
+        try:
+            pf = json.load(open(pf_out))
+            for r in pf.get("relationships", []):
+                q = (r.get("uniqueness_query") or {}).get("sql")
+                print(f"   ↳ verify 1:1 (reuse): relationship '{r['name']}' → "
+                      f"'{r.get('target_element')}' — run via Sigma MCP query: {q}")
+        except Exception:
+            pass
+        if rc_pf == 2:
+            sys.exit("FATAL: shape-preflight failed (hidden element / missing columns on the "
+                     "reuse element) — see shape-preflight.json. Wire to a visible element or fix "
+                     "coverage before reusing.")
+
     # ── Phase 4b — Build + POST the workbook (layout XML inline) ─────────────
     hdr(4, TOTAL, "Build workbook (4b)")
     wb_spec_path = os.path.join(wd, "wb-spec.json")

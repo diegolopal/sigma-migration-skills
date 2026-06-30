@@ -145,6 +145,7 @@ python3 scripts/migrate-looker.py --lookml-dir /path/to/lookml \
 | `scripts/convert_dm.mjs` | **Phase 2:** run `convertLookMLToSigma` against a directory of `.lkml` files for one explore → a Sigma DM spec JSON + `…-warnings.json` sidecar. A `.model.lkml` is optional — with none it converts **view-only** (each view → standalone element; pass the WHOLE directory so cross-view `${view.SQL_TABLE_NAME}` refs resolve — see `refs/layered-lookml.md`). Bypasses the deployed MCP build (see the converter-build gotcha below). Env: `LOOKML_DIR`, `CONVERTER_SRC`; args `<exploreName> <out.json>`. |
 | `scripts/lookml-dm-signature.py` | **Phase 2.5:** LookML view files → DM-reuse signature (`{warehouse_tables, referenced_columns, measures}`) for `find-or-pick-dm.rb`. Pure, no network. |
 | `scripts/find-or-pick-dm.rb` | **Phase 2.5:** scan existing Sigma DMs and recommend reuse (score = 0.7·column + 0.2·table + 0.1·metric overlap; `--auto-pick` with tie-window safety). Shared vendor-neutral copy (canonical: tableau-to-sigma; needs `scripts/lib/sigma_rest.rb`). Non-destructive. |
+| `scripts/shape-preflight.rb` | **Phase 2.5 (reuse gate):** before wiring a workbook to a REUSED DM element, mechanically check the three things a spec POST won't: (1) the element is not `visibleAsSource:false` (hidden → unusable as a source), (2) needed columns resolve on it, (3) every relationship it reaches columns through is 1:1 (non-unique target key → silent fan-out). Visibility/coverage hard-fail (exit 2); fan-out is surfaced with the exact Sigma-MCP uniqueness query per relationship — run it and feed back via `--fanout-results` (or `--ack-fanout`). Non-destructive; needs `scripts/lib/sigma_rest.rb`. `migrate-looker.py` auto-runs it on `--reuse-dm`. |
 | `scripts/post_dm.py` | **Phase 2:** POST a DM spec to `/v2/dataModels/spec` (auto-finds a writable folder, swaps in the full connection UUID). Env: `SIGMA_API_TOKEN`, `SIGMA_BASE_URL`, `SIGMA_CONNECTION_ID`; args `<spec.json>`. |
 | `scripts/build_workbook.py` | **Phase 3:** dashboard contract + the explore's view `.lkml` files → a Sigma `/v2/workbooks/spec` body (hidden Data page + master table, one element per tile, controls from filters, newspaper→24-col layout XML). Generates locally; does **not** POST. Handles ratio measures, joined-col `Field (alias)` naming, table calcs, pivot-flatten + warn. Layout: a top control bar (row 0), a full-width strip of **tall** KPI tiles (height ≥ 6 so titles render), then the remaining tiles shifted down. |
 | `scripts/looker-render-dashboard.py` | **Phase 4 (visual QA — SOURCE side):** render a LIVE Looker dashboard to PNG via the Looker render API (`POST /render_tasks/dashboards/{id}/png` → poll `GET /render_tasks/{task_id}` until `success` → `GET .../results`). Pairs with `sigma-export-png.py` for source-vs-migrated side-by-side. Reuses `looker_api.py` `~/.looker/looker.ini` auth. `python3 looker-render-dashboard.py <dashboard_id> [out.png] [--w 1200 --h 1600]`. |
@@ -483,8 +484,10 @@ bash -c 'eval "$(scripts/get-token.sh)" && \
 referenced_columns (dimension/measure names), measures}` straight from the LookML view
 files — the same files you fed `convert_dm.mjs`. Decision:
 - **Score ≥ 0.6** → **ASK the user** reuse-vs-new: surface the candidate name, matched
-  cols (N/M), and the inherited-extras warning from `dm-match.json`. If they reuse, run a
-  **shape preflight** first — read the candidate DM's spec back and confirm:
+  cols (N/M), and the inherited-extras warning from `dm-match.json`. If they reuse, run the
+  **shape preflight** first — `ruby scripts/shape-preflight.rb --dm-id <id> --element "<element
+  you'll wire to>" --needed-columns "<dashboard cols>" --out /tmp/<name>/shape-preflight.json`
+  (exit 2 = unsafe). It mechanically confirms:
   1. every column the dashboards reference resolves on the element you'll wire to (no
      `type=error` columns; fact vs separate-dim location);
   2. **the element is usable as a source** — i.e. it is NOT `visibleAsSource: false`. The
