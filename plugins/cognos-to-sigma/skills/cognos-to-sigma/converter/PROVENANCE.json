@@ -1,0 +1,6 @@
+{
+  "source": "in-skill converter/cli.ts (cognos.ts + cognos-report.ts + sigma-ids.ts)",
+  "bundler": "esbuild --bundle --format=esm --platform=node",
+  "vendored_modules": "cli.mjs",
+  "note": "Self-contained bundle of the skill's own pinned Cognos converter. Refresh with tools/vendor-converters.sh after editing converter/*.ts."
+}

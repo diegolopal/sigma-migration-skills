@@ -60,6 +60,14 @@ import yaml, ts_common
 import migrate  # the per-phase pipeline (sigma() REST helper reused)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Zero-config converter: a self-contained ESM bundle ships in the skill at
+# converter/thoughtspot.mjs (no clone, no npm, no network, no MCP). Default
+# CONVERTER_PATH to it so local conversion is the out-of-the-box path; an explicit
+# CONVERTER_PATH (a dev's fresher build) still wins. Inherited by migrate.py +
+# convert_model.mjs, which gate local-vs-MCP on this var.
+_VENDORED_CONV = os.path.join(HERE, "..", "converter", "thoughtspot.mjs")
+if not os.environ.get("CONVERTER_PATH") and os.path.exists(_VENDORED_CONV):
+    os.environ["CONVERTER_PATH"] = _VENDORED_CONV
 T0 = time.time()
 
 
