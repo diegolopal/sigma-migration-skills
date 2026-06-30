@@ -27,6 +27,7 @@ shared `~/.sigma-migration/env` under any agent.
 /plugin install looker-to-sigma@sigma-migration-skills
 /plugin install microstrategy-to-sigma@sigma-migration-skills
 /plugin install sisense-to-sigma@sigma-migration-skills
+/plugin install gooddata-to-sigma@sigma-migration-skills
 ```
 
 **Other agents (Cursor, Cortex Code, …)** — clone the repo and point your agent at the
@@ -59,6 +60,7 @@ and the skill drives discovery → translation → build → parity.
 | [`looker-to-sigma`](plugins/looker-to-sigma/) | Looker | `looker-to-sigma`, `looker-assessment` |
 | [`microstrategy-to-sigma`](plugins/microstrategy-to-sigma/) | MicroStrategy (Strategy One) | `microstrategy-to-sigma`, `microstrategy-assessment` |
 | [`sisense-to-sigma`](plugins/sisense-to-sigma/) | Sisense (ElastiCube / Live) | `sisense-to-sigma`, `sisense-assessment` |
+| [`gooddata-to-sigma`](plugins/gooddata-to-sigma/) | GoodData Cloud / .CN | `gooddata-to-sigma`, `gooddata-assessment` |
 
 In Claude Code, installed skills are namespaced — e.g. `/powerbi-to-sigma:powerbi-assessment`.
 

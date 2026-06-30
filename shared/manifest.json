@@ -5,6 +5,7 @@
       "canonical": "shared/lib/sigma_rest.rb",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/lib/sigma_rest.rb",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/lib/sigma_rest.rb",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/lib/sigma_rest.rb",
         "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/lib/sigma_rest.rb",
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/lib/sigma_rest.rb",
@@ -19,6 +20,7 @@
       "canonical": "shared/lib/preflight_lint.rb",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/lib/preflight_lint.rb",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/lib/preflight_lint.rb",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/lib/preflight_lint.rb",
         "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/lib/preflight_lint.rb",
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/lib/preflight_lint.rb",
@@ -32,6 +34,7 @@
       "canonical": "shared/lib/layout_lint.rb",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/lib/layout_lint.rb",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/lib/layout_lint.rb",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/lib/layout_lint.rb",
         "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/lib/layout_lint.rb",
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/lib/layout_lint.rb",
@@ -159,6 +162,7 @@
       "canonical": "shared/scripts/escalate-gap.py",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/escalate-gap.py",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/escalate-gap.py",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/escalate-gap.py",
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/escalate-gap.py",
         "plugins/qlik-to-sigma/skills/qlik-to-sigma/scripts/escalate-gap.py",
@@ -197,6 +201,7 @@
       "canonical": "shared/scripts/sigma-export-png.py",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/sigma-export-png.py",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/sigma-export-png.py",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/sigma-export-png.py",
         "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/sigma-export-png.py",
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/sigma-export-png.py",
@@ -209,6 +214,7 @@
       "canonical": "shared/scripts/find-or-pick-dm.rb",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/find-or-pick-dm.rb",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/find-or-pick-dm.rb",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/find-or-pick-dm.rb",
         "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/find-or-pick-dm.rb",
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/find-or-pick-dm.rb",
@@ -233,6 +239,7 @@
       "canonical": "shared/scripts/get-token.sh",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/get-token.sh",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/get-token.sh",
         {
           "path": "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/get-token.sh",
           "exception": "Intentional: credential sanity-check additions (looker postmortem 2026-06-18)."
@@ -250,6 +257,7 @@
       "canonical": "shared/scripts/setup.rb",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/setup.rb",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/setup.rb",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/setup.rb",
         "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/setup.rb",
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/setup.rb",
@@ -263,6 +271,7 @@
       "canonical": "shared/assessment/dup-dashboards.py",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-assessment/scripts/dup-dashboards.py",
+        "plugins/gooddata-to-sigma/skills/gooddata-assessment/scripts/dup-dashboards.py",
         "plugins/looker-to-sigma/skills/looker-assessment/scripts/dup-dashboards.py",
         "plugins/microstrategy-to-sigma/skills/microstrategy-assessment/scripts/dup-dashboards.py",
         "plugins/powerbi-to-sigma/skills/powerbi-assessment/scripts/dup-dashboards.py",
@@ -275,6 +284,7 @@
       "canonical": "shared/refs/layout-visual-qa.md",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/refs/layout-visual-qa.md",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/refs/layout-visual-qa.md",
         "plugins/looker-to-sigma/skills/looker-to-sigma/refs/layout-visual-qa.md",
         "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/refs/layout-visual-qa.md",
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/refs/layout-visual-qa.md",
@@ -289,6 +299,7 @@
       "canonical": "shared/scripts/setup.rb",
       "targets": [
         "plugins/cognos-to-sigma/skills/cognos-to-sigma/scripts/setup.rb",
+        "plugins/gooddata-to-sigma/skills/gooddata-to-sigma/scripts/setup.rb",
         "plugins/looker-to-sigma/skills/looker-to-sigma/scripts/setup.rb",
         "plugins/microstrategy-to-sigma/skills/microstrategy-to-sigma/scripts/setup.rb",
         "plugins/powerbi-to-sigma/skills/powerbi-to-sigma/scripts/setup.rb",

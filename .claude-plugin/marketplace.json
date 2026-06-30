@@ -133,6 +133,21 @@
         "migration",
         "bi"
       ]
+    },
+    {
+      "name": "gooddata-to-sigma",
+      "source": "./plugins/gooddata-to-sigma",
+      "description": "GoodData Cloud / GoodData.CN → Sigma — the declarative workspace layout (LDM + analytics model) → Sigma data model + workbook (datasets/attributes/facts/references → DM; MAQL metrics → Sigma formulas; insights → charts/KPIs/pivots; dashboards → pages + layout), with parity verification and opt-in user-data-filter RLS. Flags compute-only MAQL and exotic widgets rather than mis-converting. Bundles gooddata-to-sigma + gooddata-assessment.",
+      "category": "migration",
+      "keywords": [
+        "gooddata",
+        "gooddata-cloud",
+        "gooddata-cn",
+        "maql",
+        "ldm",
+        "migration",
+        "bi"
+      ]
     }
   ]
 }

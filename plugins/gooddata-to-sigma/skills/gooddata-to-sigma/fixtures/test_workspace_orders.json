@@ -1,0 +1,360 @@
+{
+  "analytics": {
+    "analyticalDashboardExtensions": [],
+    "analyticalDashboards": [],
+    "attributeHierarchies": [],
+    "dashboardPlugins": [],
+    "exportDefinitions": [],
+    "filterContexts": [],
+    "memoryItems": [],
+    "metrics": [
+      {
+        "content": {
+          "format": "$#,##0.00",
+          "maql": "SELECT {metric/m_net_revenue} / {metric/m_order_count}"
+        },
+        "id": "m_avg_order_value",
+        "title": "Avg Order Value"
+      },
+      {
+        "content": {
+          "format": "$#,##0",
+          "maql": "SELECT SUM({fact/gross_revenue})"
+        },
+        "id": "m_gross_revenue",
+        "title": "Gross Revenue"
+      },
+      {
+        "content": {
+          "format": "$#,##0",
+          "maql": "SELECT SUM({fact/net_profit})"
+        },
+        "id": "m_net_profit",
+        "title": "Net Profit"
+      },
+      {
+        "content": {
+          "format": "$#,##0",
+          "maql": "SELECT SUM({fact/net_revenue})"
+        },
+        "id": "m_net_revenue",
+        "title": "Net Revenue"
+      },
+      {
+        "content": {
+          "format": "#,##0",
+          "maql": "SELECT COUNT({attribute/order_id})"
+        },
+        "id": "m_order_count",
+        "title": "Order Count"
+      },
+      {
+        "content": {
+          "format": "#,##0.0%",
+          "maql": "SELECT {metric/m_net_revenue} / (SELECT {metric/m_net_revenue} BY ALL {attribute/region})"
+        },
+        "id": "m_pct_rev_region",
+        "title": "% Revenue (of all regions)"
+      }
+    ],
+    "parameters": [],
+    "visualizationObjects": []
+  },
+  "ldm": {
+    "datasets": [
+      {
+        "aggregatedFacts": [],
+        "attributes": [
+          {
+            "description": "",
+            "id": "acquisition_channel",
+            "labels": [
+              {
+                "description": "",
+                "id": "acquisition_channel.name",
+                "sourceColumn": "ACQUISITION_CHANNEL",
+                "sourceColumnDataType": "STRING",
+                "title": "Acquisition Channel",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "ACQUISITION_CHANNEL",
+            "sourceColumnDataType": "STRING",
+            "title": "Acquisition Channel"
+          },
+          {
+            "description": "",
+            "id": "customer",
+            "labels": [
+              {
+                "description": "",
+                "id": "customer.name",
+                "sourceColumn": "CUSTOMER_KEY",
+                "sourceColumnDataType": "INT",
+                "title": "Customer Key",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "CUSTOMER_KEY",
+            "sourceColumnDataType": "INT",
+            "title": "Customer Key"
+          },
+          {
+            "description": "",
+            "id": "customer_segment",
+            "labels": [
+              {
+                "description": "",
+                "id": "customer_segment.name",
+                "sourceColumn": "CUSTOMER_SEGMENT",
+                "sourceColumnDataType": "STRING",
+                "title": "Customer Segment",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "CUSTOMER_SEGMENT",
+            "sourceColumnDataType": "STRING",
+            "title": "Customer Segment"
+          },
+          {
+            "description": "",
+            "id": "loyalty_tier",
+            "labels": [
+              {
+                "description": "",
+                "id": "loyalty_tier.name",
+                "sourceColumn": "LOYALTY_TIER",
+                "sourceColumnDataType": "STRING",
+                "title": "Loyalty Tier",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "LOYALTY_TIER",
+            "sourceColumnDataType": "STRING",
+            "title": "Loyalty Tier"
+          },
+          {
+            "description": "",
+            "id": "region",
+            "labels": [
+              {
+                "description": "",
+                "id": "region.name",
+                "sourceColumn": "REGION",
+                "sourceColumnDataType": "STRING",
+                "title": "Region",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "REGION",
+            "sourceColumnDataType": "STRING",
+            "title": "Region"
+          }
+        ],
+        "dataSourceTableId": {
+          "dataSourceId": "csa-tj-snowflake",
+          "id": "CUSTOMER_DIM",
+          "type": "dataSource"
+        },
+        "description": "",
+        "facts": [
+          {
+            "description": "",
+            "id": "lifetime_order_count",
+            "sourceColumn": "LIFETIME_ORDER_COUNT",
+            "sourceColumnDataType": "NUMERIC",
+            "title": "Lifetime Order Count"
+          },
+          {
+            "description": "",
+            "id": "lifetime_revenue",
+            "sourceColumn": "LIFETIME_REVENUE",
+            "sourceColumnDataType": "NUMERIC",
+            "title": "Lifetime Revenue"
+          }
+        ],
+        "grain": [
+          {
+            "id": "customer",
+            "type": "attribute"
+          }
+        ],
+        "id": "customer",
+        "references": [],
+        "title": "Customer"
+      },
+      {
+        "aggregatedFacts": [],
+        "attributes": [
+          {
+            "description": "",
+            "id": "order_channel",
+            "labels": [
+              {
+                "description": "",
+                "id": "order_channel.name",
+                "sourceColumn": "ORDER_CHANNEL",
+                "sourceColumnDataType": "STRING",
+                "title": "Order Channel",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "ORDER_CHANNEL",
+            "sourceColumnDataType": "STRING",
+            "title": "Order Channel"
+          },
+          {
+            "description": "",
+            "id": "order_id",
+            "labels": [
+              {
+                "description": "",
+                "id": "order_id.name",
+                "sourceColumn": "ORDER_ID",
+                "sourceColumnDataType": "STRING",
+                "title": "Order Id",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "ORDER_ID",
+            "sourceColumnDataType": "STRING",
+            "title": "Order Id"
+          },
+          {
+            "description": "",
+            "id": "order_line",
+            "labels": [
+              {
+                "description": "",
+                "id": "order_line.name",
+                "sourceColumn": "ORDER_LINE",
+                "sourceColumnDataType": "INT",
+                "title": "Order Line",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "ORDER_LINE",
+            "sourceColumnDataType": "INT",
+            "title": "Order Line"
+          },
+          {
+            "description": "",
+            "id": "order_status",
+            "labels": [
+              {
+                "description": "",
+                "id": "order_status.name",
+                "sourceColumn": "ORDER_STATUS",
+                "sourceColumnDataType": "STRING",
+                "title": "Order Status",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "ORDER_STATUS",
+            "sourceColumnDataType": "STRING",
+            "title": "Order Status"
+          },
+          {
+            "description": "",
+            "id": "ship_method",
+            "labels": [
+              {
+                "description": "",
+                "id": "ship_method.name",
+                "sourceColumn": "SHIP_METHOD",
+                "sourceColumnDataType": "STRING",
+                "title": "Ship Method",
+                "valueType": "TEXT"
+              }
+            ],
+            "sourceColumn": "SHIP_METHOD",
+            "sourceColumnDataType": "STRING",
+            "title": "Ship Method"
+          }
+        ],
+        "dataSourceTableId": {
+          "dataSourceId": "csa-tj-snowflake",
+          "id": "ORDER_FACT",
+          "type": "dataSource"
+        },
+        "description": "",
+        "facts": [
+          {
+            "description": "",
+            "id": "gross_profit",
+            "sourceColumn": "GROSS_PROFIT",
+            "sourceColumnDataType": "NUMERIC",
+            "title": "Gross Profit"
+          },
+          {
+            "description": "",
+            "id": "gross_revenue",
+            "sourceColumn": "GROSS_REVENUE",
+            "sourceColumnDataType": "NUMERIC",
+            "title": "Gross Revenue"
+          },
+          {
+            "description": "",
+            "id": "net_profit",
+            "sourceColumn": "NET_PROFIT",
+            "sourceColumnDataType": "NUMERIC",
+            "title": "Net Profit"
+          },
+          {
+            "description": "",
+            "id": "net_revenue",
+            "sourceColumn": "NET_REVENUE",
+            "sourceColumnDataType": "NUMERIC",
+            "title": "Net Revenue"
+          },
+          {
+            "description": "",
+            "id": "quantity_ordered",
+            "sourceColumn": "QUANTITY_ORDERED",
+            "sourceColumnDataType": "NUMERIC",
+            "title": "Quantity Ordered"
+          },
+          {
+            "description": "",
+            "id": "unit_price",
+            "sourceColumn": "UNIT_PRICE",
+            "sourceColumnDataType": "NUMERIC",
+            "title": "Unit Price"
+          }
+        ],
+        "grain": [
+          {
+            "id": "order_id",
+            "type": "attribute"
+          },
+          {
+            "id": "order_line",
+            "type": "attribute"
+          }
+        ],
+        "id": "order",
+        "references": [
+          {
+            "identifier": {
+              "id": "customer",
+              "type": "dataset"
+            },
+            "multivalue": false,
+            "sources": [
+              {
+                "column": "CUSTOMER_KEY",
+                "dataType": "INT",
+                "target": {
+                  "id": "customer",
+                  "type": "attribute"
+                }
+              }
+            ]
+          }
+        ],
+        "title": "Order"
+      }
+    ],
+    "dateInstances": []
+  }
+}

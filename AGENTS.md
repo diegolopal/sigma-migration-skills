@@ -41,6 +41,8 @@ reading the relevant `SKILL.md` and executing its scripts.
 | Scope/assess a MicroStrategy (Strategy One) instance | `microstrategy-assessment` | `plugins/microstrategy-to-sigma/skills/microstrategy-assessment/` |
 | Convert a Sisense (ElastiCube / Live model + dashboards) → Sigma | `sisense-to-sigma` | `plugins/sisense-to-sigma/skills/sisense-to-sigma/` |
 | Scope/assess a Sisense instance | `sisense-assessment` | `plugins/sisense-to-sigma/skills/sisense-assessment/` |
+| Convert a GoodData Cloud / .CN workspace (LDM + MAQL + insights + dashboards) → Sigma | `gooddata-to-sigma` | `plugins/gooddata-to-sigma/skills/gooddata-to-sigma/` |
+| Scope/assess a GoodData workspace | `gooddata-assessment` | `plugins/gooddata-to-sigma/skills/gooddata-assessment/` |
 | Land a Tableau published-datasource/extract in Snowflake or Databricks | `tableau-vds-to-cdw` | `plugins/tableau-to-sigma/skills/tableau-vds-to-cdw/` |
 
 Assessments are read-only (never write to the source or post to Sigma); run one
