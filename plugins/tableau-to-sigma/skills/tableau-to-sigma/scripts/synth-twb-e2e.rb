@@ -301,7 +301,8 @@ run!(['ruby', File.join(HERE, 'build-workbook-spec.rb'),
       '--chart-specs', chart_specs_path, '--dm-ids', dm_ids_path,
       '--master-cols', master_cols_path, '--workbook-name', NAME,
       '--folder-id', opts[:folder], '--mode', 'dashboard',
-      '--dm-element-name', fact['name'], '--out', wb_spec_path], allow_fail: true)
+      '--dm-element-name', fact['name'], '--layout', layout_path,
+      '--out', wb_spec_path], allow_fail: true)
 
 wbspec = JSON.parse(File.read(wb_spec_path))
 # Sigma page ids must match /^[a-zA-Z0-9_-]{1,64}$/; the slug can contain invalid

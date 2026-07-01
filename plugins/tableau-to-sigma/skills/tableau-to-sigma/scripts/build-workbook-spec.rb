@@ -14,6 +14,9 @@
 #     --folder-id   <uuid>
 #     [--mode dashboard|page-per-worksheet]         # default: page-per-worksheet
 #     [--dm-element-name "Order Fact"]              # which DM element the master sources from (default: first non-Date)
+#     [--layout /tmp/<name>/dashboard-layout.json]  # parse-twb-layout output — derives themeName + themeOverrides
+#                                                    #   (backgroundCanvas from the page fill; categoricalScheme
+#                                                    #   from the tinted region-card palette). Omit → no theme.
 #     --out /tmp/<name>/wb-spec.json
 #
 # --master-cols schema (YAML):
@@ -45,6 +48,7 @@ OptionParser.new do |p|
   p.on('--folder-id S')         { |v| opts[:folder_id] = v }
   p.on('--mode S')              { |v| opts[:mode] = v }
   p.on('--dm-element-name S')   { |v| opts[:dm_el_name] = v }
+  p.on('--layout PATH', 'parse-twb-layout output — used to derive workbook theme (canvas + region palette)') { |v| opts[:layout] = v }
   p.on('--out PATH')            { |v| opts[:out] = v }
 end.parse!
 %i[specs dm_ids name folder_id out].each { |k| abort("missing --#{k.to_s.tr('_','-')}") unless opts[k] }
@@ -156,6 +160,47 @@ else
   abort('chart-specs.json must be either { pages: [...] } or [ ... ]')
 end
 
+# Derive the workbook theme from the parsed layout (Phase-1 composition/style,
+# gaps D1 + Pass-7 canvas). Two pieces, both spec-authorable (themeName +
+# themeOverrides), emitted only when the source actually declares them:
+#   - backgroundCanvas: the outermost dashboard zone's fill (the page canvas).
+#   - categoricalScheme: the SOURCE region palette, recovered from the tinted
+#     container cards. Tableau stores region-card tints as 8-digit-alpha hex
+#     (#07b4a24e = the saturated base #07b4a2 over the canvas); stripping the
+#     alpha yields the mark color, which is the faithful chart palette (the
+#     hand-built spec's hexes are aesthetic tweaks not present in the .twb, so
+#     the source colors are the correct automated target). Ordered by first
+#     appearance, deduped. Solid 6-digit fills (grey KPI cards) are excluded so
+#     only the categorical region hues form the scheme. Returns {} when nothing
+#     is derivable → no theme emitted (Sigma defaults apply; never worse).
+def derive_theme(layout)
+  dashes = layout.is_a?(Array) ? layout : []
+  return {} if dashes.empty?
+  roots = dashes.first['zone_tree'] || []
+  canvas = nil
+  palette = []
+  seen = {}
+  walk = lambda do |nodes, depth|
+    (nodes || []).each do |n|
+      fc = n['fill_color']
+      canvas ||= fc if depth.zero? && fc # outermost zone fill = page canvas
+      if n['kind'] == 'container' && fc.is_a?(String) && fc =~ /\A#[0-9a-fA-F]{8}\z/
+        base = fc[0, 7].downcase # strip 8-digit alpha → saturated base (mark color)
+        unless seen[base]
+          seen[base] = true
+          palette << base
+        end
+      end
+      walk.call(n['children'], depth + 1)
+    end
+  end
+  walk.call(roots, 0)
+  theme = {}
+  theme['backgroundCanvas'] = canvas if canvas
+  theme['categoricalScheme'] = palette if palette.size >= 2 # only the multi-member region pattern
+  theme
+end
+
 wb = {
   'name'          => opts[:name],
   'schemaVersion' => 1,
@@ -163,6 +208,19 @@ wb = {
   'pages'         => [data_page] + visible_pages
 }
 wb['description'] = opts[:description] if opts[:description]
+
+# Phase-1 theme (D1 palette + Pass-7 canvas), when a --layout was provided.
+if opts[:layout]
+  theme = derive_theme(JSON.parse(File.read(opts[:layout])))
+  unless theme.empty?
+    wb['themeName'] = 'Light'
+    overrides = {}
+    overrides['colorOverrides'] = { 'backgroundCanvas' => theme['backgroundCanvas'] } if theme['backgroundCanvas']
+    overrides['categoricalScheme'] = theme['categoricalScheme'] if theme['categoricalScheme']
+    wb['themeOverrides'] = overrides unless overrides.empty?
+    warn "  theme: canvas=#{theme['backgroundCanvas'] || '(default)'}, categoricalScheme=#{(theme['categoricalScheme'] || []).size} color(s)"
+  end
+end
 
 File.write(opts[:out], JSON.pretty_generate(wb))
 warn "wrote #{opts[:out]}"
