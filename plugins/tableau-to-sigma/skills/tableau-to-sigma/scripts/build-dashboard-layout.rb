@@ -138,6 +138,17 @@ def tree_has_controls?(tree)
   end
 end
 
+# True when any container in the tree carries a fill (region-card tints etc.).
+# B2 (gap ubr5.6): a designed dashboard with tinted containers but NO controls
+# would otherwise take the banded fallback and lose its tints — the container
+# path is what preserves them (and falls back safely if the tree can't build).
+def tree_has_styled_containers?(tree)
+  (tree || []).any? do |n|
+    (n['kind'] == 'container' && (n['fill_color'] || n['border_color'])) ||
+      tree_has_styled_containers?(n['children'])
+  end
+end
+
 # Place a child within its parent container's internal 24-col grid from pct
 # bounds. parent_rows = grid row-lines the parent spans internally.
 def place_in_parent(ch, p, parent_rows)
@@ -189,7 +200,17 @@ def emit_node(node, c0, c1, r0, r1, ctx)
     end.compact
     return nil if inner.empty?
     cid = "tc-#{ctx[:page_id]}-#{node['id']}"
-    ctx[:extra] << container_el(cid)
+    # B2 (gap ubr5.6): apply the Tableau zone's fill as the Sigma container tint.
+    # parse-twb-layout surfaces fill_color (region-card tints, e.g. #07b4a24e) and
+    # border_color from the zone's <zone-style>. 8-digit-alpha hex renders over the
+    # canvas verbatim (Sigma accepts it), so the region columns keep their color
+    # without a separate pastel-flattening step. Unstyled zones → plain container.
+    cstyle = nil
+    if node['fill_color']
+      cstyle = { 'backgroundColor' => node['fill_color'], 'borderRadius' => 'round' }
+      cstyle['borderColor'] = node['border_color'] if node['border_color']
+    end
+    ctx[:extra] << container_el(cid, cstyle)
     gc(cid, c0, c1, r0, r1, inner.join("\n"))
   else
     eid = resolve_leaf(node, ctx)
@@ -387,7 +408,8 @@ totals = { charts: 0, bands: 0, controls: 0 }
 dash_layout.each do |d|
   page = page_for_dash[d['dashboard']]
   next unless page
-  use_tree = !opts[:no_containers] && tree_has_controls?(d['zone_tree'])
+  use_tree = !opts[:no_containers] &&
+             (tree_has_controls?(d['zone_tree']) || tree_has_styled_containers?(d['zone_tree']))
   if use_tree
     begin
       pxml, extra_els, n_charts, n_bands, n_ctls = build_page_from_tree(d, page, opts)
