@@ -283,9 +283,19 @@ def build_page_from_tree(dashboard, page, opts)
   # Safety net: any chart/control element NOT placed by the tree (an unmatched
   # zone, or a control with no dashboard zone) lands in a bottom band so nothing
   # silently drops from the layout.
-  unplaced = page['elements'].select do |e|
-    %w[chart control].include?(e['kind']) && e['name'] && !ctx[:placed].include?(e['id'])
-  end
+  # Match REAL Sigma element kinds — the previous `%w[chart control]` check
+  # never matched (kinds are `bar-chart`/`kpi-chart`/`table`/`pivot-table`/
+  # `donut-chart`/…, never the literal `chart`), so unmatched charts/tables
+  # SILENTLY VANISHED from the layout instead of landing in the safety band —
+  # the "one tile top-left, everything else gone" regression. Placeable content
+  # = any *-chart, table/pivot-table, control, or text (exclude structural
+  # containers/data). No `name` requirement (charts built from signals may not
+  # carry one, yet must still be placed).
+  placeable = ->(e) {
+    k = e['kind'].to_s
+    k.end_with?('-chart') || %w[table pivot-table control text].include?(k)
+  }
+  unplaced = page['elements'].select { |e| placeable.call(e) && !ctx[:placed].include?(e['id']) }
   unless unplaced.empty?
     n = unplaced.length
     cw = 24.0 / n
@@ -297,7 +307,7 @@ def build_page_from_tree(dashboard, page, opts)
     bid = "tc-#{page['id']}-extra"
     extra_els << container_el(bid)
     children << gc(bid, 1, 25, [page_rows - 4, HEADER_ROWS + 1].max, page_rows + 1, inner)
-    warn "WARN: #{n} element(s) had no Tableau zone — appended in a bottom band: #{unplaced.map { |e| e['name'] }.join(', ')}"
+    warn "WARN: #{n} element(s) had no Tableau zone — appended in a bottom band: #{unplaced.map { |e| e['name'] || e['id'] }.join(', ')}"
   end
 
   [page_xml(page['id'], *children), extra_els, ctx[:placed].size, tree.length, ctl_by_name.size]

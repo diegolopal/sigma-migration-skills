@@ -2319,8 +2319,22 @@ layout.each do |dash|
 
     view = view_by_name[cap]
     if view.nil?
-      warnings << "no Tableau view matched '#{cap}'"
-      next
+      # No standalone Tableau REST view for this worksheet — it's a sheet
+      # embedded inside a dashboard (published without its own tab), so it has no
+      # data export. NOT a reason to drop it (the "5 blend worksheets never
+      # built" regression): give it a synthetic view id (no CSV on disk) so it
+      # falls through to the empty-CSV path below, which reconstructs the tile
+      # from .twb shelf signals. Drop only when the shelves genuinely can't be
+      # reconstructed — and even then, surface it (never silent).
+      if synthesize_view_from_signals(z, meta)
+        warnings << "'#{cap}' has NO standalone Tableau REST view (worksheet embedded in a dashboard) — " \
+                    "building it from .twb shelf signals instead of dropping it (data parity for this tile is manual/image)."
+        view = { 'id' => "signal-only-#{cap.gsub(/\W+/, '-')}" }
+      else
+        warnings << "ZONE DROPPED: '#{cap}' — no Tableau REST view AND shelf signals carry no dim+measure to " \
+                    "reconstruct it. Build the chart by hand; the Phase-6 tile census will report it unmatched."
+        next
+      end
     end
     # Chart kind was INFERRED from shelves (Tableau mark=Automatic) — route it to
     # IMAGE confirmation so a wrong line/bar/scatter guess can't pass silently.
