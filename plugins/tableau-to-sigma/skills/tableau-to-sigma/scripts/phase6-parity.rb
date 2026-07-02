@@ -50,6 +50,7 @@ OptionParser.new do |p|
   # plan and the gate operate on the same scoped tile set.
   p.on('--dashboard NAME', 'Scope parity checks to tiles on this dashboard only (exact or substring). Repeatable.') { |v| (opts[:dashboards] ||= []) << v }
   p.on('--finalize')             { opts[:finalize] = true }
+  p.on('--regen-plan', 'PASS 1: force-rebuild parity-plan.json even if one exists (default: REUSE an existing plan so operator waives/edits survive a re-run)') { opts[:regen_plan] = true }
   p.on('--actuals PATH', 'JSON: { "<chart name>": [[dim, val], ...] } — for --finalize') { |v| opts[:actuals] = v }
 end.parse!
 abort('missing --tableau') unless opts[:tab]
@@ -80,19 +81,31 @@ if !opts[:finalize]
   spec = http_json("/v2/workbooks/#{opts[:wb]}/spec")
   File.write(File.join(opts[:tab], 'wb-readback.json'), JSON.pretty_generate(spec))
 
-  warn "Phase 6 PASS 1: building parity plan"
-  plan_args = ['ruby', File.join(__dir__, 'auto-parity-plan.rb'),
-               '--tableau', opts[:tab],
-               '--workbook-spec', File.join(opts[:tab], 'wb-readback.json'),
-               '--out', plan_path]
-  opts[:renames].each { |r| plan_args.concat(['--rename', r]) }
-  # Thread --dashboard scoping through to the parity plan so both the chart
-  # matching and the hidden_filters gate operate on the same tile set.
-  (opts[:dashboards] || []).each { |d| plan_args.concat(['--dashboard', d]) }
-  out, err, status = Open3.capture3(*plan_args)
-  warn out unless out.empty?
-  warn err unless err.empty?
-  abort('auto-parity-plan failed') unless status.success?
+  # Idempotence guard: if a parity plan already exists, REUSE it (unless
+  # --regen-plan). auto-parity-plan.rb rewrites the plan from scratch, which
+  # DESTROYS operator edits — hidden_filter `status: waived` + `waive_reason`,
+  # hand-corrected `expected` rows, `extract` waivers — every time PASS 1 is
+  # re-run (and the top-level orchestrator re-runs PASS 1 on every invocation).
+  # That turned finalize into an unwinnable fight (edits wiped before the
+  # actuals step). Reusing preserves those edits; --regen-plan forces a rebuild
+  # (use after a workbook re-POST changes element ids).
+  if File.exist?(plan_path) && !opts[:regen_plan]
+    warn "Phase 6 PASS 1: REUSING existing #{plan_path} (operator waives/edits preserved; pass --regen-plan to rebuild from scratch)"
+  else
+    warn "Phase 6 PASS 1: building parity plan"
+    plan_args = ['ruby', File.join(__dir__, 'auto-parity-plan.rb'),
+                 '--tableau', opts[:tab],
+                 '--workbook-spec', File.join(opts[:tab], 'wb-readback.json'),
+                 '--out', plan_path]
+    opts[:renames].each { |r| plan_args.concat(['--rename', r]) }
+    # Thread --dashboard scoping through to the parity plan so both the chart
+    # matching and the hidden_filters gate operate on the same tile set.
+    (opts[:dashboards] || []).each { |d| plan_args.concat(['--dashboard', d]) }
+    out, err, status = Open3.capture3(*plan_args)
+    warn out unless out.empty?
+    warn err unless err.empty?
+    abort('auto-parity-plan failed') unless status.success?
+  end
 
   plan = JSON.parse(File.read(plan_path))
 
@@ -235,10 +248,22 @@ dash_layout_path = opts[:dash_layout] || File.join(opts[:tab], 'dashboard-layout
 if File.exist?(dash_layout_path)
   dash_layout = JSON.parse(File.read(dash_layout_path)) rescue nil
   if dash_layout.is_a?(Array)
-    zone_names = dash_layout.flat_map { |d| d['zones'] || [] }
-                            .select { |zz| zz['kind'] == 'chart' && !zz['caption'].to_s.strip.empty? }
-                            .map { |zz| zz['caption'].strip }
-                            .uniq
+    # A "chart zone" that plots nothing — no measures AND no shelf dims/measures
+    # — is a text/label worksheet (Tableau "Info" / "Filtered Plan" / "Note Box"
+    # disclaimers), NOT a real tile. Counting those inflated `zones_total` and
+    # made coverage read far worse than reality (the ~30 phantom "missing tiles").
+    # Exclude them from the parity denominator. KPI "title" zones DO carry a
+    # measure, so they're correctly kept.
+    plots = lambda do |zz|
+      return false unless zz['kind'] == 'chart' && !zz['caption'].to_s.strip.empty?
+      rs = zz['rows_shelf'] || {}; cs = zz['cols_shelf'] || {}
+      shelf = rs['dim_count'].to_i + rs['measure_count'].to_i + cs['dim_count'].to_i + cs['measure_count'].to_i
+      !Array(zz['measures']).empty? || shelf.positive?
+    end
+    all_chart_zones = dash_layout.flat_map { |d| d['zones'] || [] }
+                                 .select { |zz| zz['kind'] == 'chart' && !zz['caption'].to_s.strip.empty? }
+    label_zones = all_chart_zones.reject(&plots).map { |zz| zz['caption'].strip }.uniq
+    zone_names  = all_chart_zones.select(&plots).map { |zz| zz['caption'].strip }.uniq
     norm = ->(s) { s.to_s.downcase.gsub(/[^a-z0-9]/, '') }
     matched = plan['charts'].flat_map { |c| [c['tableau_view'], c['chart']] }.compact.map(&norm)
     unmatched = zone_names.reject { |zn| matched.include?(norm.call(zn)) }
@@ -246,7 +271,8 @@ if File.exist?(dash_layout_path)
       'zones_total'          => zone_names.size,
       'charts_built'         => plan['charts'].size,
       'zones_unmatched'      => unmatched.size,
-      'unmatched_zone_names' => unmatched
+      'unmatched_zone_names' => unmatched,
+      'label_zones_excluded' => label_zones
     }
     warn "tile census: #{zone_names.size} dashboard zone(s), #{plan['charts'].size} chart(s) in parity plan, #{unmatched.size} unmatched" \
          "#{unmatched.any? ? " — UNMATCHED: #{unmatched.join(', ')}" : ''}"
