@@ -335,6 +335,53 @@ def _fillrule_measure(rule):
     return _expr_queryref(fld) if fld else None
 
 
+def _donut_label_style(visual):
+    """PBI pie/donut detail-label style (objects.labels[].properties.labelStyle),
+    e.g. 'Category, percent of total' / 'Data value'. Maps to Sigma donut
+    dataLabel.labelDisplay so a percent-of-total donut migrates as percent, not $."""
+    for item in (visual.get("objects", {}) or {}).get("labels", []):
+        ls = _literal(((item or {}).get("properties", {}) or {}).get("labelStyle"))
+        if ls:
+            return str(ls)
+    return None
+
+
+def _card_value_color(visual):
+    """PBI card/multiRowCard value font color (objects.labels[].properties.color)
+    -> hex, or None. Style fidelity: PBI cards show the value in the theme accent;
+    the builder puts this on the Sigma KPI `value.color`."""
+    for item in (visual.get("objects", {}) or {}).get("labels", []):
+        props = (item or {}).get("properties", {}) or {}
+        c = _color_literal(props.get("color", {}) or {})
+        if c:
+            return c
+    return None
+
+
+def _show_totals(visual, vtype):
+    """PBI matrix/tableEx show a Grand Total by default -> True; honor an explicit
+    off toggle -> False. Non-table visuals -> None (irrelevant)."""
+    if vtype not in ("tableEx", "tableExV2", "pivotTable", "matrix"):
+        return None
+    objs = visual.get("objects", {}) or {}
+    for key in ("total", "grandTotal", "subTotals"):
+        for item in objs.get(key, []):
+            show = _literal(((item or {}).get("properties", {}) or {}).get("show"))
+            if show is False or str(show).lower() == "false":
+                return False
+    return True  # PBI default
+
+
+def _report_theme(defn):
+    """Report base-theme name (themeCollection.baseTheme.name), e.g. 'CY24SU10'.
+    Drives lib/pbi_theme.rb's palette selection. None -> builder uses PBI default."""
+    try:
+        rep = json.load(open(os.path.join(defn, "report.json")))
+        return ((rep.get("themeCollection", {}) or {}).get("baseTheme", {}) or {}).get("name")
+    except Exception:
+        return None
+
+
 def extract(pbir_dir):
     defn = os.path.join(pbir_dir, "definition")
     if not os.path.isdir(defn):
@@ -382,6 +429,8 @@ def extract(pbir_dir):
                 "formats": formats,
                 # bead n9u9: PBI data-label toggle (objects.labels show) — true/false/None
                 "data_labels": _obj_flag(visual, "labels"),
+                # pie/donut detail-label style -> Sigma donut dataLabel.labelDisplay
+                "label_style": _donut_label_style(visual),
                 # bead ry0n: PBI legend toggle (objects.legend show) — true/false/None
                 "legend": _obj_flag(visual, "legend"),
                 # bead (A) reference lines: PBI analytics-pane constant lines ->
@@ -392,6 +441,12 @@ def extract(pbir_dir):
                 # bead (B) by-measure color: 'Color saturation' / FX fill-by-value
                 # -> Sigma color:{by:scale, column:<dup measure>, scheme}.
                 "measure_color": _measure_color(visual),
+                # style fidelity: PBI card value font color -> Sigma KPI value.color
+                "value_color": _card_value_color(visual),
+                # style fidelity: PBI matrix/tableEx Grand Total (default on) ->
+                # Sigma pivot-table totals:{showGrandTotals} (builder re-expresses a
+                # grouped table as a pivot when set).
+                "show_totals": _show_totals(visual, vtype),
             }
             if rec["sigma_kind"] == "text":
                 rec["text"] = _textbox_body(visual)
@@ -415,7 +470,10 @@ def extract(pbir_dir):
             "visuals": visuals,
             "interactions": interactions,
         })
-    return {"source": "pbir", "pbir_dir": pbir_dir, "pages": out_pages}
+    return {"source": "pbir", "pbir_dir": pbir_dir,
+            # style fidelity: report base-theme name -> Sigma themeOverrides palette
+            "theme": _report_theme(defn),
+            "pages": out_pages}
 
 
 def main():

@@ -333,10 +333,20 @@ tie_with_second      = best && second && (best['score'] - second['score']) < aut
 best_name_matches    = best && !sig_name_norm.empty? && normalize_col(best['dm_name']) == sig_name_norm
 best_covers_tables   = best && best['table_match'].to_f >= 1.0
 best_is_superset     = best_covers_tables && best['column_match'].to_f >= 1.0
-auto_picked          = !!(opts[:auto_pick] && best && best['score'] >= auto_pick_threshold && best_covers_tables)
+# A WIDE tie among table-covering look-alikes (>=3 within the tie window) is
+# duplicate-DM sprawl we CANNOT safely disambiguate by score — silently collapsing
+# it can reuse a bloated look-alike that lacks the workbook's joined structure
+# (verified 2026-07-02: a 5-way 0.876 tie of demo DMs auto-collapsed, dropping 8/9
+# visuals + falling back to the agent path). Unless the top is a confident pick
+# (exact source-name match OR a full column-superset), refuse to auto-pick so the
+# caller builds a fresh, correctly-structured DM (and, interactively, surfaces the
+# tie). Narrow ties (<=2) still collapse as before — reuse-first for the common case.
+tie_window_count     = best ? candidates.count { |c| (best['score'] - c['score'].to_f) < auto_pick_tie_window } : 0
+ambiguous_wide_tie   = tie_window_count >= 3 && !best_name_matches && !best_is_superset
+auto_picked          = !!(opts[:auto_pick] && best && best['score'] >= auto_pick_threshold && best_covers_tables && !ambiguous_wide_tie)
 
 # Standard recommend path keeps the old semantics (printed for human opt-in).
-recommended_via_std  = best && best['score'] >= opts[:min_score]
+recommended_via_std  = best && best['score'] >= opts[:min_score] && !ambiguous_wide_tie
 recommended_dm_id    = (auto_picked || recommended_via_std) ? best['dm_id'] : nil
 
 rationale =
@@ -346,6 +356,8 @@ rationale =
     kind = best_is_superset ? 'column-superset' : 'covers all source tables'
     tie  = tie_with_second ? " (collapsing a #{best['score']}-score tie — duplicate-DM sprawl)" : ''
     "AUTO-PICKED at score #{best['score']} — #{kind}#{tie}. #{best['shared_columns'].size}/#{tableau_columns.size} cols, #{best['shared_tables'].size}/#{tableau_tables.size} tables matched. Caller must WARN about #{best['extra_columns']} inherited columns."
+  elsif ambiguous_wide_tie
+    "AMBIGUOUS: #{tie_window_count} near-identical DMs tie at ~#{best['score']} (duplicate-DM sprawl) and none is an exact source-name match or full column-superset — NOT auto-reusing a look-alike (it may lack the workbook's joined structure). Build a fresh DM, or force one with --reuse-dm <id>. Tied: #{candidates.first([tie_window_count, 4].min).map { |c| c['dm_name'] }.join('; ')}"
   elsif opts[:auto_pick] && best['score'] >= auto_pick_threshold && !best_covers_tables
     "score #{best['score']} clears the bar but the candidate is MISSING source table(s) #{best['missing_tables'].join(', ')} — not a safe reuse — build a new DM"
   elsif best['score'] >= opts[:min_score]
@@ -359,6 +371,8 @@ result = {
   'scanned_dm_count'        => candidates.size,
   'recommended_dm_id'       => recommended_dm_id,
   'auto_picked'             => auto_picked,
+  'ambiguous_wide_tie'      => ambiguous_wide_tie,
+  'tie_count'               => tie_window_count,
   'score'                   => best ? best['score'] : 0.0,
   'rationale'               => rationale,
   'warning'                 => (best && best['extra_columns'] > 0) ? "Reusing inherits #{best['extra_columns']} extra columns (sample: #{best['extra_columns_sample'].join(', ')})" : nil,

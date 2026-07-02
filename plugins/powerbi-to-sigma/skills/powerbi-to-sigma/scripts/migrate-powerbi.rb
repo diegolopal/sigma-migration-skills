@@ -671,9 +671,22 @@ fixup = ['ruby', File.join(HERE, 'convert-model.rb'),
          '--converter-out', File.join(WORK, 'dm-raw.json'),
          '--out', dm_spec, '--name', WB_NAME.sub(/\(from Power BI\)\s*$/, 'DM (from Power BI)')]
 if opts[:folder]
-  # caller gave an explicit folder; still need an owner — harvest from ref-dm if present.
+  # caller gave an explicit folder; still need an owner — harvest from ref-dm if
+  # present, else resolve the current user via whoami. Without this, a build-new
+  # (e.g. after DM-reuse correctly DECLINES an ambiguous wide-tie of look-alike
+  # DMs — see find-or-pick-dm.rb) aborts with "need --ref-dm or --owner-id".
   fixup += ['--folder-id', opts[:folder]]
-  fixup += ['--ref-dm', opts[:ref_dm]] if opts[:ref_dm]
+  if opts[:ref_dm]
+    fixup += ['--ref-dm', opts[:ref_dm]]
+  else
+    begin
+      require_relative 'lib/sigma_rest'
+      uid = Sigma.request(:get, '/v2/whoami')['userId']
+      fixup += ['--owner-id', uid] if uid && !uid.empty?
+    rescue StandardError => e
+      warn "   [warn] whoami owner-resolve failed (#{e.message[0, 80]}) — build-new may need --ref-dm/--owner-id"
+    end
+  end
 elsif opts[:ref_dm]
   fixup += ['--ref-dm', opts[:ref_dm]]
 else

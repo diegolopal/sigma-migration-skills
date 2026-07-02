@@ -49,6 +49,7 @@
 require 'json'
 require 'optparse'
 require_relative 'lib/layout'
+require_relative 'lib/pbi_theme'
 include SigmaLayout
 
 opts = {}
@@ -84,6 +85,11 @@ end.parse!
 %i[sig mmap out].each { |k| abort("missing --#{k.to_s.tr('_','-')}") unless opts[k] }
 
 signals = JSON.parse(File.read(opts[:sig]))
+# Style fidelity: the PBI report's base theme -> Sigma workbook theme. `signals['theme']`
+# is the themeCollection.baseTheme name captured by extract-pbir.py (nil -> PBI default
+# palette). $pbi_accent (scheme[0]) colors single-series charts + KPI card values.
+$pbi_theme  = signals['theme']
+$pbi_accent = PbiTheme.accent($pbi_theme)
 $image_map = (opts[:imap] && File.exist?(opts[:imap])) ? JSON.parse(File.read(opts[:imap])) : {}
 if opts[:bim] && File.exist?(opts[:bim])
   $geo_categories ||= {}
@@ -384,6 +390,13 @@ def apply_fmt(col, queryref, fields, vfmts)
   f = sigma_format(hint)
   col.merge!(f) if f
   col
+end
+
+# PBI matrices/tableEx show a bold Grand Total row by default — reproduce it
+# (style fidelity). Shared by the pivot-table emit and the grouped-table->pivot
+# re-expression (a grouped Sigma `table` can't render a grand-total row).
+def pbi_totals_block
+  { 'showGrandTotals' => 'shown', 'grandTotalFontWeight' => 'bold', 'totalPosition' => 'last' }
 end
 
 # A field spec is a MEASURE unless it is a bare stored-column reference. The
@@ -905,6 +918,13 @@ def build_element(rec, fields, masters, extra_data = [])
     # Invalid string"; live readback also normalizes to columnId). NB: pie/donut
     # `value` uses `{id}` — do not change that one.
     el['value'] = { 'columnId' => cid }
+    # Style fidelity — reproduce the PBI card look: value in the theme accent
+    # (PBI card `labels.color`, captured as rec['value_color']; else the palette
+    # accent), with the caption in neutral gray BELOW the value (titleOrient).
+    el['value']['color'] = rec['value_color'] || $pbi_accent
+    el['name'] = { 'text' => qr_leaf(qr, 'Value'),
+                   'color' => { 'kind' => 'theme', 'ref' => 'colors-textNeutral' } }
+    el['layout'] = { 'titleOrient' => 'bottom' }
   when 'region-map'
     loc = (b['Category'] || b['Location'] || []).first
     meas = (b['Y'] || b['Values'] || []).first
@@ -1175,7 +1195,15 @@ def build_element(rec, fields, masters, extra_data = [])
     val = (b['Values'] || b['Y'] || []).first
     dfs = field_spec(dim, fields, master); vfs = field_spec(val, fields, master)
     dcid = "#{eid}-c"; vcid = "#{eid}-v"
-    cols << { 'id' => dcid, 'formula' => dfs['ref'], 'name' => qr_leaf(dim, 'Dim') }
+    # Style fidelity: PBI labels a null slice "(Blank)" and sorts it FIRST, so its
+    # color lands on the palette's scheme[0]. Sigma sorts null LAST, which misaligns
+    # the whole categoricalScheme on donut/pie (per-element color.scheme is dropped
+    # there — theme palette is the only lever). Coalescing null -> "(Blank)" both
+    # matches PBI's label and sorts ahead of letters ("(" < "A"), so every slice
+    # gets the same color PBI gave it. Only wrap a bare column ref.
+    dim_ref = dfs['ref']
+    dim_ref = %(Coalesce(#{dim_ref}, "(Blank)")) if dim_ref.to_s =~ /\A\[[^\]]+\]\z/
+    cols << { 'id' => dcid, 'formula' => dim_ref, 'name' => qr_leaf(dim, 'Dim') }
     cv = { 'id' => vcid, 'formula' => measure_formula(vfs), 'name' => qr_leaf(val, 'Value') }
     apply_fmt(cv, val, fields, vfmts)
     cols << cv
@@ -1185,7 +1213,25 @@ def build_element(rec, fields, masters, extra_data = [])
     el['value'] = { 'id' => vcid }
     # value labels on pie/donut slices — honor an explicit PBI labels-off signal
     # (bead n9u9); default (nil/absent) keeps the labels shown as before.
-    el['dataLabel'] = { 'labels' => 'shown' } unless rec['data_labels'] == false
+    unless rec['data_labels'] == false
+      dl = { 'labels' => 'shown' }
+      # Style fidelity: map PBI's detail-label style -> Sigma donut labelDisplay,
+      # so a "percent of total" donut migrates as % (not raw $). Only emit when PBI
+      # named a style; absent -> value labels as before (no blind percent default).
+      ls = rec['label_style'].to_s.downcase
+      disp = if ls.include?('percent') && (ls.include?('category') || ls.include?('detail'))
+               'color-percent'
+             elsif ls.include?('percent')
+               'percent'
+             elsif ls.include?('category') && ls.include?('data value')
+               'color-value'
+             end
+      if disp
+        dl['labelDisplay'] = disp
+        dl['precision'] = 1 if disp.include?('percent')
+      end
+      el['dataLabel'] = dl
+    end
   when 'table'
     # A plain table with measure columns renders FLAT/ungrouped unless it has a
     # grouping whose `calculations` lists the measure col ids (bead 14w(f)).
@@ -1232,6 +1278,18 @@ def build_element(rec, fields, masters, extra_data = [])
         end
       end
       el['groupings'] = [{ 'id' => "#{eid}-g", 'groupBy' => group_ids, 'calculations' => calc_ids }]
+      # Style fidelity: PBI tableEx/matrix show a Grand Total row; a grouped Sigma
+      # `table` can't render one, but a pivot-table can. When PBI showed totals,
+      # re-express the grouped table as a pivot (rowsBy=dims, values=measures) so
+      # the total row survives — matches PBI's tableEx/matrix Total row.
+      if rec['show_totals']
+        el['kind'] = 'pivot-table'
+        el.delete('groupings')
+        el['rowsBy'] = group_ids.map { |id| { 'id' => id } }
+        el['columnsBy'] = []
+        el['values'] = calc_ids
+        el['totals'] = pbi_totals_block
+      end
     end
   when 'pivot-table'
     rows = (b['Rows'] || b['Category'] || [])
@@ -1263,6 +1321,9 @@ def build_element(rec, fields, masters, extra_data = [])
     el['rowsBy'] = rowids.map { |id| { 'id' => id } }
     el['columnsBy'] = colids.map { |id| { 'id' => id } } unless colids.empty?
     el['values'] = valids
+    # Style fidelity: PBI matrices show a Grand Total row/column by default.
+    # Reproduce it (bold, last) unless the source explicitly turned totals off.
+    el['totals'] = pbi_totals_block unless rec['show_totals'] == false
   end
 
   # bead f972: carry the PBI visual's sort onto the built element (runs AFTER the
@@ -1677,7 +1738,12 @@ spec = {
   'pages' => [{ 'id' => 'page-data', 'name' => 'Data', 'elements' => data_elements }] + content_pages,
   # bead 16i: embed the layout so the very first POST does not trigger Sigma's
   # single-column auto-layout (which would wipe put-layout.rb's grid).
-  'layout' => layout_xml
+  'layout' => layout_xml,
+  # Style fidelity: reproduce the PBI report's look — card chrome, subtle borders,
+  # and the source theme's categorical palette (drives donut/pie + multi-series
+  # colors). Stacked on the built-in Light theme. See lib/pbi_theme.rb.
+  'themeName'      => 'Light',
+  'themeOverrides' => PbiTheme.overrides($pbi_theme)
 }
 spec['folderId'] = opts[:folder] if opts[:folder]
 
