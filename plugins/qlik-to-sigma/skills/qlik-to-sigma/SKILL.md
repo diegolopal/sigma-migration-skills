@@ -77,6 +77,7 @@ independently runnable script if you need to intervene mid-pipeline.
 — see `fixtures/README.md`.
 
 **Read ALL of the following before replying or taking any action:**
+- `refs/operating-contract.md` — **READ FIRST**: the fidelity guardrails (render + value-check EVERY page against the source; never ship empty or silently drop a tile; don't spin — surface blockers).
 - `refs/sigma-build-gotchas.md` — the hard-won spec rules (SQL element, workbook master, YAML responses). **This is the difference between a 2xx that errors at query time and a working migration.**
 - The repo `~/Desktop/sigma-data-model-mcp/CLAUDE.md` — Sigma DM spec correctness rules + the verified CSA.TJ test connection.
 - `~/sigma-skills/sigma-workbooks/SKILL.md` + the Sigma OpenAPI — canonical workbook spec.

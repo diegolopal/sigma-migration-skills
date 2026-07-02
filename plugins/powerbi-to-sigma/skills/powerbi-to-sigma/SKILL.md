@@ -27,6 +27,7 @@ If the user didn't supply a destination (no `--folder <id>`), ASK before buildin
 
 If a destination is already supplied, honor it silently — don't ask.
 
+> **READ FIRST — `refs/operating-contract.md`**: the fidelity guardrails (render + value-check EVERY page against the source; never ship empty or silently drop a tile; don't spin — surface blockers).
 > Status: **foundation** (validated end-to-end 2026-05-31 on the "Employee Dashboard" workforce report).
 > Beads: build = `beads-sigma-cs2`; converter gaps = `j89` (M-Snowflake path), `tkd` (element names / schemaVersion / folderId).
 > Defers to: `sigma-workbooks` (canonical workbook spec), `sigma-data-models` (DM spec), the `convert_powerbi_to_sigma` MCP tool, and `tableau-to-sigma/scripts/*` (reused verbatim for posting + layout + parity).
