@@ -3019,6 +3019,40 @@ function pickRootRelation(conn) {
   });
   return meaningful || rels[0];
 }
+function allConnections(connVal) {
+  const out = [];
+  const visit = (c) => {
+    if (!c)
+      return;
+    if (Array.isArray(c)) {
+      c.forEach(visit);
+      return;
+    }
+    if (typeof c !== "object")
+      return;
+    out.push(c);
+    if (c.connection)
+      visit(c.connection);
+    const ncs = c["named-connections"];
+    if (ncs)
+      for (const nc of asArray(ncs["named-connection"] || []))
+        visit(nc?.connection);
+  };
+  visit(connVal);
+  return out;
+}
+function effectiveConnection(connVal) {
+  const conns = allConnections(connVal);
+  if (conns.length === 0)
+    return Array.isArray(connVal) ? connVal[0] : connVal;
+  const meaningful = conns.find((c) => connRelations(c).some((r) => {
+    const t = attr(r, "type") || "table";
+    if (t === "text" || t === "join" || t === "collection")
+      return true;
+    return !isExtractPlaceholderRel(r);
+  }));
+  return meaningful || conns[0];
+}
 function nsChild(obj, suffix) {
   if (!obj)
     return void 0;
@@ -3994,6 +4028,7 @@ function convertTableauToSigma(xmlContent, options = {}) {
   }
   const dsIdx = Math.min(datasourceIndex, datasources.length - 1);
   const ds = datasources[dsIdx];
+  const rootConn = effectiveConnection(ds.connection);
   const warnings = [];
   const security = [];
   const workbookPatterns = [];
@@ -4041,7 +4076,7 @@ function convertTableauToSigma(xmlContent, options = {}) {
       if (guid && ownerRel)
         guidOwnerRel[guid.toLowerCase()] = ownerRel;
     }
-    for (const mr of asArray(ds.connection?.["metadata-records"]?.["metadata-record"] || [])) {
+    for (const mr of asArray(rootConn?.["metadata-records"]?.["metadata-record"] || [])) {
       if (attr(mr, "class") !== "column")
         continue;
       const guid = (mr["remote-name"] || "").trim();
@@ -4078,7 +4113,7 @@ function convertTableauToSigma(xmlContent, options = {}) {
   const CALC_REF_RE = /^(Calculation_\d+|.+_\d{6,})$/;
   let factRelName = null;
   const derivedRelColGuids = /* @__PURE__ */ new Set();
-  for (const rel of connRelations(ds.connection)) {
+  for (const rel of connRelations(rootConn)) {
     const scanRel = (r) => {
       for (const col of asArray(r?.columns?.column || [])) {
         const nm = (attr(col, "name") || "").replace(/^\[|\]$/g, "");
@@ -4100,7 +4135,7 @@ function convertTableauToSigma(xmlContent, options = {}) {
     const cap = calcNameToCaption[name];
     return cap ? `[${cap}]` : m;
   });
-  const rootRelation = ds.connection ? pickRootRelation(ds.connection) || null : null;
+  const rootRelation = rootConn ? pickRootRelation(rootConn) || null : null;
   if (rootRelation) {
     const relType = attr(rootRelation, "type") || "table";
     if (relType === "table") {
@@ -4212,7 +4247,7 @@ function convertTableauToSigma(xmlContent, options = {}) {
         const metaByObjId = {};
         const metaByParent = {};
         const colSqlNameById = {};
-        const metaRecords = asArray(ds.connection?.["metadata-records"]?.["metadata-record"] || []);
+        const metaRecords = asArray(rootConn?.["metadata-records"]?.["metadata-record"] || []);
         const stripBrackets = (s) => s.replace(/^\[|\]$/g, "");
         for (const mr of metaRecords) {
           if (attr(mr, "class") !== "column")
@@ -4454,7 +4489,7 @@ function convertTableauToSigma(xmlContent, options = {}) {
             rawCols.push({ name: nm });
         }
         if (rawCols.length === 0) {
-          for (const mr of asArray(ds.connection?.["metadata-records"]?.["metadata-record"] || [])) {
+          for (const mr of asArray(rootConn?.["metadata-records"]?.["metadata-record"] || [])) {
             if (attr(mr, "class") !== "column")
               continue;
             const remote = (mr["remote-name"] || "").trim();
