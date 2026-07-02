@@ -98,10 +98,12 @@
 #      sent or declined (no telemetry-sent.json marker; gate 10, delegated to
 #      assert-telemetry-ran.rb). Ask the user, then run report-telemetry.py
 #      (--declined if they decline). Escape hatch: --skip-telemetry-gate "<reason>".
-#  13  Visual comparison not recorded (gate 8b) — only when --require-visual-comparison
-#      is set: a valid render exists but parity-final.json carries no visual_checked/
-#      screenshot_path verdict. Run record-visual-check.rb after reading the rendered
-#      page against the source dashboard PNG, then re-run.
+#  13  Visual comparison not recorded (gate 8b) — ENFORCED BY DEFAULT: a valid
+#      render exists but parity-final.json carries no visual_checked/screenshot_path
+#      verdict. A structurally-clean workbook can still ship visually empty/wrong, so
+#      the source-vs-target comparison is mandatory. Run record-visual-check.rb after
+#      reading the rendered page against the source dashboard PNG, then re-run.
+#      Escape hatch (source image genuinely unobtainable): --skip-visual-comparison "<reason>".
 #
 # Prints a per-gate summary to stdout regardless of exit code.
 
@@ -134,7 +136,8 @@ OptionParser.new do |p|
   p.on('--skip-parity-gate REASON', 'waive gate 1 (Phase 6 source-parity) — REQUIRED reason string. Use ONLY when source parity is genuinely unavailable (e.g. no source workspace/dataset/warehouse access). The reason MUST be named in your migration report.') { |v| opts[:skip_parity] = v }
   p.on('--sigma-render PATH', 'gate 8: path to the rendered Sigma dashboard PNG (default: <workdir>/sigma-render.png; also accepts <workdir>/screenshots/_manifest.json)') { |v| opts[:sigma_render] = v }
   p.on('--skip-visual-gate REASON', 'waive gate 8 (Phase 6f visual render) — REQUIRED reason string. Use ONLY when the workbook genuinely cannot be rendered (e.g. export API unavailable). The reason MUST be named in your migration report.') { |v| opts[:skip_visual] = v }
-  p.on('--require-visual-comparison', 'gate 8b (opt-in): HARD-FAIL (exit 13) unless parity-final.json records a visual_checked/screenshot_path verdict (written by record-visual-check.rb after the source-vs-target read). Without this flag the missing-verdict case is only a soft WARN — preserves behavior for converters that have not adopted it.') { opts[:require_visual_cmp] = true }
+  p.on('--require-visual-comparison', 'DEPRECATED — gate 8b is now enforced by default; this flag is a no-op kept for back-compat.') { opts[:require_visual_cmp] = true }
+  p.on('--skip-visual-comparison REASON', 'waive gate 8b (source-vs-target visual verdict) — REQUIRED reason string. Use ONLY when the source dashboard image is genuinely unobtainable (no source render/export access). The reason MUST be named in your migration report.') { |v| opts[:skip_visual_cmp] = v }
   p.on('--skip-visual-tiles REASON', 'waive gate 9 (build-from-signals tile image-verification) — REQUIRED reason string. The reason MUST be named in your migration report.') { |v| opts[:skip_visual_tiles] = v }
   p.on('--skip-telemetry-gate REASON', 'waive gate 10 (telemetry consent decision) — REQUIRED reason string. Use ONLY when the run genuinely cannot prompt (e.g. unattended CI). The reason MUST be named in your migration report.') { |v| opts[:skip_telemetry] = v }
 end.parse!
@@ -695,24 +698,26 @@ else
   # gate 8b — the comparison itself can't be fully mechanized, but we CAN require
   # that a VERDICT was recorded (record-visual-check.rb stamps visual_checked into
   # parity-final.json after the agent reads the rendered page against the source).
-  # Opt-in via --require-visual-comparison; otherwise a soft nudge, preserving
-  # current behavior for converters that have not adopted the recorder yet.
+  # ENFORCED BY DEFAULT (was opt-in via --require-visual-comparison): a structurally
+  # clean workbook can still ship visually empty/wrong (0 error columns, but stacked
+  # slivers / missing tiles). "Can't verify" must not equal "passes", so a missing
+  # verdict hard-fails unless explicitly waived with a named reason.
   s = File.exist?(summary_path) ? (JSON.parse(File.read(summary_path)) rescue {}) : {}
   recorded = s['visual_checked'] || s['screenshot_path']
   if recorded
     v = s['visual_verdict'] ? " (#{s['visual_verdict']})" : ''
     puts "[OK] gate 8b: source-vs-target visual comparison recorded#{v}."
-  elsif opts[:require_visual_cmp]
-    warn '[FAIL] gate 8b: --require-visual-comparison set, but parity-final.json records no'
-    warn '       visual_checked/screenshot_path — the full-dashboard source-vs-target comparison'
-    warn '       was not recorded (a valid render exists, but nobody confirmed it matches the source).'
-    warn '       After reading the rendered page against the source dashboard PNG, run:'
-    warn '         ruby scripts/record-visual-check.rb --workdir <dir> --verdict pass|divergent --notes "..."'
-    warn '       then re-run. Escape hatch (genuinely un-renderable): --skip-visual-gate "<reason>".'
-    exit 13
+  elsif opts[:skip_visual_cmp]
+    puts "[SKIP] gate 8b: source-vs-target visual comparison WAIVED via --skip-visual-comparison (#{opts[:skip_visual_cmp]})."
   else
-    warn '[WARN] gate 8: parity-final.json records no screenshot_path/visual_checked flag — ' \
-         'render exists but confirm you actually compared it to the source and noted any divergence.'
+    warn '[FAIL] gate 8b: parity-final.json records no visual_checked/screenshot_path verdict —'
+    warn '       a valid render exists, but nobody confirmed it matches the source dashboard.'
+    warn '       Enforced by default: a structurally-clean workbook can still be visually empty/wrong.'
+    warn '       Read each rendered page against the source PNG, then run:'
+    warn '         ruby scripts/record-visual-check.rb --workdir <dir> --verdict pass|divergent --notes "..."'
+    warn '       then re-run. If the source image is genuinely unobtainable, waive with'
+    warn '       --skip-visual-comparison "<reason>" and name it in your migration report.'
+    exit 13
   end
 end
 
