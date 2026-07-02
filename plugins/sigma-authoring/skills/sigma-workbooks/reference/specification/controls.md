@@ -247,6 +247,56 @@ filters:
 
 ---
 
+## Referencing a Control's Value in a Formula
+
+There are **two distinct ways** to wire a control, and mixing them up is the most common way a migrated workbook ends up with visible `#ERROR` cells:
+
+1. **Filtering data** — the `filters` binding above. The control narrows the rows of the target table(s). Use this for "filter the report by region / date / amount." Prefer it for filtering.
+2. **Reading the value in a formula** — a calc column (or other formula) can read the control's *current value* and compute from it. Use this for derived/display logic: a dynamic label, a switch between measures, a threshold flag.
+
+This section is about #2 — the part the OpenAPI and the field table above don't teach.
+
+### Syntax: reference the `controlId`, not the element `id`
+
+Inside a formula, refer to the control by its **`controlId`** (the formula handle) in brackets:
+
+```
+[ReportPeriod]          // ✅ the controlId  → resolves to the control's value
+[ctrl-report-period]    // ❌ the element id → "Unknown column"
+```
+
+`controlId` and `id` are different fields (see the tip at the bottom of this file). Formulas resolve the **`controlId`**; passing the element `id` fails with `Unknown column "..."`. This is verified live (2026-07-01) — a calc column `[<controlId>]` exports the control's value; the same formula with the element id errors.
+
+### The value is TYPED — consume it type-appropriately
+
+A control reference resolves to the control's **native value type**, not always a scalar:
+
+| `controlType` | Resolves to | Consume with |
+|---|---|---|
+| `number`, `slider` | number | arithmetic directly: `[PageSize] + 1` |
+| `date` | date | date functions, comparisons |
+| `date-range` | a `{ start, end }` variant/struct | `[Range].start` / `[Range].end`, date functions, or `Text(...)` — **not** bare arithmetic |
+| `list`, `segmented` | a set / array | membership: `[Col] = [RegionCtl]`, `In(...)` — not scalar math |
+| `checkbox`, `switch` | boolean | `If([ActiveOnly], ..., ...)` |
+| `text`, `text-area` | text | text functions, comparisons |
+
+Using a non-numeric control in a numeric context is the trap. Verified live:
+
+```
+[DateRangeCtl] + 1
+  → Argument 1 invalid for function '+'. Expected number; received variant.
+```
+
+That error is a **type mismatch**, not evidence that "controls can't be referenced in formulas." The reference resolved fine; the `+` rejected the variant. `Text([DateRangeCtl])`, `If([DateRangeCtl] = [DateRangeCtl], 1, 0)`, and `[DateRangeCtl].start` all resolve cleanly against the same control.
+
+### "Dead control" is a lint state, not a broken workbook
+
+A control that nothing references yet is flagged **dead** by the control lint (see the tableau-to-sigma `control-parity.md`). It still **renders and is usable** — dead is a "not wired yet" signal, not an error. Don't strip a control just because it's dead; wire it (a `filters` target, or a `[controlId]` formula reference consumed per its type) and the flag clears. Removing controls to satisfy the lint ships *less* than the source dashboard had.
+
+> The single most common control-in-formula failure, in order: (1) referencing the element `id` instead of the `controlId`; (2) doing arithmetic on a `date-range`/`list` control (`received variant`); (3) concluding from either that formula reference "doesn't work" and deleting the controls. All three are avoidable — the reference works.
+
+---
+
 ## One Control, Multiple Elements
 
 A control's `filters` array can hold **multiple bindings** — one per element/column the control should filter. This is the right tool for a page-level filter that applies to several tables or charts at once. Don't make a separate control per element.
