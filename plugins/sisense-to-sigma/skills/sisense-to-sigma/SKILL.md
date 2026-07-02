@@ -37,6 +37,7 @@ widgets) — never emit confidently-wrong logic.
 > never fake — treemap/sunburst (no native Sigma equivalent) and unsupported
 > JAQL functions. See `refs/design-notes.md`.
 
+> **READ FIRST — `refs/operating-contract.md`**: the fidelity guardrails (render + value-check EVERY page against the source; never ship empty or silently drop a tile; don't spin — surface blockers).
 > Read `refs/` before relying on shapes: `sisense-rest-api.md` (validated
 > endpoint map + auth + the access-key-vs-token gotcha), `jaql-mapping.md`
 > (JAQL → Sigma formula + what's flagged), `widget-type-mapping.md` (widget →

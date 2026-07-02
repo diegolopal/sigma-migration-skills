@@ -43,6 +43,7 @@ logic.
 > Analytical-Engine row-collapse report. Chart-viz emission and the newer
 > "Data Model" object are roadmap (`refs/design-notes.md`).
 
+> **READ FIRST — `refs/operating-contract.md`**: the fidelity guardrails (render + value-check EVERY page against the source; never ship empty or silently drop a tile; don't spin — surface blockers).
 > Read `refs/` before relying on shapes: `mstr-rest-api.md` (every verified
 > REST gotcha — changesets, locks, lowercase response headers, session-bound
 > dossier flows), `ae-row-collapse.md` (the one MSTR behavior no clean SQL

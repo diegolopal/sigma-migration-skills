@@ -15,6 +15,8 @@ Convert a Tableau datasource into a Sigma data model, then build a Sigma workboo
 that mirrors the Tableau dashboard layout as closely as possible.
 
 **Read ALL of the following before replying or taking any action. Do not make assumptions about skill conventions, prompts, or global instructions — read the files.**
+- `refs/operating-contract.md` — **READ FIRST.** The non-negotiable guardrails: obtain the source render + calcs, build from the source's own logic (not `SUM(col)`), render + value-check EVERY page against the source, never ship empty or waive silently, don't spin. This is what keeps a run on the rails.
+- `refs/composition-recipe.md` — composition pass (hero/panels/carded KPIs + brand-from-source), value-fidelity rules (materialized `(copy)` calc columns, exact aggregate/population, period filter), controls/params rebuild, and the spec/API gotchas that otherwise cost round-trips.
 - `refs/column-gotchas.md` — column naming rules and special-character landmines
 - `refs/data-model-spec.md` — data model JSON schema, element format, relationship format
 - `refs/workbook-layout.md` — Ruby layout generation (mandatory), multi-series chart patterns

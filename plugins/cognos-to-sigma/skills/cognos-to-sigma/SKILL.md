@@ -35,6 +35,7 @@ Convert a Cognos **Data Module** into a Sigma **data model**, then convert the C
 cleanly; **flag what doesn't** (runtime macros, running-totals, localization) instead
 of emitting wrong logic.
 
+> **READ FIRST — `refs/operating-contract.md`**: the fidelity guardrails (render + value-check EVERY page against the source; never ship empty or silently drop a tile; don't spin — surface blockers).
 > Read `refs/` before relying on shapes: `design-notes.md` (translation surface + scope),
 > `format-shapes.md` (the real CA Data-Module JSON + report-spec XML structures),
 > `expression-dsl.md` (the Cognos-expression → Sigma-formula mapping table),

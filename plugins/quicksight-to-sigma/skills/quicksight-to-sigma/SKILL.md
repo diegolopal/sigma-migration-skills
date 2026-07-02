@@ -23,6 +23,7 @@ If the user didn't supply a destination (no `--folder <id-or-name>`), ASK before
 
 If a destination is already supplied, honor it silently — don't ask.
 
+> **READ FIRST — `refs/operating-contract.md`**: the fidelity guardrails (render + value-check EVERY page against the source; never ship empty or silently drop a tile; don't spin — surface blockers).
 > Status: **foundation** (converter MCP + browser shipped 2026-05-28).
 > Beads: converter = `beads-sigma-j5e`; CustomSql/DIRECT_QUERY fixup = `beads-sigma-vy4k`.
 > Defers to: `sigma-workbooks` (canonical workbook spec), `sigma-data-models` (DM spec), the `convert_quicksight_to_sigma` MCP tool, and the shared vendor-neutral Sigma-side scripts (`post-and-readback.rb`, `put-layout.rb`, `find-or-pick-dm.rb`, `verify-parity.rb`) reused across the migration skills.
