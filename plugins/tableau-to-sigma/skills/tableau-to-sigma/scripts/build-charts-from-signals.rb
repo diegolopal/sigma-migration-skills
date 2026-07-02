@@ -72,7 +72,8 @@ OptionParser.new do |p|
   # standalone invocation still builds just the requested tab. Repeatable.
   p.on('--dashboard NAME', 'Build only this dashboard (name: exact or unique substring, case-insensitive). Repeatable.') { |v| (opts[:dashboards] ||= []) << v }
   p.on('--page ID', 'Build only the dashboard whose zone-root id matches (rarely needed; --dashboard is the handle).') { |v| (opts[:pages] ||= []) << v }
-  p.on('--auto-controls', 'Auto-emit Sigma controls from shared-view filters in --meta')              { opts[:auto_controls] = true }
+  p.on('--auto-controls', 'DEPRECATED — control emission is now ON by default (every .twb parameter + quick-filter becomes a control). No-op kept for back-compat.') { opts[:auto_controls] = true }
+  p.on('--no-auto-controls', 'Disable auto-emit of controls from .twb parameters/quick-filters (escape hatch; you will miss the interactive layer).') { opts[:no_auto_controls] = true }
   # Converter meta (conv-meta.json) carrying workbookPatterns — used to auto-wire
   # parameter measure-pickers (kind:param-switch) into a control-driven Switch
   # tile measure (n4pi.10). Optional; absent ⇒ pickers stay surfaced as notes.
@@ -3788,7 +3789,7 @@ end
 # parameter caption so any translated `Switch([Param Caption], ...)` formula
 # resolves to this control.
 param_controls = []
-if opts[:auto_controls]
+unless opts[:no_auto_controls]   # default-on: never miss a .twb parameter/filter
   # Determine which parameter captions are actually referenced by any worksheet
   # calc. Tableau workbooks often define orphan parameters (defined but not used
   # by any calc field) — emitting controls for those clutters the dashboard
@@ -3823,9 +3824,15 @@ if opts[:auto_controls]
       warnings << "parameter '#{cap}' drives a measure-picker Switch — control emitted under the converter controlId; skipping the redundant auto-param control"
       next
     end
-    unless referenced_caps.include?(cap)
-      warnings << "parameter '#{cap}' is defined in Tableau but not referenced by any worksheet calc — skipped auto-control (orphan parameter)"
-      next
+    unreferenced_param = !referenced_caps.include?(cap)
+    if unreferenced_param
+      # "Never miss a parameter": an unreferenced param is usually a filter /
+      # period picker whose driving calc was materialized to a column (so no
+      # calc references it any more) — NOT dead. Emit it anyway (type-mapped
+      # below) and flag it needs-wiring so it's surfaced in controls-coverage,
+      # never silently dropped. (Was: silent `next` — the #1 "controls didn't
+      # come over" cause.)
+      warnings << "parameter '#{cap}' is not referenced by any worksheet calc — emitting it anyway (likely a filter/period picker); complete its filter wiring per controls-coverage.json"
     end
     slug = cap.downcase.gsub(/\W+/, '-').sub(/-$/, '')
     spec = {
@@ -3874,6 +3881,19 @@ if opts[:auto_controls]
     elsif p['param_domain'] == 'range' && %w[date datetime].include?(p['datatype'])
       spec['controlType'] = 'date-range'
       spec['mode'] = 'between'
+    elsif p['datatype'] == 'boolean'
+      # Boolean parameter → Sigma switch (on/off toggle). Default from the raw value.
+      spec['controlType'] = 'switch'
+      spec['value'] = %w[true 1].include?(p['default_value'].to_s.downcase.strip)
+    elsif %w[date datetime].include?(p['datatype'])
+      # Single-value date parameter (not a range) → Sigma `date` control.
+      spec['controlType'] = 'date'
+      spec['value'] = p['default_value']
+    elsif %w[integer real].include?(p['datatype'])
+      # Single-value numeric parameter (not a range) → Sigma `number` control.
+      spec['controlType'] = 'number'
+      spec['mode']  = '='
+      spec['value'] = p['datatype'] == 'real' ? p['default_value'].to_f : p['default_value'].to_i
     else
       # Generic fallback — text input
       spec['controlType'] = 'text'
@@ -3884,7 +3904,10 @@ if opts[:auto_controls]
     # record the formula-consumer set so the coverage lint knows the mechanism.
     control_scope_records << {
       'controlId' => spec['controlId'], 'name' => cap, 'mechanism' => 'formula',
-      'source_signal' => "tableau parameter '#{cap}' (referenced by worksheet calcs)",
+      'status' => (unreferenced_param ? 'needs-wiring' : 'emitted'),
+      'source_signal' => (unreferenced_param ?
+        "tableau parameter '#{cap}' (NOT calc-referenced — emitted for coverage; wire its filter target)" :
+        "tableau parameter '#{cap}' (referenced by worksheet calcs)"),
       # Translated calcs reference the control by its CONTROL ID (line ~541's
       # "[ctl-param-<slug>]" form), not by caption — match what the lint's
       # formula-ref reach walk will actually see.
@@ -3931,7 +3954,7 @@ end
 
 # ---- Auto-generated controls from shared-view filters (--auto-controls) ----
 auto_controls = []
-if opts[:auto_controls]
+unless opts[:no_auto_controls]   # default-on: never miss a .twb parameter/filter
   (meta['shared_filters'] || []).each_with_index do |f, i|
     next if f['is_action']
     cap = f['column_caption']
@@ -4123,6 +4146,48 @@ if opts[:controls]
 end
 
 all_extras = extras + param_controls + auto_controls
+
+# ---- Control-coverage reconciliation — "never miss a .twb parameter/filter" ----
+# Enumerate EVERY extracted parameter + quick-filter and confirm each is
+# accounted for (emitted / needs-wiring / needs-materialization / dropped-with-
+# reason). Anything with no control and no scope record is UNACCOUNTED — the
+# silent-miss the mandate forbids. Writes <meta>-controls-coverage.json + a loud
+# summary warning; a non-zero unaccounted count is a signal for the gate/agent.
+begin
+  seen_f = {}
+  expected = []
+  (meta['parameters'] || []).each { |p| c = p['caption'].to_s.strip; expected << ['parameter', c] unless c.empty? }
+  (meta['shared_filters'] || []).each do |f|
+    next if f['is_action']
+    c = f['column_caption'].to_s.strip
+    next if c.empty? || seen_f[c.downcase]
+    seen_f[c.downcase] = true
+    expected << ['filter', c]
+  end
+  accounted = {}
+  control_scope_records.each { |r| accounted[r['name'].to_s.strip.downcase] = (r['status'] || 'emitted') }
+  (param_controls + auto_controls).each { |c| accounted[c['name'].to_s.strip.downcase] ||= 'emitted' }
+  rows = expected.map { |kind, name| { 'kind' => kind, 'name' => name, 'status' => (accounted[name.downcase] || 'UNACCOUNTED') } }
+  missing = rows.select { |r| r['status'] == 'UNACCOUNTED' }
+  cov = {
+    'params_total'  => (meta['parameters'] || []).size,
+    'filters_total' => seen_f.size,
+    'emitted'       => rows.count { |r| r['status'] == 'emitted' },
+    'needs_wiring'  => rows.count { |r| r['status'].to_s.include?('needs') },
+    'dropped'       => rows.count { |r| r['status'] == 'dropped' },
+    'unaccounted'   => missing.map { |r| "#{r['kind']}:#{r['name']}" },
+    'detail'        => rows
+  }
+  if opts[:meta]
+    cp = opts[:meta].to_s.sub(/(-meta)?\.json$/, '-controls-coverage.json')
+    File.write(cp, JSON.pretty_generate(cov)) rescue nil
+  end
+  warnings << "CONTROL COVERAGE: #{cov['params_total']} param(s) + #{cov['filters_total']} filter(s) → " \
+              "#{cov['emitted']} emitted, #{cov['needs_wiring']} needs-wiring, #{cov['dropped']} dropped" +
+              (missing.any? ? "; #{missing.size} UNACCOUNTED (#{missing.map { |r| r['name'] }.join(', ')}) — must be 0" : '; 0 unaccounted ✓')
+rescue => e
+  warnings << "control-coverage reconciliation error: #{e.message}"
+end
 
 # ---- Output mode ----
 #   Default       → flat array of elements (legacy behaviour). Extras first.
