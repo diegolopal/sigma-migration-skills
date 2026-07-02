@@ -382,12 +382,22 @@ module MechanicalSpecs
       rel_names = (src_el['relationships'] || []).map { |r| r['name'] }.compact
       base_names = [src_el['name'], display_name((src_el.dig('source', 'path') || []).last.to_s),
                     (src_el.dig('source', 'path') || []).last].compact.uniq.reject(&:empty?)
+      # Columns on the base element, by their referenceable name — used to tell a
+      # 3-segment relationship path apart from a 2-segment [Element/Column] ref
+      # whose COLUMN NAME contains a literal '/' (e.g. a Snowflake column named
+      # "Margin Pct H/L").
+      src_cols = (src_el['columns'] || []).map { |cc| col_display(cc) }.compact
       (el['columns'] || []).each do |c|
         f = c['formula'].to_s
         m = f.match(/\A\[([^\/\]]+)\/([^\/\]]+)\/([^\]]+)\]\z/)
         next unless m
         next unless base_names.include?(m[1])
         next if rel_names.include?(m[2])
+        # The '/'-split assumed [Base/REL/Field], but the middle isn't a known
+        # relationship. If the whole tail after the base names a real column on
+        # the base element, this is [Element/Column] with a slash in the column
+        # name — a column ref, NOT an unreachable relationship. Don't flag it.
+        next if src_cols.include?("#{m[2]}/#{m[3]}")
         out << "derived column #{(col_display(c) || c['id']).inspect} refs relationship #{m[2].inspect} which does not exist on '#{elem_name(src_el)}' (have: #{rel_names.join(', ')})"
       end
     end
