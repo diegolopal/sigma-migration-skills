@@ -181,6 +181,11 @@ def resolve_leaf(node, ctx)
     if ctx[:title_el] && !ctx[:title_used]
       ctx[:title_used] = true
       ctx[:title_el]['id']
+    else
+      # B4 (gap ubr5.8): styled static-text zone → its emitted element
+      # (build-charts id "text-<zoneid>"), placed at the zone's own geometry.
+      el = ctx[:els_by_id]["text-#{node['id']}"]
+      el && el['id']
     end
   end
 end
@@ -190,13 +195,39 @@ end
 # children are placed in the container's own 24-col internal grid; empty
 # containers (no resolvable children) are dropped. Appends new container spec
 # placeholders to ctx[:extra]; records placed element ids in ctx[:placed].
+# Resolve overlapping sibling placements within a container. Tableau floats text
+# objects (titles, captions, annotations) over/beside charts, so their derived
+# grid cells can overlap — and Sigma's put-layout REJECTS the whole layout on any
+# collision, dropping the page to a raw vertical stack. The banded path already
+# de-collides (lib/layout.rb decollide_bands); the container-tree path did not,
+# so a floated text zone could sink the entire layout (B4-emit regression).
+#
+# rects are [c0,c1,r0,r1] grid-line tuples, container-relative. NO-OP when the
+# children don't collide (clean source geometry — e.g. a KPI strip — is preserved
+# EXACTLY). Only when a collision exists do we re-flow: give every child an equal
+# vertical row slice (columns kept), which is collision-free by construction
+# (non-overlapping rows) and localized to the offending container — strictly
+# better than the previous whole-page stack fallback.
+def decollide_rects(rects, my_rows)
+  return rects if rects.length < 2
+  overlap = ->(a, b) { a[0] < b[1] && b[0] < a[1] && a[2] < b[3] && b[2] < a[3] }
+  return rects unless rects.combination(2).any? { |a, b| overlap.call(a, b) }
+  n = rects.length
+  rects.each_index.map do |i|
+    nr0 = 1 + (my_rows * i / n.to_f).round
+    nr1 = [1 + (my_rows * (i + 1) / n.to_f).round, nr0 + 1].max
+    [rects[i][0], rects[i][1], nr0, nr1] # keep columns, non-overlapping rows
+  end
+end
+
 def emit_node(node, c0, c1, r0, r1, ctx)
   if node['kind'] == 'container'
     kids = node['children'] || []
     my_rows = [r1 - r0, 2].max
-    inner = kids.map do |ch|
-      kc0, kc1, kr0, kr1 = place_in_parent(ch, node, my_rows)
-      emit_node(ch, kc0, kc1, kr0, kr1, ctx)
+    rects = kids.map { |ch| place_in_parent(ch, node, my_rows) }
+    rects = decollide_rects(rects, my_rows)
+    inner = kids.each_index.map do |i|
+      emit_node(kids[i], *rects[i], ctx)
     end.compact
     return nil if inner.empty?
     cid = "tc-#{ctx[:page_id]}-#{node['id']}"
@@ -226,10 +257,14 @@ def build_page_from_tree(dashboard, page, opts)
   els_by_name = page['elements'].each_with_object({}) { |e, h| h[e['name']] = e if e['name'] }
   ctl_by_name = page['elements'].select { |e| e['kind'] == 'control' && e['name'] }
                     .each_with_object({}) { |e, h| h[e['name'].to_s.downcase] = e }
-  title_el    = page['elements'].find { |e| e['kind'] == 'text' }
+  els_by_id   = page['elements'].each_with_object({}) { |e, h| h[e['id']] = e if e['id'] }
+  # Pin the header title to the dedicated title element (build-charts prepends id
+  # "title-text"/"title-<slug>"); a bare first-text-element match would grab a B4
+  # styled-text element once those exist. Falls back to the page name when absent.
+  title_el    = page['elements'].find { |e| e['kind'] == 'text' && e['id'].to_s.start_with?('title') }
 
   ctx = { page_id: page['id'], renames: opts[:renames], els_by_name: els_by_name,
-          ctl_by_name: ctl_by_name, title_el: title_el, title_used: false,
+          ctl_by_name: ctl_by_name, els_by_id: els_by_id, title_el: title_el, title_used: false,
           extra: [], placed: [], zone_to_ctl: {} }
 
   # Assign workbook control elements to control zones (filter/parameter), in
@@ -290,7 +325,7 @@ def build_page_from_tree(dashboard, page, opts)
   # the "one tile top-left, everything else gone" regression. Placeable content
   # = any *-chart, table/pivot-table, control, or text (exclude structural
   # containers/data). No `name` requirement (charts built from signals may not
-  # carry one, yet must still be placed).
+  # carry one, yet must still be placed). `text` kind also covers B4 styled-text.
   placeable = ->(e) {
     k = e['kind'].to_s
     k.end_with?('-chart') || %w[table pivot-table control text].include?(k)
@@ -318,7 +353,9 @@ end
 def build_page_for_dashboard(dashboard, page, opts)
   chart_zones = dashboard['zones'].select { |z| z['kind'] == 'chart' && z['caption'] }
   els_by_name = page['elements'].each_with_object({}) { |e, h| h[e['name']] = e if e['name'] }
-  title_el = page['elements'].find { |e| e['kind'] == 'text' }
+  # Pin to the dedicated title element (see build_page_from_tree) so a B4
+  # styled-text element isn't mistaken for the header title.
+  title_el = page['elements'].find { |e| e['kind'] == 'text' && e['id'].to_s.start_with?('title') }
   ctl_els  = page['elements'].select { |e| e['kind'] == 'control' }
 
   # Per-dashboard copy of the band tuning — auto-fit must not leak between
@@ -404,6 +441,28 @@ def build_page_for_dashboard(dashboard, page, opts)
     cid = "#{ov_prefix}-#{i + 1}"
     extra_els << container_el(cid)
     children << band_container_xml(cid, band, row_offset: band_offset)
+  end
+
+  # B4 (gap ubr5.8): the banded fallback places charts by geometry but not text.
+  # Rather than orphan the emitted styled-text elements (present in the workbook,
+  # absent from the layout), tile them across a labelled bottom band so nothing
+  # silently drops — WARN, since their exact source position isn't reproduced in
+  # the banded path (the container-tree path DOES place them at zone geometry).
+  text_els = page['elements'].select { |e| e['kind'] == 'text' && e['id'].to_s.start_with?('text-') }
+  unless text_els.empty?
+    tn = text_els.length
+    r0 = 1 + HEADER_ROWS + ctl_rows + bands.sum { |b| b.map { |i| i[4] }.max - b.map { |i| i[3] }.min }
+    inner = text_els.each_with_index.map do |e, i|
+      c0 = 1 + (o[:page_cols] * i / tn.to_f).round
+      c1 = i == tn - 1 ? o[:page_cols] + 1 : [1 + (o[:page_cols] * (i + 1) / tn.to_f).round, c0 + 1].max
+      le(e['id'], c0, c1, 1, 4)
+    end.join("\n")
+    tid = "#{ov_prefix}-text"
+    extra_els << container_el(tid)
+    children << gc(tid, 1, o[:page_cols] + 1, r0, r0 + 4, inner)
+    warn "WARN: #{tn} styled-text element(s) placed in a bottom band on banded page #{page['name'].inspect} " \
+         "(source position not reproduced — the container-tree layout places them by geometry): " \
+         "#{text_els.map { |e| e['id'] }.join(', ')}"
   end
 
   [page_xml(page['id'], *children), extra_els, chart_layouts.length, bands.length, ctl_els.length]

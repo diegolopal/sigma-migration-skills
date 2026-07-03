@@ -350,12 +350,59 @@ xml.elements.each('/workbook/datasources/datasource') do |ds|
   end
 end
 
+# ── Phase-1 B3: KPI scorecard <customized-label> (BAN) extraction ────────────
+# A Tableau "big number" scorecard often uses a Shape/Circle mark with the value
+# rendered as a <customized-label> BAN inside the pane, e.g.:
+#   <customized-label><formatted-text>
+#     <run fontcolor='#333' fontsize='10'>Total Job Losses</run>   ← label
+#     <run fontsize='26'><[…measure…]></run>                        ← BAN value
+#     <run fontcolor='#666' fontsize='8'>of U.S. total</run>        ← annotation
+#   </formatted-text></customized-label>
+# Returns {label, value_font_size, annotation_runs} when a BAN (a run whose font
+# size is >= KPI_BAN_MIN_FONT — the "big number") is present, else nil. The BAN
+# lets a Shape/Circle-mark scorecard qualify as a KPI (narrow: a real scatter has
+# no big-font customized-label), and feeds the B3 composite emit (label + big
+# value + side annotation). Runs mirror zone_text_fields' shape (Æ = U+00C6
+# line-break sentinel); `ref`=true marks a dynamic <[…]> field/measure token.
+KPI_BAN_MIN_FONT = 16
+def parse_customized_label(ws)
+  cl = ws.elements['.//customized-label']
+  return nil unless cl
+  runs = []
+  cl.elements.each('.//run') do |r|
+    txt = r.text.to_s.gsub("Æ", '')
+    a = r.attributes
+    runs << {
+      'text'      => txt,
+      'color'     => (c = a['fontcolor']) && !c.empty? ? c : nil,
+      'font_size' => (fs = a['fontsize']) && !fs.empty? ? fs.to_i : nil,
+      'bold'      => a['bold'] == 'true',
+      'break'     => txt.include?("\n"),
+      'ref'       => txt.include?('<[')
+    }.compact
+  end
+  return nil if runs.empty?
+  ban_i    = runs.each_index.max_by { |i| runs[i]['font_size'] || 0 }
+  ban_font = (runs[ban_i] && runs[ban_i]['font_size']) || 0
+  return nil if ban_font < KPI_BAN_MIN_FONT
+  # Label = leading non-ref, non-spacer, non-tiny (>= 6pt) text runs before the
+  # BAN value run (drops the invisible filler runs Tableau injects for spacing).
+  label = runs[0...ban_i]
+          .reject { |r| r['ref'] || r['text'].to_s.strip.empty? || (r['font_size'] && r['font_size'] < 6) }
+          .map { |r| r['text'] }.join(' ').gsub(/\s+/, ' ').strip
+  { 'label'           => (label.empty? ? nil : label),
+    'value_font_size' => ban_font,
+    'annotation_runs' => (runs[(ban_i + 1)..] || []) }.compact
+end
+
 worksheets = {}
 xml.elements.each('//worksheet') do |ws|
   name = ws.attributes['name']
   next unless name
   mark = ws.elements['.//mark']
   mark_class = mark ? (mark.attributes['class'].to_s) : nil
+  # Phase-1 B3: a Shape/Circle scorecard's big-number <customized-label> (nil otherwise).
+  kpi_ban = parse_customized_label(ws)
 
   geo_role = nil
   has_lat  = false
@@ -649,8 +696,13 @@ xml.elements.each('//worksheet') do |ws|
   # zero-dim single-measure sheet renders as a big-number text table — the
   # FATSCALE rehearsal lost 14/40 tiles because these fell through to the
   # CSV-driven flow (1-column CSV → zone dropped).
+  # Phase-1 B3: a Shape/Circle scorecard carrying a big-number <customized-label>
+  # BAN is a KPI too (Tableau's "big number on a dot" idiom). Narrow by design —
+  # a real scatter/symbol plot has no large-font customized-label — so ordinary
+  # Shape/Circle marks keep flowing to scatter.
+  ban_scorecard_mark = !kpi_ban.nil? && %w[shape circle].include?(mark_class.to_s.downcase)
   kpi_capable_mark = is_text_mark || mark_class.to_s.downcase == 'automatic' ||
-                     mark_class.to_s.empty?
+                     mark_class.to_s.empty? || ban_scorecard_mark
   total_dim_count = rows_shelf['dim_count'] + cols_shelf['dim_count']
   total_measure_count = rows_shelf['measure_count'] + cols_shelf['measure_count'] + measures.size
   is_kpi = kpi_capable_mark && !is_crosstab &&
@@ -715,7 +767,11 @@ xml.elements.each('//worksheet') do |ws|
     rows_shelf:       rows_shelf,
     cols_shelf:       cols_shelf,
     is_crosstab:      is_crosstab,
-    is_kpi:           is_kpi
+    is_kpi:           is_kpi,
+    # Phase-1 B3: KPI composite signals (nil unless a BAN scorecard label exists)
+    kpi_label:            kpi_ban && kpi_ban['label'],
+    kpi_value_font_size:  kpi_ban && kpi_ban['value_font_size'],
+    kpi_annotation_runs:  kpi_ban && kpi_ban['annotation_runs']
   }
 end
 
@@ -840,10 +896,10 @@ def chart_kind_for(meta)
   when 'line'       then 'line'
   when 'area'       then 'area'
   when 'pie'        then 'pie'
-  when 'circle'     then 'scatter'                # symbol marks (non-geo) = scatter
+  when 'circle'     then (meta[:is_kpi] ? 'kpi' : 'scatter')  # BAN scorecard on a dot, else symbol=scatter
   when 'square'     then (meta[:is_crosstab] ? 'pivot-table' : (meta[:is_kpi] ? 'kpi' : 'table'))
   when 'text'       then (meta[:is_crosstab] ? 'pivot-table' : (meta[:is_kpi] ? 'kpi' : 'table'))
-  when 'shape'      then 'scatter'
+  when 'shape'      then (meta[:is_kpi] ? 'kpi' : 'scatter')  # big-number BAN, else symbol=scatter
   # Automatic is Tableau's default-pick — but a zero-dim single-measure sheet
   # under Automatic renders as a big-number text table, i.e. a KPI (bead 3w4d).
   when 'automatic'
@@ -1087,6 +1143,10 @@ xml.elements.each('//dashboard') do |d|
       'cols_shelf'   => (kind == 'chart' ? ws_meta&.dig(:cols_shelf)    : nil),
       'is_crosstab'  => (kind == 'chart' ? ws_meta&.dig(:is_crosstab)   : nil),
       'is_kpi'       => (kind == 'chart' ? ws_meta&.dig(:is_kpi)        : nil),
+      # Phase-1 B3: KPI composite signals (nil unless a BAN scorecard)
+      'kpi_label'           => (kind == 'chart' ? ws_meta&.dig(:kpi_label)           : nil),
+      'kpi_value_font_size' => (kind == 'chart' ? ws_meta&.dig(:kpi_value_font_size) : nil),
+      'kpi_annotation_runs' => (kind == 'chart' ? ws_meta&.dig(:kpi_annotation_runs) : nil),
       # Resolved filter target (filter/parameter zones only)
       'filter_column_caption'  => (kind == 'filter' || kind == 'parameter' ? filter_col_caption  : nil),
       'filter_column_datatype' => (kind == 'filter' || kind == 'parameter' ? filter_col_datatype : nil),
@@ -1161,6 +1221,9 @@ if dashboards.empty? && !worksheets.empty?
         'cols_shelf'   => ws_meta[:cols_shelf],
         'is_crosstab'  => ws_meta[:is_crosstab],
         'is_kpi'       => ws_meta[:is_kpi],
+        'kpi_label'           => ws_meta[:kpi_label],
+        'kpi_value_font_size' => ws_meta[:kpi_value_font_size],
+        'kpi_annotation_runs' => ws_meta[:kpi_annotation_runs],
         'filter_column_caption'  => nil,
         'filter_column_datatype' => nil
       }]

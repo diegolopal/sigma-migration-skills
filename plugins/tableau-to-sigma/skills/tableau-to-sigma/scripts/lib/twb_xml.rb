@@ -28,7 +28,19 @@
 # regardless of the context node (matching REXML's behavior). So expressions
 # pass through unchanged.
 
-require 'nokogiri'
+# Nokogiri gives O(n) parsing on large .twb files and is the normal path (the
+# converter's runtime ships it). When it's absent — creds-free CI, no-egress
+# stdlib-only environments — fall back to REXML: the El wrapper mirrors REXML's
+# API exactly, so a real REXML::Document is a drop-in return value. REXML is
+# O(n^2) on huge workbooks, but the only files parsed without Nokogiri are small
+# (unit-test fixtures), so the perf cliff never bites.
+begin
+  require 'nokogiri'
+  TWB_XML_NOKOGIRI = true
+rescue LoadError
+  require 'rexml/document'
+  TWB_XML_NOKOGIRI = false
+end
 
 module TwbXml
   # Wraps a Nokogiri node (Element or Document) and re-exposes the REXML methods.
@@ -101,8 +113,11 @@ module TwbXml
     end
   end
 
-  # Drop-in replacement for REXML::Document.new(string).
+  # Drop-in replacement for REXML::Document.new(string). With Nokogiri, wrap it
+  # in El (the REXML-API shim); without it, return a real REXML::Document, which
+  # already exposes the same API the .twb scripts call.
   def self.parse(xml_string)
+    return REXML::Document.new(xml_string) unless TWB_XML_NOKOGIRI
     El.new(Nokogiri::XML(xml_string))
   end
 end

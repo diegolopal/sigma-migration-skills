@@ -2241,6 +2241,33 @@ def build_kpi_element(z, meta, mmap, opts, warnings, data_elements = [])
     'value'   => { 'columnId' => measure_col_id }
   }
 
+  # B3 (gap ubr5.7): a Tableau "big number" BAN scorecard (Shape/Circle mark with
+  # a <customized-label>, surfaced by the parser as kpi_value_font_size). Style
+  # the composite faithfully: use the label run as the KPI title and keep the
+  # SOURCE font size (fidelity mandate — prefer the .twb value over a hand-tuned
+  # one). Non-BAN KPIs (Automatic-mark scorecards) carry no kpi_value_font_size
+  # and keep their default styling.
+  #
+  # NOTE (transparency is a COMPOSITION decision, not an element one): a
+  # transparent hero (backgroundColor #00000000) only reads well when a container
+  # TINT sits behind it (the composed region-card look). Applied to a KPI that
+  # is NOT inside a tinted container it strips the default card and the number
+  # floats naked on the canvas — a regression vs the plain KPI card. The element
+  # builder can't see its container, so it must NOT force transparency here; the
+  # composition stage (B1/B2 region cards) sets it when it actually places a KPI
+  # into a tint. So we set label + fontSize only and leave the default card.
+  if z['kpi_value_font_size']
+    element['name'] = z['kpi_label'] if z['kpi_label'] && !z['kpi_label'].to_s.strip.empty?
+    element['value']['fontSize'] = z['kpi_value_font_size']
+    # The BAN's side annotation (e.g. "40% of U.S. total") is driven by a dynamic
+    # Tableau calc token that can't be reproduced as static text; emitting the
+    # literal remainder ("of U.S. total") alone would mislead. Surface the gap.
+    if Array(z['kpi_annotation_runs']).any? { |r| r['ref'] }
+      warnings << "'#{cap}' KPI has a customized-label annotation with a dynamic value " \
+                  "(e.g. a '% of total' calc) — the annotation is NOT reproduced (needs a computed column)"
+    end
+  end
+
   # Param measure-picker: materialise the hidden passthrough sibling cols the
   # Switch's branches reference, and register the control for emission (n4pi.10).
   if pswitch_plan
@@ -3726,13 +3753,64 @@ layout.each do |dash|
   end
 end
 
+# ---- B4: styled static text (gap ubr5.8) -----------------------------------
+# Assemble a Sigma text.body from Tableau formatted-text runs (parse-twb-layout
+# `text_runs`). Each run → an inline <span style> carrying its source color +
+# font-size (px, verbatim — the source point size faithfully preserves relative
+# weight, so no fragile markdown-heading guessing), with **bold** for bold runs;
+# hard-break runs (the Æ+newline sentinel) split paragraphs (\n\n). A run's
+# literal whitespace is emitted plain (keeps inter-run spacing). Dynamic Tableau
+# tokens (<[Parameters]…>) can't be reproduced as static text and would corrupt
+# the HTML body, so they're stripped (caller WARNs). `align` wraps center/right
+# in a <p> (left is Sigma's default and 400s if forced — styling.md); `bg` wraps
+# the content in a background-color span (a pill/chip). Returns nil when nothing
+# visible remains. All colors are hex (var(--…) 400s). Pure/self-contained so
+# test-styled-text-body.rb can extract and eval it.
+def text_body_from_runs(runs, align: nil, bg: nil)
+  return nil if runs.nil? || runs.empty?
+  # Split into paragraphs on hard-break runs.
+  lines = [[]]
+  runs.each { |r| r['break'] ? (lines << []) : (lines.last << r) }
+  rendered = lines.map do |line|
+    line.map do |r|
+      raw = r['text'].to_s
+      raw = raw.gsub(/<\[[^\]]*\][^>]*>/, '') if raw.include?('<[') # drop dynamic tokens
+      next '' if raw.empty?
+      next raw if raw.strip.empty? # whitespace spacer → literal (keeps run spacing)
+      esc = raw.gsub('&', '&amp;').gsub('<', '&lt;').gsub('>', '&gt;')
+      # Bold markers must hug the text — markdown won't bold "** Rank**" (leading
+      # space inside the **). Keep any leading/trailing whitespace OUTSIDE.
+      if r['bold'] && (mm = esc.match(/\A(\s*)(.*?)(\s*)\z/m)) && !mm[2].empty?
+        esc = "#{mm[1]}**#{mm[2]}**#{mm[3]}"
+      end
+      styles = []
+      styles << "color: #{r['color']}" if r['color']
+      styles << "font-size: #{r['font_size']}px" if r['font_size']
+      styles.empty? ? esc : %(<span style="#{styles.join('; ')}">#{esc}</span>)
+    end.join
+  end
+  body = rendered.reject { |l| l.strip.empty? }.join("\n\n")
+  return nil if body.strip.empty?
+  body = %(<span style="background-color: #{bg}">#{body}</span>) if bg
+  %w[center right].include?(align.to_s) ? %(<p style="text-align: #{align}">#{body}</p>) : body
+end
+
 # ---- Title text element ----
 # If --title given, emit a text element. If --title omitted AND the parser
 # found a title/text zone, infer the dashboard name from the parser output.
 auto_title = nil
 if opts[:title].nil?
   layout.each do |dash|
-    next unless dash['zones'].any? { |z| %w[title text].include?(z['kind']) && (z['y_pct'] || 100) < 10 }
+    top = dash['zones'].select { |z| %w[title text].include?(z['kind']) && (z['y_pct'] || 100) < 10 }
+    next if top.empty?
+    # B4 (gap ubr5.8): a top text/title zone that carries run-level formatting
+    # is the dashboard's OWN hero title — it is emitted faithfully as a styled
+    # `text-<id>` element (black-on-canvas, at its position). Do NOT ALSO
+    # synthesize the white dashboard-name title here: the two double up, and the
+    # synthetic one (white, meant for the dark header band) renders invisibly
+    # over a light canvas when the composed layout has no dark band. Only
+    # synthesize when the top zone is a BARE title with no styled runs for B4.
+    next if top.any? { |z| z['text_runs'] }
     auto_title = dash['dashboard']
     break
   end
@@ -3750,6 +3828,35 @@ if title_text
     'body' => %(# <span style="color: #FFFFFF">#{title_text}</span>)
   }
 end
+
+# ---- B4: styled static-text elements ---------------------------------------
+# Emit each dashboard text/title zone that carries run-level formatting as a
+# Sigma `text` element (id "text-<zoneid>") that the layout stage places at the
+# zone's own geometry (build-dashboard-layout resolve_leaf). These were dropped
+# entirely before — subtitle, captions, credit line, section headers, and BAN
+# annotations all vanished. Dashboard-level chrome, so skipped in
+# --page-per-worksheet (which ignores the dashboard layout by design).
+styled_text_by_dash = Hash.new { |h, k| h[k] = [] }
+unless opts[:pages_mode] == :worksheet
+  layout.each do |dash|
+    (dash['zones'] || []).each do |z|
+      next unless %w[text title].include?(z['kind']) && z['text_runs']
+      body = text_body_from_runs(z['text_runs'], align: z['text_align'],
+                                 bg: (z['is_pill'] ? z['fill_color'] : nil))
+      next if body.nil?
+      if z['text_runs'].any? { |r| r['text'].to_s.include?('<[') }
+        warnings << "dashboard '#{dash['dashboard']}' text zone #{z['id']}: dynamic Tableau token(s) " \
+                    '(<[Parameters]…>) dropped from static text — not reproducible as literal text'
+      end
+      el = { 'id' => "text-#{z['id']}", 'kind' => 'text', 'body' => body }
+      # Short single-line annotations/pills read better vertically centered.
+      el['verticalAlign'] = 'middle' if z['is_pill'] || z['text_runs'].none? { |r| r['break'] }
+      el['_dashboard'] = dash['dashboard']
+      styled_text_by_dash[dash['dashboard']] << el
+    end
+  end
+end
+styled_text_all = styled_text_by_dash.values.flatten(1)
 
 # ---- Control targeting: intended-scope closure ------------------------------
 # A control filter applied to an element propagates to every element that
@@ -4364,6 +4471,9 @@ elsif opts[:pages_mode] == :dashboard
       # White span: the layout builder wraps this in the DARK header band.
       'body' => %(# <span style="color: #FFFFFF">#{dash_name}</span>)
     }]
+    # B4: this dashboard's styled static-text elements (subtitle/annotations/
+    # credit/section headers). Placed by the layout stage at their zone geometry.
+    styled_text_by_dash[dash_name].each { |e| page_extras << e.reject { |k, _| k == '_dashboard' } }
     ctl_rewrites = {}
     param_control_ids = param_controls.map { |c| c['controlId'] }
     (param_controls + auto_controls).each do |c|
@@ -4419,9 +4529,11 @@ elsif opts[:pages_mode] == :dashboard
 else
   elements.each { |e| e.delete('_worksheet'); e.delete('_dashboard') }
   all_extras.each { |e| e.delete('_scope_dashboards') }
-  all_elements = all_extras + elements
+  styled_text_all.each { |e| e.delete('_dashboard') }
+  all_elements = all_extras + styled_text_all + elements
   File.write(opts[:out], JSON.pretty_generate(all_elements))
-  warn "wrote #{opts[:out]}  (#{all_elements.size} elements: #{all_extras.size} controls/text + #{elements.size} charts)"
+  warn "wrote #{opts[:out]}  (#{all_elements.size} elements: #{all_extras.size} controls/text + " \
+       "#{styled_text_all.size} styled-text + #{elements.size} charts)"
   if data_elements.any?
     side = opts[:out].sub(/\.json$/, '-data-elements.json')
     File.write(side, JSON.pretty_generate(data_elements))

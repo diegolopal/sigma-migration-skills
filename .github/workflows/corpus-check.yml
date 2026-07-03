@@ -102,6 +102,11 @@ jobs:
             plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-rls-wiring.rb
             plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-table-calc-translation.rb
             plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-topn-filter-emission.rb
+            plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-styled-text-extraction.rb
+            plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-styled-text-body.rb
+            plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-styled-text-layout.rb
+            plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-kpi-scorecard-detection.rb
+            plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-kpi-composite-emit.rb
             plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-element-id-namespacing.rb
             plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-fact-pick.rb
             plugins/tableau-to-sigma/skills/tableau-to-sigma/scripts/test-layout-lint.rb
