@@ -925,6 +925,59 @@ def zone_control_display(z)
   m && !m.empty? ? m : nil
 end
 
+# ── Phase-1 style extraction (B4: rich styled static text) ──────────────────
+# A Tableau dashboard text/title zone carries its content as run-level formatted
+# text — one <run> per style span:
+#   <zone type-v2='text' …><formatted-text>
+#     <run bold='true' fontcolor='#1b1b1b' fontsize='24'>Job Losses</run>
+#     <run>Æ&#10;</run>                    ← U+00C6 line-break sentinel (+ newline)
+#     <run fontcolor='#333333'>Estimating the job loss …</run>
+#   </formatted-text></zone>
+# Today the parser drops every one of these zones (they have no `name`, so
+# `caption` is nil and no chart/worksheet backs them) — the subtitle, captions,
+# credit line, and section headers vanish. This returns a structured
+# `text_runs` array + `text_align` so the builder can re-emit them as styled
+# Sigma `text` bodies (color/size spans, **bold**, paragraph breaks). Returns {}
+# when the zone has no formatted text (→ unchanged behavior). Run attributes are
+# lowercase 6-digit hex (`fontcolor`) and bare-integer points (`fontsize`);
+# `bold` present only when bold. Verified against the "Job Loss from Mass
+# Deportations" benchmark.
+def zone_text_fields(z)
+  ft = z.elements['formatted-text']
+  return {} unless ft
+  runs = []
+  ft.elements.each('run') do |r|
+    raw = r.text.to_s
+    # U+00C6 (Æ) is Tableau's in-text line-break sentinel; the actual newline
+    # rides alongside it as &#10;. Strip the sentinel; a run that then holds a
+    # newline is a hard break, one that's whitespace-only is a spacer.
+    txt = raw.gsub("Æ", '')
+    a = r.attributes
+    runs << {
+      'text'      => txt,
+      'color'     => (c = a['fontcolor']) && !c.empty? ? c : nil,
+      'font_size' => (fs = a['fontsize']) && !fs.empty? ? fs.to_i : nil,
+      'bold'      => a['bold'] == 'true',
+      'break'     => txt.include?("\n")
+    }.compact
+  end
+  return {} if runs.empty?
+  out = { 'text_runs' => runs }
+  # Alignment lives on the zone's <zone-style><format attr='text-align'>; default
+  # (left) is Sigma's default and 400s if forced, so only carry center/right.
+  z.elements.each('zone-style/format') do |f|
+    if f.attributes['attr'] == 'text-align'
+      v = f.attributes['value'].to_s
+      out['text_align'] = v if %w[center right].include?(v)
+    end
+  end
+  # A short single-run zone with a solid fill reads as a pill/chip (e.g. a
+  # "Learn More" button) — flag it so the builder can render a background chip.
+  visible = runs.reject { |r| r['text'].to_s.strip.empty? }
+  out['is_pill'] = true if visible.size == 1 && zone_style_fields(z)['fill_color']
+  out
+end
+
 def build_zone_tree(z)
   type_v2 = z.attributes['type-v2']
   caption = z.attributes['name']
@@ -946,6 +999,8 @@ def build_zone_tree(z)
   node.merge!(zone_style_fields(z))
   cd = zone_control_display(z)
   node['control_display'] = cd if cd
+  # Phase-1 B4: styled static text (run-level formatting) on text/title zones.
+  node.merge!(zone_text_fields(z)) if kind == 'text' || kind == 'title'
   # filter/param zones resolve their target column from `param` (a column GUID).
   if kind == 'filter' || kind == 'parameter'
     g = guid_from_param(param)
@@ -999,6 +1054,8 @@ xml.elements.each('//dashboard') do |d|
     # Phase-1 style: per-zone fill/border (tints, canvas) + control display mode.
     zstyle = zone_style_fields(z)
     zdisp  = zone_control_display(z)
+    # Phase-1 B4: styled static text (run-level formatting) on text/title zones.
+    ztext  = (kind == 'text' || kind == 'title') ? zone_text_fields(z) : {}
 
     zones << {
       'id'           => z.attributes['id'],
@@ -1036,7 +1093,11 @@ xml.elements.each('//dashboard') do |d|
       # Phase-1 composition/style signals (gaps B2/E1; nil when the zone is unstyled)
       'fill_color'      => zstyle['fill_color'],
       'border_color'    => zstyle['border_color'],
-      'control_display' => zdisp
+      'control_display' => zdisp,
+      # Phase-1 B4: styled static text signals (nil for non-text zones / unstyled)
+      'text_runs'  => ztext['text_runs'],
+      'text_align' => ztext['text_align'],
+      'is_pill'    => ztext['is_pill']
     }
   end
   # A "storyboard" dashboard is Tableau's story container (sequential story
