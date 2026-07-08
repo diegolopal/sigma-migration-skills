@@ -233,6 +233,31 @@ Read `reference/api-limitations.md` for full details. Summary:
 | VARIANT/JSON column extraction | NO | Use UI "Extract Columns" |
 | Cross-element formulas | YES | `[Elem/Rel/Col]` notation |
 | Element-level filters (non-boolean) | YES | e.g. text equality filters |
+| Metrics in formulas | YES | Use `[Metrics/Metric Name]` notation, NOT `metric('id')` |
+| Groupings | YES | Must include `id`, `groupBy`, `calculations` fields |
+| Lookup between elements | PARTIAL | Works for raw columns; may show "Unknown column" for grouped calculations |
+| Draft/publish sync | GOTCHA | PUT+Publish leaves draft stale; re-apply PUT after publish |
+
+---
+
+## Merge Results (Looker → Sigma)
+
+When a Looker dashboard uses a merge result (combining queries from different
+explores by a shared key like Team ID), use this pattern in Sigma:
+
+1. **Element 1 (main table):** Source from the DM covering the static/dimension
+   data (e.g., Teams Activity). Add Lookup columns to Element 2 for metrics.
+2. **Element 2 (hidden helper):** Source from the DM covering the dynamic/usage
+   data (e.g., User Activity). Group by the shared key, add metrics as
+   calculations.
+3. **Layout:** Hide Element 2 with `hidden="true"` in the LayoutElement tag.
+4. **Lookup syntax:**
+   `Lookup([Element2Name/ColumnName], [Element2Name/KeyColumn], [ThisElement/KeyColumn])`
+
+**Tips:**
+- Use simple column names (no `%` or special chars) in the helper element
+- If Lookups show "Unknown column" in the UI, configure them manually
+- Prefer a single consolidated DM (e.g., "Account Health") if one exists
 
 ---
 
